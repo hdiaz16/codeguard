@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>DUNA — paletas naturales</title>
+<style>
+  body {
+    margin: 0; min-height: 100vh; background: #131412;
+    font-family: "Segoe UI", sans-serif; color: #c9c6bd;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 28px 12px 48px;
+  }
+  h1 { font-weight: 300; font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 22px; color: #83817a; font-size: 13px; }
+  .row { margin-bottom: 26px; }
+  .row h2 { font-weight: 600; font-size: 14px; color: #e5e2d9; margin: 0 0 2px 6px; }
+  .row p { margin: 0 0 8px 6px; font-size: 12px; color: #8b897f; }
+  .orbs { display: flex; gap: 12px; flex-wrap: wrap; }
+  .cell {
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    background: #191a17; border-radius: 14px; padding: 8px 10px 6px;
+  }
+  .cell span { font-size: 10.5px; color: #7b7970; }
+  canvas { width: 140px; height: 140px; }
+</style>
+</head>
+<body>
+  <h1>DUNA — tres paletas de la naturaleza</h1>
+  <p class="sub">Colores desaturados y serenos. Columnas: idle · working · pass · blocked · offline.</p>
+  <div id="root"></div>
+
+<script>
+const hex = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+const lerp = (x,y,t) => x + (y-x)*t;
+const lerp3 = (u,v,t) => [lerp(u[0],v[0],t), lerp(u[1],v[1],t), lerp(u[2],v[2],t)];
+const css = (c,a=1) => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+
+const DYN = {
+  idle:    { level:.48, amp:.040, spd:.50, breathe:.030 },
+  working: { level:.55, amp:.095, spd:1.7, breathe:.018, bubbles:true, slosh:.045 },
+  pass:    { level:.96, amp:.020, spd:.45, breathe:.040, fillFrom:.5 },
+  blocked: { level:.64, amp:.080, spd:1.1, breathe:0, choppy:true, throb:.045 },
+  offline: { level:.12, amp:.007, spd:.11, breathe:.010 },
+};
+
+// paletas naturales: [líquido, capa profunda] por estado
+const PALETTES = [
+  {
+    name: "A · NIEBLA", desc: "salvia, hierba seca y arcilla entre bruma — lo más discreto",
+    glass: "#171a18",
+    states: {
+      idle:    ["#a8b5a2", "#6d7a68"],
+      working: ["#cbb586", "#96805a"],
+      pass:    ["#94b795", "#5f8264"],
+      blocked: ["#c08072", "#8a5245"],
+      offline: ["#82837e", "#55564f"],
+    },
+  },
+  {
+    name: "B · TIERRA", desc: "arena, miel, oliva y terracota — el calor de Her, sin azúcar",
+    glass: "#1c1815",
+    states: {
+      idle:    ["#c9b29d", "#94765d"],
+      working: ["#d3a976", "#9c7442"],
+      pass:    ["#a3b98d", "#6f8759"],
+      blocked: ["#bc6f5a", "#83402f"],
+      offline: ["#8b8378", "#5a544b"],
+    },
+  },
+  {
+    name: "C · RÍO", desc: "agua entre piedras: bruma azul, junco, verde río, arcilla mojada",
+    glass: "#141a1c",
+    states: {
+      idle:    ["#92b4b8", "#5d8084"],
+      working: ["#c2b98a", "#8c8354"],
+      pass:    ["#8fbca4", "#5b8871"],
+      blocked: ["#c37f70", "#8b4d40"],
+      offline: ["#7f8a8c", "#525a5c"],
+    },
+  },
+];
+
+const root = document.getElementById("root");
+
+function duna(container, dyn, liqHex, deepHex, glassHex, label) {
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  cell.innerHTML = `<canvas width="280" height="280"></canvas><span>${label}</span>`;
+  container.appendChild(cell);
+  const g = cell.querySelector("canvas").getContext("2d");
+  const S = 280, C = S/2;
+  const GLASS = hex(glassHex), LIQ = hex(liqHex), DEEP = hex(deepHex);
+  const bubbles = [];
+  let level = dyn.fillFrom ?? dyn.level;
+  let t = 0, last = performance.now();
+
+  (function loop(now) {
+    const dt = Math.min((now-last)/1000, .05); last = now;
+    t += dt;
+    try { draw(dt); } catch (e) { console.error(label, e); }
+    requestAnimationFrame(loop);
+  })(performance.now());
+
+  function draw(dt) {
+    g.clearRect(0,0,S,S);
+    let targetLevel = dyn.level;
+    if (dyn.slosh) targetLevel += Math.sin(t*.8) * dyn.slosh;
+    level = lerp(level, targetLevel, 1 - Math.pow(.25, dt));
+
+    let R = S*.30;
+    R *= 1 + Math.sin(t*.75) * (dyn.breathe || 0);
+    if (dyn.throb) R *= 1 + Math.max(0, Math.sin((t*1.5)%(Math.PI*2)))**4 * dyn.throb;
+
+    // halo mínimo, apenas presencia
+    const h = g.createRadialGradient(C,C,R*.8, C,C,R*1.6);
+    h.addColorStop(0, css(LIQ,.08)); h.addColorStop(1, css(LIQ,0));
+    g.fillStyle = h; g.fillRect(0,0,S,S);
+
+    g.save();
+    g.beginPath(); g.arc(C,C,R,0,7); g.clip();
+
+    // cristal oscuro neutro con profundidad
+    const bg = g.createRadialGradient(C-R*.25, C-R*.35, R*.15, C, C, R*1.35);
+    bg.addColorStop(0, css(lerp3(GLASS,[255,255,255],.10),.98));
+    bg.addColorStop(1, css(GLASS,.99));
+    g.fillStyle = bg; g.fillRect(0,0,S,S);
+
+    const waterY = C + R - 2*R*level;
+    const tilt = Math.sin(t * dyn.spd * .45) * dyn.amp * .55 + Math.sin(t*.23) * .010;
+    const surfaceAt = (x, L) => {
+      let y = waterY + (L ? L.off : 0) + x * tilt
+        + Math.sin(x/R*2.6 + t*(L ? L.spd : dyn.spd)) * R*(L ? L.amp : dyn.amp)
+        + Math.sin(x/R*4.7 - t*(L ? L.spd : dyn.spd)*1.6) * R*(L ? L.amp : dyn.amp)*.45;
+      if (dyn.choppy) y += Math.sin(x/R*8 + t*(L ? L.spd : dyn.spd)*2.4) * R*(L ? L.amp : dyn.amp)*.35;
+      return y;
+    };
+    for (const L of [
+      { off: 0,     spd: dyn.spd,     amp: dyn.amp,    col: LIQ,  al: .85 },
+      { off: R*.09, spd: dyn.spd*.65, amp: dyn.amp*.6, col: DEEP, al: .8 }]) {
+      g.beginPath(); g.moveTo(C-R, S);
+      for (let x = -R; x <= R; x += 3) g.lineTo(C+x, surfaceAt(x, L));
+      g.lineTo(C+R, S); g.closePath();
+      g.fillStyle = css(L.col, L.al); g.fill();
+    }
+    // cresta: sutil, como luz de tarde sobre el agua
+    g.beginPath();
+    for (let x = -R; x <= R; x += 3) {
+      const y = surfaceAt(x, null);
+      x === -R ? g.moveTo(C+x, y) : g.lineTo(C+x, y);
+    }
+    g.strokeStyle = css(lerp3(LIQ,[255,255,255],.5), .30);
+    g.lineWidth = 1.3;
+    g.stroke();
+
+    if (dyn.bubbles) {
+      if (Math.random() < dt*1.8) bubbles.push({ x: C+(Math.random()-.5)*R*1.1, y: C+R*.9, r: 1.8+Math.random()*2.2, a:0, vy: 17+Math.random()*11, ph: Math.random()*6 });
+      for (const b of bubbles) {
+        b.y -= b.vy*dt; b.x += Math.sin(t*2+b.ph)*.2;
+        b.a = Math.min(b.a + dt*1.2, .25);
+        if (b.y < waterY + 5) b.a -= dt*2;
+        if (b.a <= 0) continue;
+        const bg2 = g.createRadialGradient(b.x,b.y,0,b.x,b.y,b.r*2);
+        bg2.addColorStop(0, css(lerp3(LIQ,[255,255,255],.55), b.a));
+        bg2.addColorStop(1, css(LIQ,0));
+        g.fillStyle = bg2; g.beginPath(); g.arc(b.x,b.y,b.r*2,0,7); g.fill();
+      }
+      while (bubbles.length && bubbles[0].a <= 0) bubbles.shift();
+      if (bubbles.length > 10) bubbles.shift();
+    }
+
+    // luz de ventana sobre el cristal, tenue
+    const hl = g.createRadialGradient(C-R*.38, C-R*.48, 0, C-R*.38, C-R*.48, R*.9);
+    hl.addColorStop(0, "rgba(255,255,255,.10)");
+    hl.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = hl; g.fillRect(0,0,S,S);
+    g.restore();
+
+    // filo del cristal casi invisible
+    g.beginPath(); g.arc(C,C,R,0,7);
+    g.strokeStyle = css(lerp3(GLASS,[255,255,255],.35),.18);
+    g.lineWidth = 1; g.stroke();
+  }
+}
+
+for (const p of PALETTES) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML = `<h2>${p.name}</h2><p>${p.desc}</p><div class="orbs"></div>`;
+  root.appendChild(row);
+  const orbs = row.querySelector(".orbs");
+  for (const s of ["idle","working","pass","blocked","offline"]) {
+    duna(orbs, DYN[s], p.states[s][0], p.states[s][1], p.glass, s);
+  }
+}
+</script>
+</body>
+</html>
