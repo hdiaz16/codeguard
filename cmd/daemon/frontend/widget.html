@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>CodeGuard estado</title>
+<style>
+  :root {
+    --c-idle: #6b7d8c; --c-working: #d9a64a; --c-pass: #4cb86e;
+    --c-blocked: #e04a3a; --c-degraded: #d97e4a; --c-offline: #55616c;
+    --c: var(--c-idle);
+  }
+  html, body {
+    margin: 0; width: 100%; height: 100%; overflow: hidden;
+    background: transparent; user-select: none;
+  }
+  .stage {
+    position: relative; width: 100%; height: 100%;
+    display: grid; place-items: center; cursor: pointer;
+  }
+  .orb {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--c);
+    box-shadow: 0 0 12px 2px color-mix(in srgb, var(--c) 55%, transparent),
+                0 2px 6px rgba(0,0,0,.35);
+    transition: background .4s, box-shadow .4s;
+    z-index: 2;
+    display: grid; place-items: center;
+    color: #fff; font: 700 13px "Segoe UI", sans-serif;
+  }
+  .wave {
+    position: absolute; width: 26px; height: 26px; border-radius: 50%;
+    border: 2px solid var(--c); opacity: 0; z-index: 1;
+  }
+  /* ondas: solo en estados activos */
+  [data-state="working"] .wave { animation: ripple 1.6s ease-out infinite; }
+  [data-state="blocked"] .wave { animation: ripple 1.1s ease-out infinite; }
+  [data-state="pass"] .wave    { animation: ripple 1.8s ease-out 3; }
+  [data-state="degraded"] .wave { animation: ripple 2.6s ease-out infinite; }
+  .wave:nth-child(2) { animation-delay: .55s !important; }
+  .wave:nth-child(3) { animation-delay: 1.1s !important; }
+  @keyframes ripple {
+    0%   { transform: scale(1);   opacity: .8; }
+    100% { transform: scale(3.6); opacity: 0; }
+  }
+  /* respiración sutil en idle */
+  [data-state="idle"] .orb { animation: breathe 4s ease-in-out infinite; }
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.12); }
+  }
+  /* blocked: la propia orbe late */
+  [data-state="blocked"] .orb { animation: throb .9s ease-in-out infinite; }
+  @keyframes throb {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.18); }
+  }
+  [data-state="offline"] .orb {
+    background: transparent; border: 3px solid var(--c-offline);
+    box-shadow: none; width: 20px; height: 20px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .wave, .orb { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="stage" id="stage" data-state="idle" title="CodeGuard — sin análisis todavía">
+    <div class="wave"></div><div class="wave"></div><div class="wave"></div>
+    <div class="orb" id="orb"></div>
+  </div>
+
+<script type="module">
+  import { Events } from "/wails/runtime.js";
+  const stage = document.getElementById("stage");
+  const orb = document.getElementById("orb");
+  const colors = {
+    idle: "--c-idle", working: "--c-working", pass: "--c-pass",
+    blocked: "--c-blocked", degraded: "--c-degraded", offline: "--c-offline",
+  };
+  const glyphs = { blocked: "!", pass: "✓" };
+
+  function setState(state, tooltip) {
+    if (!colors[state]) state = "idle";
+    stage.dataset.state = state;
+    document.documentElement.style.setProperty("--c", `var(${colors[state]})`);
+    stage.title = "CodeGuard [" + state + "]" + (tooltip ? " — " + tooltip : "");
+    orb.textContent = glyphs[state] || "";
+  }
+
+  Events.On("state", (e) => {
+    const d = Array.isArray(e.data) ? e.data[0] : e.data;
+    if (typeof d === "string") setState(d, "");
+    else if (d) setState(d.state, d.tooltip);
+  });
+
+  stage.addEventListener("click", () => {
+    try { Events.Emit("widget-click", null); }
+    catch { Events.Emit({ name: "widget-click", data: null }); }
+  });
+</script>
+</body>
+</html>

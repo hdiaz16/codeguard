@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
 	"codeguard/internal/config"
 	"codeguard/internal/daemon"
@@ -88,12 +89,17 @@ func snippet(repoRoot, rel string, line int) []snippetLine {
 type trayState struct {
 	tray  *application.SystemTray
 	reset *time.Timer
+	emit  func(state, tooltip string)
 }
 
 func (t *trayState) set(state, tooltip string) {
 	t.tray.SetIcon(trayIcon(state))
 	t.tray.SetLabel("CodeGuard: " + state)
 	t.tray.SetTooltip("CodeGuard [" + state + "] — " + tooltip)
+	// La burbuja flotante escucha el mismo estado.
+	if t.emit != nil {
+		t.emit(state, tooltip)
+	}
 }
 
 // pass vuelve a idle a los 10 s (§12.1).
@@ -143,13 +149,62 @@ func main() {
 		}
 	}
 
+	// Burbuja de estado: widget flotante abajo a la izquierda (§12.1),
+	// transparente, siempre visible, con ondas animadas por estado.
+	const widgetSize = 120
+	widget := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:          "CodeGuard estado",
+		Frameless:      true,
+		AlwaysOnTop:    true,
+		Width:          widgetSize,
+		Height:         widgetSize,
+		DisableResize:  true,
+		BackgroundType: application.BackgroundTypeTransparent,
+		URL:            "/widget.html",
+		Windows: application.WindowsWindow{
+			HiddenOnTaskbar: true,
+		},
+	})
+	dockWidget := func() {
+		if screen := app.Screen.GetPrimary(); screen != nil {
+			w := screen.WorkArea
+			widget.SetPosition(w.X+8, w.Y+w.Height-widgetSize-8)
+		}
+	}
+
 	tray := app.SystemTray.New()
-	ts := &trayState{tray: tray}
+	ts := &trayState{tray: tray, emit: func(state, tooltip string) {
+		app.Event.Emit("state", map[string]string{"state": state, "tooltip": tooltip})
+	}}
 	ts.set("idle", "sin análisis todavía")
+
+	// Clic en la burbuja: alterna el panel.
+	app.Event.On("widget-click", func(*application.CustomEvent) {
+		application.InvokeAsync(func() {
+			if panel.IsVisible() {
+				panel.Hide()
+			} else {
+				dockPanel()
+				panel.Show()
+			}
+		})
+	})
+	// La burbuja pide su estado al cargar.
+	app.Event.On("widget-ready", func(*application.CustomEvent) {})
 
 	menu := application.NewMenu()
 	menu.Add("Mostrar panel").OnClick(func(*application.Context) { dockPanel(); panel.Show() })
 	menu.Add("Ocultar panel").OnClick(func(*application.Context) { panel.Hide() })
+	menu.Add("Mostrar/ocultar burbuja").OnClick(func(*application.Context) {
+		application.InvokeAsync(func() {
+			if widget.IsVisible() {
+				widget.Hide()
+			} else {
+				dockWidget()
+				widget.Show()
+			}
+		})
+	})
 	menu.AddSeparator()
 	menu.Add("Demo de estados (12 s)").OnClick(func(*application.Context) {
 		go func() {
@@ -289,6 +344,11 @@ func main() {
 			}
 		},
 	}
+
+	// Anclar la burbuja abajo a la izquierda al arrancar.
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		dockWidget()
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	app.OnShutdown(cancel)
