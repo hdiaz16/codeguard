@@ -32,4 +32,18 @@ risk:
     tests_only: -20
     docs_only: -40
 
+ui:
+  max_visible_findings: 7
+  auto_open_panel: on_block
+
+llm:
+  # Modelo default del equipo — el dev no configura nada; cambiarlo aquí
+  # actualiza a todos con git pull. La key va SOLO en la variable de entorno.
+  endpoint: "https://TU-RECURSO.services.ai.azure.com/openai/v1"
+  api_key_env: "FOUNDRY_API_KEY"
+  model: "FW-Kimi-K3"
+  timeout_ms: 8000
+  max_diff_tokens: 12000
+  monthly_budget_usd: 0
+
 max_diff_lines: 2000

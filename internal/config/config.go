@@ -44,6 +44,41 @@ type UI struct {
 	AutoOpenPanel string `koanf:"auto_open_panel"`
 }
 
+// LLM define el modelo advisory (fase 3). El default lo fija el equipo aquí,
+// versionado en el repo: el dev no configura nada. La API key NUNCA va en
+// este archivo — solo el nombre de la variable de entorno que la contiene.
+type LLM struct {
+	Endpoint  string `koanf:"endpoint"`    // compatible con la API de OpenAI
+	APIKeyEnv string `koanf:"api_key_env"` // nombre de la env var con la key
+	// Model es el default para los tres pilares; los overrides son opcionales.
+	Model            string  `koanf:"model"`
+	ModelQuality     string  `koanf:"model_quality"`
+	ModelSecurity    string  `koanf:"model_security"`
+	ModelData        string  `koanf:"model_data"`
+	TimeoutMs        int     `koanf:"timeout_ms"`
+	MaxDiffTokens    int     `koanf:"max_diff_tokens"`
+	MonthlyBudgetUSD float64 `koanf:"monthly_budget_usd"` // 0 = sin límite
+}
+
+// ModelFor devuelve el modelo del pilar: override si existe, default si no.
+func (l LLM) ModelFor(pillar string) string {
+	switch pillar {
+	case "quality":
+		if l.ModelQuality != "" {
+			return l.ModelQuality
+		}
+	case "security":
+		if l.ModelSecurity != "" {
+			return l.ModelSecurity
+		}
+	case "data":
+		if l.ModelData != "" {
+			return l.ModelData
+		}
+	}
+	return l.Model
+}
+
 type Config struct {
 	Version      int      `koanf:"version"`
 	Rulepack     string   `koanf:"rulepack"`
@@ -52,6 +87,7 @@ type Config struct {
 	Gates        Gates    `koanf:"gates"`
 	Risk         Risk     `koanf:"risk"`
 	UI           UI       `koanf:"ui"`
+	LLM          LLM      `koanf:"llm"`
 	MaxDiffLines int      `koanf:"max_diff_lines"`
 
 	// Hash sha256 del archivo normalizado a LF. Parte del contrato (ci_parity).
@@ -85,6 +121,7 @@ func Load(repoRoot string) (*Config, error) {
 		MaxDiffLines: 2000,
 		Risk:         Risk{Threshold: 35},
 		UI:           UI{MaxVisibleFindings: 7, AutoOpenPanel: "on_block"},
+		LLM:          LLM{TimeoutMs: 8000, MaxDiffTokens: 12000, APIKeyEnv: "FOUNDRY_API_KEY"},
 	}
 	if err := k.Unmarshal("", cfg); err != nil {
 		return nil, fmt.Errorf("config.yaml no coincide con el esquema: %w", err)
