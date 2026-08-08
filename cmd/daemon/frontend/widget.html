@@ -8,11 +8,11 @@
      filtro gooey — resplandor que respira, núcleo que morfa y rota, destello
      que pulsa. Los estados de CodeGuard reasignan paleta y velocidades. ── */
   :root {
-    /* default = idle (el rojo/naranja cálido de Her) */
-    --plasma-glow: rgba(200, 30, 30, 0.5);
-    --plasma-hot-a: #ff3300;
-    --plasma-hot-b: #ff8800;
-    --plasma-spark-mid: #ffaa55;
+    /* default = idle: niebla de pizarra (paleta MONTAÑA sobre el plasma) */
+    --plasma-glow: rgba(142, 151, 158, 0.45);
+    --plasma-hot-a: #8e979e;
+    --plasma-hot-b: #565f66;
+    --plasma-spark-mid: #c9d2d8;
     --speed-breathe: 6s;
     --speed-morph: 9s;
     --speed-spin: 20s;
@@ -73,35 +73,35 @@
                pulse var(--speed-pulse) infinite alternate ease-in-out;
   }
 
-  /* ── paletas por estado de CodeGuard ── */
-  .orb-idle {
-    --plasma-glow: rgba(200, 30, 30, 0.5);
-    --plasma-hot-a: #ff3300; --plasma-hot-b: #ff8800; --plasma-spark-mid: #ffaa55;
+  /* ── paletas por estado: MONTAÑA (pizarra/niebla/nieve) sobre el plasma ── */
+  .orb-idle { /* niebla serena */
+    --plasma-glow: rgba(142, 151, 158, 0.45);
+    --plasma-hot-a: #8e979e; --plasma-hot-b: #565f66; --plasma-spark-mid: #c9d2d8;
     --speed-breathe: 6s; --speed-morph: 9s; --speed-spin: 20s; --speed-pulse: 4s;
   }
-  .orb-working { /* cómputo: violeta + ámbar (el "thinking" de Samantha) */
-    --plasma-glow: rgba(160, 70, 255, 0.7);
-    --plasma-hot-a: #a040ff; --plasma-hot-b: #ffae3a; --plasma-spark-mid: #ffcc88;
+  .orb-working { /* ventisca: nieve brillante agitándose */
+    --plasma-glow: rgba(188, 197, 204, 0.6);
+    --plasma-hot-a: #bcc5cc; --plasma-hot-b: #7d8891; --plasma-spark-mid: #e6ebef;
     --speed-breathe: 3s; --speed-morph: 3s; --speed-spin: 6s; --speed-pulse: 1.2s;
   }
-  .orb-pass { /* todo bien: esmeralda + cyan, calmo */
-    --plasma-glow: rgba(40, 220, 160, 0.6);
-    --plasma-hot-a: #14d99a; --plasma-hot-b: #00d4ff; --plasma-spark-mid: #a8f5dd;
+  .orb-pass { /* amanecer: nieve luminosa, calma */
+    --plasma-glow: rgba(233, 238, 242, 0.55);
+    --plasma-hot-a: #e9eef2; --plasma-hot-b: #a9b6bf; --plasma-spark-mid: #f4f8fa;
     --speed-breathe: 5s; --speed-morph: 8s; --speed-spin: 18s; --speed-pulse: 3s;
   }
-  .orb-blocked { /* alarma: carmesí intenso, todo late rápido */
-    --plasma-glow: rgba(255, 30, 60, 0.85);
-    --plasma-hot-a: #ff1a3c; --plasma-hot-b: #ff6633; --plasma-spark-mid: #ffb0a0;
+  .orb-blocked { /* granito ferroso latiendo */
+    --plasma-glow: rgba(197, 106, 85, 0.7);
+    --plasma-hot-a: #c56a55; --plasma-hot-b: #7e4436; --plasma-spark-mid: #f0b5a4;
     --speed-breathe: 1.6s; --speed-morph: 2.4s; --speed-spin: 8s; --speed-pulse: 0.6s;
   }
-  .orb-degraded { /* parcial: naranja apagado */
-    --plasma-glow: rgba(230, 140, 50, 0.55);
-    --plasma-hot-a: #e08a30; --plasma-hot-b: #c05f20; --plasma-spark-mid: #ffd9a8;
+  .orb-degraded { /* piedra arenisca apagada */
+    --plasma-glow: rgba(158, 148, 132, 0.5);
+    --plasma-hot-a: #9e9484; --plasma-hot-b: #645c50; --plasma-spark-mid: #d8cfc0;
     --speed-breathe: 4s; --speed-morph: 6s; --speed-spin: 14s; --speed-pulse: 2.5s;
   }
-  .orb-offline { /* dormido: brasa gris, casi quieta */
-    --plasma-glow: rgba(120, 125, 130, 0.35);
-    --plasma-hot-a: #5a6168; --plasma-hot-b: #3a4046; --plasma-spark-mid: #9aa2a8;
+  .orb-offline { /* montaña dormida: gris hondo, casi quieto */
+    --plasma-glow: rgba(90, 97, 104, 0.3);
+    --plasma-hot-a: #565b60; --plasma-hot-b: #35393d; --plasma-spark-mid: #8a9298;
     --speed-breathe: 10s; --speed-morph: 16s; --speed-spin: 40s; --speed-pulse: 8s;
     --dim: .75;
   }
