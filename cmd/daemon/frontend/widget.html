@@ -5,9 +5,8 @@
 <title>CodeGuard estado</title>
 <style>
   :root {
-    --c-idle: #6b7d8c; --c-working: #d9a64a; --c-pass: #4cb86e;
-    --c-blocked: #e04a3a; --c-degraded: #d97e4a; --c-offline: #55616c;
-    --c: var(--c-idle);
+    /* paletas por estado: color principal + secundario del gradiente */
+    --c: #7a8ea0; --c2: #4a5a6c;
   }
   html, body {
     margin: 0; width: 100%; height: 100%; overflow: hidden;
@@ -17,55 +16,92 @@
     position: relative; width: 100%; height: 100%;
     display: grid; place-items: center; cursor: pointer;
   }
+  .stage > * { grid-area: 1 / 1; }
+
+  /* ── núcleo: orbe con profundidad ── */
   .orb {
-    width: 26px; height: 26px; border-radius: 50%;
-    background: var(--c);
-    box-shadow: 0 0 12px 2px color-mix(in srgb, var(--c) 55%, transparent),
-                0 2px 6px rgba(0,0,0,.35);
-    transition: background .4s, box-shadow .4s;
-    z-index: 2;
+    width: 34px; height: 34px; border-radius: 50%;
+    background:
+      radial-gradient(circle at 32% 28%, rgba(255,255,255,.9) 0%, rgba(255,255,255,0) 42%),
+      radial-gradient(circle at 68% 78%, var(--c2) 0%, rgba(0,0,0,0) 65%),
+      radial-gradient(circle at 50% 50%, var(--c) 0%, var(--c2) 100%);
+    box-shadow:
+      0 0 18px 4px color-mix(in srgb, var(--c) 45%, transparent),
+      0 0 40px 10px color-mix(in srgb, var(--c) 18%, transparent),
+      inset 0 -4px 8px rgba(0,0,0,.35);
+    transition: background 1s, box-shadow 1s;
+    z-index: 3;
     display: grid; place-items: center;
-    color: #fff; font: 700 13px "Segoe UI", sans-serif;
+    color: #fff; font: 700 14px "Segoe UI", sans-serif;
+    text-shadow: 0 1px 3px rgba(0,0,0,.5);
   }
+
+  /* ── anillo orbital: arco de luz girando ── */
+  .ring {
+    width: 52px; height: 52px; border-radius: 50%; z-index: 2;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg,
+      color-mix(in srgb, var(--c) 90%, #fff) 70deg,
+      transparent 160deg,
+      color-mix(in srgb, var(--c) 45%, transparent) 240deg,
+      transparent 320deg);
+    -webkit-mask: radial-gradient(closest-side, transparent calc(100% - 3.5px), #000 calc(100% - 2.5px));
+            mask: radial-gradient(closest-side, transparent calc(100% - 3.5px), #000 calc(100% - 2.5px));
+    animation: spin 3.2s linear infinite;
+    opacity: .9;
+    transition: opacity .6s;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── ondas: halos difuminados, no bordes duros ── */
   .wave {
-    position: absolute; width: 26px; height: 26px; border-radius: 50%;
-    border: 2px solid var(--c); opacity: 0; z-index: 1;
+    width: 40px; height: 40px; border-radius: 50%; z-index: 1;
+    border: 5px solid var(--c);
+    filter: blur(4px);
+    opacity: 0;
   }
-  /* ondas: solo en estados activos */
-  [data-state="working"] .wave { animation: ripple 1.6s ease-out infinite; }
-  [data-state="blocked"] .wave { animation: ripple 1.1s ease-out infinite; }
-  [data-state="pass"] .wave    { animation: ripple 1.8s ease-out 3; }
-  [data-state="degraded"] .wave { animation: ripple 2.6s ease-out infinite; }
-  .wave:nth-child(2) { animation-delay: .55s !important; }
-  .wave:nth-child(3) { animation-delay: 1.1s !important; }
   @keyframes ripple {
-    0%   { transform: scale(1);   opacity: .8; }
-    100% { transform: scale(3.6); opacity: 0; }
+    0%   { transform: scale(1);   opacity: .55; }
+    100% { transform: scale(2.7); opacity: 0; }
   }
-  /* respiración sutil en idle */
-  [data-state="idle"] .orb { animation: breathe 4s ease-in-out infinite; }
-  @keyframes breathe {
-    0%, 100% { transform: scale(1); }
-    50%      { transform: scale(1.12); }
-  }
-  /* blocked: la propia orbe late */
+
+  /* ── estados ── */
+  [data-state="idle"] .ring { animation-duration: 7s; opacity: .35; }
+  [data-state="idle"] .orb { animation: breathe 5s ease-in-out infinite; }
+  @keyframes breathe { 50% { transform: scale(1.08); } }
+
+  [data-state="working"] .ring { animation-duration: 1.1s; }
+  [data-state="working"] .wave { animation: ripple 1.7s ease-out infinite; }
+
+  [data-state="pass"] .ring { animation-duration: 4s; }
+  [data-state="pass"] .wave { animation: ripple 2s ease-out 3; }
+
+  [data-state="blocked"] .ring { animation-duration: .8s; }
+  [data-state="blocked"] .wave { animation: ripple 1.1s ease-out infinite; }
   [data-state="blocked"] .orb { animation: throb .9s ease-in-out infinite; }
-  @keyframes throb {
-    0%, 100% { transform: scale(1); }
-    50%      { transform: scale(1.18); }
-  }
+  @keyframes throb { 50% { transform: scale(1.15); } }
+
+  [data-state="degraded"] .wave { animation: ripple 3s ease-out infinite; }
+
+  [data-state="offline"] .ring { animation: none; opacity: .25; }
   [data-state="offline"] .orb {
-    background: transparent; border: 3px solid var(--c-offline);
-    box-shadow: none; width: 20px; height: 20px;
+    background: radial-gradient(circle at 50% 50%, #39434c 0%, #232b32 100%);
+    box-shadow: inset 0 -3px 6px rgba(0,0,0,.4);
   }
+
+  .wave:nth-child(2) { animation-delay: .6s !important; }
+  .wave:nth-child(3) { animation-delay: 1.2s !important; }
+
   @media (prefers-reduced-motion: reduce) {
-    .wave, .orb { animation: none !important; }
+    .wave, .orb, .ring { animation: none !important; }
   }
 </style>
 </head>
 <body>
   <div class="stage" id="stage" data-state="idle" title="CodeGuard — sin análisis todavía">
     <div class="wave"></div><div class="wave"></div><div class="wave"></div>
+    <div class="ring"></div>
     <div class="orb" id="orb"></div>
   </div>
 
@@ -73,16 +109,24 @@
   import { Events } from "/wails/runtime.js";
   const stage = document.getElementById("stage");
   const orb = document.getElementById("orb");
-  const colors = {
-    idle: "--c-idle", working: "--c-working", pass: "--c-pass",
-    blocked: "--c-blocked", degraded: "--c-degraded", offline: "--c-offline",
+  const root = document.documentElement.style;
+
+  // gradientes por estado: [color principal, color profundo]
+  const palettes = {
+    idle:     ["#7a9ab8", "#3d4f63"],
+    working:  ["#ffb84d", "#b3611a"],
+    pass:     ["#4ee08a", "#157a45"],
+    blocked:  ["#ff5f4d", "#a3221a"],
+    degraded: ["#ff9950", "#a34e1a"],
+    offline:  ["#4a555f", "#232b32"],
   };
   const glyphs = { blocked: "!", pass: "✓" };
 
   function setState(state, tooltip) {
-    if (!colors[state]) state = "idle";
+    if (!palettes[state]) state = "idle";
     stage.dataset.state = state;
-    document.documentElement.style.setProperty("--c", `var(${colors[state]})`);
+    root.setProperty("--c", palettes[state][0]);
+    root.setProperty("--c2", palettes[state][1]);
     stage.title = "CodeGuard [" + state + "]" + (tooltip ? " — " + tooltip : "");
     orb.textContent = glyphs[state] || "";
   }

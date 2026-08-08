@@ -139,6 +139,10 @@ func main() {
 		Height:        600,
 		DisableResize: true,
 		URL:           "/",
+		Windows: application.WindowsWindow{
+			HiddenOnTaskbar:                   true,
+			DisableFramelessWindowDecorations: true,
+		},
 	})
 
 	dockPanel := func() {
@@ -148,27 +152,39 @@ func main() {
 			panel.SetSize(panelWidth, w.Height)
 		}
 	}
+	// showPanel siempre via este helper: el contenido "emerge" desde el
+	// indicador (animación de entrada disparada por el evento panel-show).
+	showPanel := func() {
+		dockPanel()
+		panel.Show()
+		app.Event.Emit("panel-show", nil)
+	}
 
 	// Burbuja de estado: widget flotante abajo a la izquierda (§12.1),
 	// transparente, siempre visible, con ondas animadas por estado.
 	const widgetSize = 120
 	widget := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:          "CodeGuard estado",
-		Frameless:      true,
-		AlwaysOnTop:    true,
-		Width:          widgetSize,
-		Height:         widgetSize,
-		DisableResize:  true,
-		BackgroundType: application.BackgroundTypeTransparent,
-		URL:            "/widget.html",
+		Title:            "CodeGuard estado",
+		Frameless:        true,
+		AlwaysOnTop:      true,
+		Width:            widgetSize,
+		Height:           widgetSize,
+		DisableResize:    true,
+		BackgroundType:   application.BackgroundTypeTransparent,
+		BackgroundColour: application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 0},
+		URL:              "/widget.html",
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: true,
+			// Sin esto, Windows dibuja borde y sombra alrededor de la
+			// ventana frameless — el "borde feo".
+			DisableFramelessWindowDecorations: true,
 		},
 	})
+	// Abajo a la DERECHA: el panel lateral emerge visualmente del indicador.
 	dockWidget := func() {
 		if screen := app.Screen.GetPrimary(); screen != nil {
 			w := screen.WorkArea
-			widget.SetPosition(w.X+8, w.Y+w.Height-widgetSize-8)
+			widget.SetPosition(w.X+w.Width-widgetSize-4, w.Y+w.Height-widgetSize-4)
 		}
 	}
 
@@ -184,8 +200,7 @@ func main() {
 			if panel.IsVisible() {
 				panel.Hide()
 			} else {
-				dockPanel()
-				panel.Show()
+				showPanel()
 			}
 		})
 	})
@@ -193,7 +208,7 @@ func main() {
 	app.Event.On("widget-ready", func(*application.CustomEvent) {})
 
 	menu := application.NewMenu()
-	menu.Add("Mostrar panel").OnClick(func(*application.Context) { dockPanel(); panel.Show() })
+	menu.Add("Mostrar panel").OnClick(func(*application.Context) { showPanel() })
 	menu.Add("Ocultar panel").OnClick(func(*application.Context) { panel.Hide() })
 	menu.Add("Mostrar/ocultar burbuja").OnClick(func(*application.Context) {
 		application.InvokeAsync(func() {
@@ -227,8 +242,7 @@ func main() {
 			if panel.IsVisible() {
 				panel.Hide()
 			} else {
-				dockPanel()
-				panel.Show()
+				showPanel()
 			}
 		})
 	})
@@ -337,10 +351,7 @@ func main() {
 				autoOpen != "never" && resp.Verdict == "block"
 			if shouldOpen {
 				// Las ventanas se tocan desde el hilo de la UI.
-				application.InvokeAsync(func() {
-					dockPanel()
-					panel.Show()
-				})
+				application.InvokeAsync(showPanel)
 			}
 		},
 	}

@@ -11,10 +11,22 @@
     --hairline: #2c3944;
   }
   * { box-sizing: border-box; }
+  html { background: transparent; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px;
     line-height: 1.45; user-select: none; overflow-x: hidden;
+    border-left: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+    min-height: 100vh;
+    transform-origin: 100% 100%; /* emerge desde el indicador (abajo-derecha) */
+  }
+  body.enter { animation: emerge .38s cubic-bezier(.2,.9,.3,1); }
+  @keyframes emerge {
+    0%   { transform: translateX(46px) scale(.94); opacity: 0; }
+    100% { transform: translateX(0)    scale(1);   opacity: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    body.enter { animation: none; }
   }
   header {
     padding: 14px 16px 10px; border-bottom: 1px solid var(--hairline);
@@ -227,6 +239,12 @@
     const v = $("verdict");
     v.textContent = `Analizando ${d?.repo ?? ""} @ ${d?.branch ?? ""}…`;
     v.className = "verdict working";
+  });
+
+  Events.On("panel-show", () => {
+    document.body.classList.remove("enter");
+    void document.body.offsetWidth; // reiniciar la animación
+    document.body.classList.add("enter");
   });
 
   $("btn-close").addEventListener("click", () => emit("panel-close", null));
