@@ -70,6 +70,18 @@
   function frame(now) {
     // 30 fps bastan para agua serena — mitad de CPU/GPU que 60
     if (now - last < 30) { if (!reduced) requestAnimationFrame(frame); return; }
+    try { paint(now); } catch (e) {
+      // un error de dibujo JAMÁS deja la esfera invisible en silencio:
+      // se pinta un círculo de emergencia y se sigue intentando
+      console.error(e);
+      ctx.clearRect(0, 0, W, H);
+      ctx.beginPath(); ctx.arc(OX, OY, 20, 0, 7);
+      ctx.fillStyle = "rgba(140,150,158,.9)"; ctx.fill();
+    }
+    if (!reduced) requestAnimationFrame(frame);
+  }
+
+  function paint(now) {
     const dt = Math.min((now - last) / 1000, .05);
     last = now;
     tNow = now / 1000;
@@ -137,14 +149,16 @@
     ctx.fillStyle = css(cur.deep, .85*dim); ctx.fill();
 
     // línea de agua/nieve: oleaje natural — tres componentes con frecuencias
-    // no armónicas (como el mar real) y marejada que crece y amaina sola
-    const swell = .75 + .25 * Math.sin(t*.33 + ph3);
+    // no armónicas (como el mar real) y marejada que crece y amaina sola.
+    // OJO: nombre distinto a "swell" (hover) — la colisión dejaba la esfera
+    // invisible por TDZ (ReferenceError en cada frame).
+    const marejada = .75 + .25 * Math.sin(t*.33 + ph3);
     const surfAt = (x) => {
       const w =
         Math.sin(x/R*1.7 + t*cur.spd)              * .62 +
         Math.sin(x/R*3.1 - t*cur.spd*.62 + 1.7)    * .28 +
         Math.sin(x/R*5.3 + t*cur.spd*1.31 + 4.1)   * .12;
-      let y = waterY + x*tilt + w * R*cur.amp * swell;
+      let y = waterY + x*tilt + w * R*cur.amp * marejada;
       if (cur.choppy > .05) {
         // picada: olas cortas que van y vienen en rachas
         const gust = .55 + .45 * Math.sin(t*.9 + 2.2);
@@ -231,8 +245,6 @@
       ctx.fillStyle = css(lerp3(cur.liq,[255,255,255],.5), alpha*.85);
       ctx.fillText(whisper.text, W-12, OY - R - 22);
     }
-
-    if (!reduced) requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 
