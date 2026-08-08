@@ -10,15 +10,7 @@ rules:
     patterns:
       - pattern: "function $F($X: any) { ... }"
 
-  - id: go-ignored-error
-    languages: [go]
-    severity: ERROR
-    message: "Error ignorado con blank identifier"
-    metadata:
-      pillar: quality
-      why: "Un error tragado se convierte en un fallo silencioso en producción."
-      fix_hint: "Maneja el error o propágalo; si de verdad es ignorable, documenta por qué."
-    pattern: "_ = $F(...)"
+# (go-ignored-error migró a calidad-ext.yaml como go-ignored-error-completo)
 
   - id: python-eval
     languages: [python]

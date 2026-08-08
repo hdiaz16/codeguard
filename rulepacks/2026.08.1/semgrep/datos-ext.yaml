@@ -1,0 +1,278 @@
+# =============================================================================
+# PILAR DATOS
+# Tu set actual cubre rendimiento y disponibilidad (squawk, N+1, SELECT *).
+# Esto añade las dos dimensiones que faltaban: corrección y cumplimiento.
+# =============================================================================
+rules:
+
+# ---------------------------------------------------------------------------
+# DINERO EN PUNTO FLOTANTE — corrupción silenciosa de datos financieros
+# ---------------------------------------------------------------------------
+  - id: python-dinero-float
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Importe monetario en float. 0.1 + 0.2 != 0.3. Usa Decimal, o enteros en
+      la unidad mínima (centavos).
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: '$VAR: float = ...'
+          - pattern: '$VAR: float'
+          - pattern: $VAR = float(...)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|sueldo|pago|payment|refund|descuento|discount).*
+
+  - id: ts-dinero-float
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Importe monetario en number. Usa enteros en centavos, o una librería
+      decimal (dinero.js, decimal.js).
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: '$VAR: number'
+          - pattern: "$VAR: number = ..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)^(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|sueldo|pago|payment|refund|descuento|discount).*
+
+  - id: java-dinero-float
+    languages: [java]
+    severity: ERROR
+    message: "Importe monetario en double/float. Usa BigDecimal."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: double $VAR = ...;
+          - pattern: float $VAR = ...;
+          - pattern: private double $VAR;
+          - pattern: private float $VAR;
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|pago|payment|refund).*
+
+  - id: csharp-dinero-float
+    languages: [csharp]
+    severity: ERROR
+    message: "Importe monetario en double/float. Usa decimal."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: double $VAR = $X;
+          - pattern: float $VAR = $X;
+          - pattern: double $VAR;
+          - pattern: float $VAR;
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|pago|payment|refund).*
+
+  - id: go-dinero-float
+    languages: [generic]
+    paths:
+      include: ["*.go"]
+    severity: ERROR
+    message: "Importe monetario en float64. Usa int64 en centavos o shopspring/decimal."
+    metadata: { pilar: datos }
+    # curación: el campo de struct suelto no parsea como patrón go; regex
+    patterns:
+      - pattern-regex: '(?im)^\s*\w*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|pago|payment|refund)\w*\s+float(32|64)\b'
+
+# ---------------------------------------------------------------------------
+# FECHA SIN ZONA HORARIA — el bug que aparece en producción y no en local
+# ---------------------------------------------------------------------------
+  - id: python-datetime-naive
+    languages: [python]
+    severity: ERROR
+    message: >-
+      datetime sin zona horaria. Usa datetime.now(timezone.utc). utcnow() está
+      además deprecado desde 3.12.
+    metadata: { pilar: datos }
+    pattern-either:
+      - pattern: datetime.now()
+      - pattern: datetime.datetime.now()
+      - pattern: datetime.utcnow()
+      - pattern: datetime.datetime.utcnow()
+      - pattern: datetime.fromtimestamp($X)
+
+  - id: java-datetime-naive
+    languages: [java]
+    severity: ERROR
+    message: "Usa Instant o ZonedDateTime, no LocalDateTime.now() ni new Date()."
+    metadata: { pilar: datos }
+    pattern-either:
+      - pattern: new Date()
+      - pattern: LocalDateTime.now()
+      - pattern: Calendar.getInstance()
+
+  - id: csharp-datetime-naive
+    languages: [csharp]
+    severity: ERROR
+    message: "DateTime.Now depende del huso del servidor. Usa DateTimeOffset.UtcNow."
+    metadata: { pilar: datos }
+    pattern-either:
+      - pattern: DateTime.Now
+      - pattern: DateTime.Today
+      # NOTA curación: DateTime.UtcNow se quitó — ya es UTC; marcarlo era FP.
+
+  - id: ts-datetime-naive
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      new Date(string) sin zona horaria parsea distinto según el navegador.
+      Usa ISO 8601 con offset explícito.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern: new Date($S)
+      - metavariable-regex:
+          metavariable: $S
+          regex: ^"[0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9:]+)?"$
+
+# ---------------------------------------------------------------------------
+# PII EN LOGS Y TELEMETRÍA — no es calidad, es LFPDPPP y GDPR
+# ---------------------------------------------------------------------------
+  - id: log-dato-sensible
+    languages: [python, javascript, typescript, go, java, csharp]
+    severity: ERROR   # SUBIDO desde aviso: es incumplimiento normativo
+    message: >-
+      Dato sensible hacia los logs. Los logs se replican a agregadores,
+      backups y proveedores externos, y suelen quedar fuera del alcance del
+      borrado. Enmascara en el logger, no en cada llamada.
+    metadata: { pilar: datos, cwe: "CWE-532", owasp: "A09:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: $LOG.$LEVEL(..., $VAR, ...)
+          - pattern: $LOG.$LEVEL(f"...{$VAR}...")
+          - pattern: $LOG.$LEVEL(`...${$VAR}...`)
+          - pattern: console.$LEVEL(..., $VAR, ...)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(password|passwd|pwd|secret|token|api_?key|authorization|cookie|session|ssn|curp|rfc|credit_?card|card_?number|cvv|iban|clabe|email|phone|telefono|address|direccion|birth|nacimiento|dni|passport).*
+
+  - id: pii-en-telemetria
+    languages: [python, javascript, typescript, go, java, csharp]
+    severity: ERROR
+    message: >-
+      PII enviada a un proveedor de telemetría o analítica. Es una
+      transferencia a un tercero: requiere base legal y aparecer en el aviso
+      de privacidad.
+    metadata: { pilar: datos, cwe: "CWE-359" }
+    patterns:
+      - pattern-either:
+          - pattern: Sentry.$M(..., $VAR, ...)
+          - pattern: '$S.setUser({..., $KEY: $VAR, ...})'
+          - pattern: 'analytics.track(..., {..., $KEY: $VAR, ...})'
+          - pattern: '$MIX.track(..., {..., $KEY: $VAR, ...})'
+          - pattern: 'posthog.capture(..., {..., $KEY: $VAR, ...})'
+          - pattern: '$DD.addUserAction(..., {..., $KEY: $VAR, ...})'
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(email|phone|telefono|ssn|curp|rfc|address|direccion|name|nombre|birth|card|iban|clabe|dni).*
+
+  - id: pii-en-url
+    languages: [python, javascript, typescript, go, java, csharp]
+    severity: ERROR
+    message: >-
+      PII en query string. Queda en logs de proxy, CDN, referrer e historial
+      del navegador. Muévelo al cuerpo de la petición.
+    metadata: { pilar: datos, cwe: "CWE-598" }
+    patterns:
+      - pattern-regex: '["`''][^"`'']*[?&](email|token|password|ssn|curp|rfc|api_?key|access_?token|phone)=\$?\{?[A-Za-z_]'
+
+# ---------------------------------------------------------------------------
+# INTEGRIDAD TRANSACCIONAL
+# ---------------------------------------------------------------------------
+  - id: escrituras-sin-transaccion
+    languages: [python, javascript, typescript, go]
+    severity: WARNING
+    message: >-
+      Varias escrituras consecutivas fuera de una transacción. Si la segunda
+      falla, la primera queda aplicada y los datos quedan inconsistentes.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $DB.$M1(...)
+              ...
+              $DB.$M2(...)
+      - metavariable-regex:
+          metavariable: $M1
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      - metavariable-regex:
+          metavariable: $M2
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      - pattern-not-inside: |
+          with $DB.transaction(...):
+            ...
+      - pattern-not-inside: |
+          $DB.transaction(...)
+      - pattern-not-inside: |
+          $TX := $DB.Begin()
+          ...
+
+  - id: sql-truncate-o-drop
+    languages: [generic]
+    severity: ERROR
+    message: "TRUNCATE o DROP en código de aplicación. Debe vivir en una migración revisada."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-regex: (?i)\b(TRUNCATE\s+TABLE|DROP\s+(TABLE|DATABASE|SCHEMA))\b
+    paths:
+      exclude: ["**/migrations/**", "**/migrate/**", "**/*_test.*", "**/test/**"]
+
+# ---------------------------------------------------------------------------
+# FIXTURES Y SEEDS CON DATOS REALES
+# ---------------------------------------------------------------------------
+  - id: fixtures-datos-reales
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Dato personal con aspecto real en fixtures o seeds. Usa dominios
+      reservados (example.com), RFC/CURP sintéticos y números de tarjeta de
+      prueba.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern-regex: '[a-zA-Z0-9._%+-]+@(?!example\.(com|org|net)|test\.|localhost|invalid)[a-zA-Z0-9.-]+\.(com|mx|org|net|io|es)'
+          - pattern-regex: '\b4[0-9]{12}(?:[0-9]{3})?\b'
+          - pattern-regex: '\b(\+?52)?[ -]?[0-9]{3}[ -]?[0-9]{3}[ -]?[0-9]{4}\b'
+    paths:
+      include:
+        - "**/fixtures/**"
+        - "**/seeds/**"
+        - "**/seed/**"
+        - "**/factories/**"
+        - "**/testdata/**"
+        - "**/*.fixture.*"
+        - "**/*.seed.*"
+
+# ---------------------------------------------------------------------------
+# N+1 — complementa tus reglas existentes con Java y C#
+# ---------------------------------------------------------------------------
+  - id: java-orm-en-bucle
+    languages: [java]
+    severity: WARNING
+    message: "Consulta dentro de bucle (N+1). Usa fetch join o carga en lote."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-inside: |
+          for (...) { ... }
+      - pattern-either:
+          - pattern: $REPO.findBy$X(...)
+          - pattern: $REPO.getOne(...)
+          - pattern: $EM.find(...)
+
+  - id: csharp-orm-en-bucle
+    languages: [csharp]
+    severity: WARNING
+    message: "Consulta dentro de bucle (N+1). Usa Include o carga en lote."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-inside: |
+          foreach ($T $V in $COL) { ... }
+      - pattern-either:
+          - pattern: $CTX.$SET.FirstOrDefault(...)
+          - pattern: $CTX.$SET.Where(...).ToList()
+          - pattern: await $CTX.$SET.FindAsync(...)

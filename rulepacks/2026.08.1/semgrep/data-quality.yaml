@@ -85,16 +85,7 @@ rules:
           - pattern: "$M.objects.get(...)"
           - pattern: "$M.objects.filter(...)"
 
-  - id: log-dato-sensible
-    languages: [typescript, javascript, python, go, csharp, java]
-    severity: WARNING
-    message: "Posible dato sensible hacia logs"
-    metadata:
-      pillar: data
-      why: "PII o credenciales en logs terminan en sistemas de terceros sin control de acceso (aproximación v1 de la spec §6.3.3)."
-      fix_hint: "Registra identificadores opacos, no el valor; o redacta antes de loggear."
-    patterns:
-      - pattern-regex: '(?i)(console\.(log|info|warn|error)|logger?\.(info|warn|error|debug)|log\.(Printf|Println|Info|Warn|Error))\([^)]*(password|api_key|apikey|token|secret|card_number|curp|rfc)'
+# (log-dato-sensible migró a datos-ext.yaml, subido a ERROR por LFPDPPP/GDPR)
 
   - id: catch-vacio-ts
     languages: [typescript, javascript]
@@ -126,15 +117,4 @@ rules:
           except $E:
               pass
 
-  - id: todo-sin-ticket
-    languages: [generic]
-    paths:
-      exclude: ["*.md", "*.txt"]
-    severity: WARNING
-    message: "TODO sin ticket asociado"
-    metadata:
-      pillar: quality
-      why: "Un TODO sin ticket es una promesa que nadie va a rastrear."
-      fix_hint: "Crea el ticket y referencia: TODO(PROJ-123)."
-    patterns:
-      - pattern-regex: '(?://|#)\s*TODO(?!\s*\(\w+[-#]?\d+\))'
+# (todo-sin-ticket migró a calidad-ext.yaml — cubre también FIXME/HACK/XXX)

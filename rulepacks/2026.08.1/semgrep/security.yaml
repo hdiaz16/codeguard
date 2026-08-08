@@ -9,17 +9,7 @@ rules:
       fix_hint: "Usa JSON.parse para datos, o un mapa de funciones permitidas."
     pattern: "eval(...)"
 
-  - id: ts-innerhtml-var
-    languages: [typescript, javascript]
-    severity: WARNING
-    message: "innerHTML con contenido dinámico — riesgo de XSS"
-    metadata:
-      pillar: security
-      why: "Insertar HTML construido con datos permite inyectar scripts (OWASP A01/A03)."
-      fix_hint: "Usa textContent, o sanitiza con DOMPurify si de verdad necesitas HTML."
-    patterns:
-      - pattern: "$EL.innerHTML = $X"
-      - pattern-not: '$EL.innerHTML = "..."'
+# (ts-innerhtml-var migró a seguridad-ext.yaml, subido a ERROR con más vectores)
 
   - id: python-subprocess-shell
     languages: [python]
@@ -42,15 +32,7 @@ rules:
     patterns:
       - pattern: "yaml.load($X)"
 
-  - id: python-pickle-load
-    languages: [python]
-    severity: WARNING
-    message: "pickle.load sobre datos externos — deserialización insegura"
-    metadata:
-      pillar: security
-      why: "Deserializar pickle de origen no confiable ejecuta código (mismo patrón que BinaryFormatter en .NET)."
-      fix_hint: "Usa JSON u otro formato de datos; pickle solo para datos propios y firmados."
-    pattern: "pickle.load(...)"
+# (python-pickle-load migró a seguridad-ext.yaml, subido a ERROR + dill/joblib/torch)
 
   - id: go-sql-concat
     languages: [go]
