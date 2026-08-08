@@ -21,6 +21,7 @@ import (
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/ipc"
 	"codeguard/internal/pipeline"
+	"codeguard/internal/store"
 )
 
 // OnResult permite a la UI (F2.4) reaccionar a cada análisis terminado.
@@ -147,6 +148,13 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	resp.BlockingFindings = res.BlockingFindings
 	resp.AdvisoryFindings = res.AdvisoryFindings
 	resp.Degraded = append(resp.Degraded, res.Degraded...)
+	// El daemon asigna los IDs: el hook persiste con los mismos y el panel
+	// puede referenciarlos en el feedback (etapa 9).
+	for i := range res.Findings {
+		if res.Findings[i].ID == "" {
+			res.Findings[i].ID = store.NewULID()
+		}
+	}
 	resp.Findings = res.Findings
 	return resp
 }

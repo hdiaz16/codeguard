@@ -38,6 +38,12 @@ type Risk struct {
 	Weights   map[string]int `koanf:"weights"`
 }
 
+type UI struct {
+	MaxVisibleFindings int `koanf:"max_visible_findings"`
+	// never | on_block (default) | on_findings
+	AutoOpenPanel string `koanf:"auto_open_panel"`
+}
+
 type Config struct {
 	Version      int      `koanf:"version"`
 	Rulepack     string   `koanf:"rulepack"`
@@ -45,6 +51,7 @@ type Config struct {
 	Paths        Paths    `koanf:"paths"`
 	Gates        Gates    `koanf:"gates"`
 	Risk         Risk     `koanf:"risk"`
+	UI           UI       `koanf:"ui"`
 	MaxDiffLines int      `koanf:"max_diff_lines"`
 
 	// Hash sha256 del archivo normalizado a LF. Parte del contrato (ci_parity).
@@ -77,6 +84,7 @@ func Load(repoRoot string) (*Config, error) {
 	cfg := &Config{
 		MaxDiffLines: 2000,
 		Risk:         Risk{Threshold: 35},
+		UI:           UI{MaxVisibleFindings: 7, AutoOpenPanel: "on_block"},
 	}
 	if err := k.Unmarshal("", cfg); err != nil {
 		return nil, fmt.Errorf("config.yaml no coincide con el esquema: %w", err)

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -180,6 +182,28 @@ func b2i(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// DefaultPath es la BD local por usuario, compartida por hook, ci y daemon.
+func DefaultPath() string {
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, "codeguard")
+	os.MkdirAll(dir, 0o755)
+	return filepath.Join(dir, "codeguard.db")
+}
+
+// SaveFeedback registra el veredicto del dev sobre un hallazgo (§5 etapa 9:
+// la única palanca de calibración del sistema).
+func (s *Store) SaveFeedback(findingID, verdict, comment string) error {
+	if verdict != "useful" && verdict != "false_positive" && verdict != "unclear" {
+		return fmt.Errorf("veredicto inválido: %q", verdict)
+	}
+	_, err := s.db.Exec(`INSERT INTO feedback (id, finding_id, verdict, comment, created_at)
+		VALUES (?, ?, ?, ?, ?)`, NewULID(), findingID, verdict, comment, nowISO())
+	return err
 }
 
 var _ = finding.Finding{} // referencia explícita al modelo del contrato
