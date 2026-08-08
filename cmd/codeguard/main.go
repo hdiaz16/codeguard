@@ -16,6 +16,7 @@ import (
 	"codeguard/internal/config"
 	"codeguard/internal/engines"
 	glengine "codeguard/internal/engines/gitleaks"
+	"codeguard/internal/engines/linters"
 	sgengine "codeguard/internal/engines/semgrep"
 	sqengine "codeguard/internal/engines/squawk"
 	tvengine "codeguard/internal/engines/trivy"
@@ -106,6 +107,11 @@ func ciCmd() *cobra.Command {
 					&sqengine.Engine{MigrationGlobs: migGlobs},
 					// Política §7: CVE crítico advierte en local, bloquea en CI.
 					&tvengine.Engine{BlockCritical: inCI, SkipDBUpdate: !inCI},
+					linters.GoFmt{},
+					linters.GoVet{},
+					linters.Ruff{},
+					linters.Tsc{},
+					linters.DotnetFormat{},
 				},
 				Rulepack: rulepack,
 				Timeout:  5 * time.Minute,
