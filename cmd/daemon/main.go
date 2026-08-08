@@ -30,7 +30,7 @@ import (
 //go:embed all:frontend
 var assets embed.FS
 
-const panelWidth = 420
+const panelWidth = 480
 
 // panelFinding es lo que pinta el panel: el hallazgo + su código señalado.
 type panelFinding struct {
@@ -159,9 +159,9 @@ func main() {
 	dockPanel := func() {
 		if screen := app.Screen.GetPrimary(); screen != nil {
 			w := screen.WorkArea
-			h := w.Height * 72 / 100
-			if h > 780 {
-				h = 780
+			h := w.Height * 84 / 100
+			if h > 940 {
+				h = 940
 			}
 			panel.SetSize(panelWidth, h)
 			panel.SetPosition(w.X+w.Width-panelWidth-2, w.Y+w.Height-h-108)

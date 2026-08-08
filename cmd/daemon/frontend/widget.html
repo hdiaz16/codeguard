@@ -37,12 +37,12 @@
 
   // clima por estado: TODOS los parámetros son interpolables
   const STATES = {
-    idle:     { liq:"#8e979e", deep:"#565f66", level:.46, amp:.035, spd:.45, br:.028, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.30, sleep:0, dim:1,   whisper:"en reposo" },
-    working:  { liq:"#bcc5cc", deep:"#6d777f", level:.52, amp:.085, spd:1.6, br:.016, slosh:.04, choppy:0, throb:0,    sweep:0, drift:1, mist:.15, sleep:0, dim:1,   whisper:"analizando…" },
-    pass:     { liq:"#e9eef2", deep:"#b3bdc5", level:.90, amp:.022, spd:.4,  br:.045, slosh:0,   choppy:0, throb:0,    sweep:1, drift:0, mist:0,   sleep:0, dim:1,   whisper:"todo bien" },
-    blocked:  { liq:"#a67265", deep:"#63413a", level:.62, amp:.075, spd:1.05,br:0,    slosh:0,   choppy:1, throb:.045, sweep:0, drift:0, mist:0,   sleep:0, dim:1,   whisper:"commit bloqueado" },
-    degraded: { liq:"#9e9484", deep:"#645c50", level:.40, amp:.05,  spd:.6,  br:.02,  slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.45, sleep:0, dim:.95, whisper:"revisión parcial" },
-    offline:  { liq:"#565b60", deep:"#35393d", level:.20, amp:.006, spd:.10, br:.008, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.85, sleep:1, dim:.75, whisper:"sin conexión" },
+    idle:     { liq:"#8e979e", deep:"#565f66", level:.46, amp:.030, spd:.32, br:.026, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.30, sleep:0, dim:1,   whisper:"en reposo" },
+    working:  { liq:"#bcc5cc", deep:"#6d777f", level:.52, amp:.065, spd:1.1, br:.014, slosh:.035,choppy:0, throb:0,    sweep:0, drift:1, mist:.15, sleep:0, dim:1,   whisper:"analizando…" },
+    pass:     { liq:"#e9eef2", deep:"#b3bdc5", level:.90, amp:.018, spd:.32, br:.040, slosh:0,   choppy:0, throb:0,    sweep:1, drift:0, mist:0,   sleep:0, dim:1,   whisper:"todo bien" },
+    blocked:  { liq:"#a67265", deep:"#63413a", level:.62, amp:.055, spd:.8,  br:0,    slosh:0,   choppy:1, throb:.04,  sweep:0, drift:0, mist:0,   sleep:0, dim:1,   whisper:"commit bloqueado" },
+    degraded: { liq:"#9e9484", deep:"#645c50", level:.40, amp:.04,  spd:.45, br:.018, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.45, sleep:0, dim:.95, whisper:"revisión parcial" },
+    offline:  { liq:"#565b60", deep:"#35393d", level:.20, amp:.005, spd:.08, br:.007, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.85, sleep:1, dim:.75, whisper:"sin conexión" },
   };
 
   const hex = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
@@ -137,11 +137,11 @@
     const waterY = oy + R - 2*R*cur.level;
     const tilt = Math.sin(t*cur.spd*.45) * cur.amp*.5 + Math.sin(t*.21)*.008;
 
-    // cordillera (capa profunda): es roca — apenas se mece
+    // cordillera (capa profunda): es roca — silueta de picos anchos, casi quieta
     const ridgeAt = (x) => {
-      const k1 = Math.sin(x/R*1.9 + t*cur.spd*.12 + 1.3);
-      const k2 = Math.sin(x/R*4.3 - t*cur.spd*.08 + .5);
-      return waterY + R*.10 + x*tilt*.4 + (-Math.abs(k1)*.65 - Math.abs(k2)*.35) * R * (cur.amp*1.4 + .025);
+      const k1 = Math.sin(x/R*1.5 + t*cur.spd*.10 + 1.3);
+      const k2 = Math.sin(x/R*3.1 - t*cur.spd*.06 + .5);
+      return waterY + R*.11 + x*tilt*.3 + (-Math.abs(k1)*.7 - Math.abs(k2)*.3) * R * (cur.amp*1.3 + .03);
     };
     ctx.beginPath(); ctx.moveTo(ox-R, oy+R+2);
     for (let x=-R; x<=R; x+=2) ctx.lineTo(ox+x, ridgeAt(x));
@@ -152,17 +152,18 @@
     // no armónicas (como el mar real) y marejada que crece y amaina sola.
     // OJO: nombre distinto a "swell" (hover) — la colisión dejaba la esfera
     // invisible por TDZ (ReferenceError en cada frame).
-    const marejada = .75 + .25 * Math.sin(t*.33 + ph3);
+    // A 27 px de radio, menos es más: dos ondulaciones largas y lentas, con
+    // marejada que respira. Las frecuencias altas se veían nerviosas.
+    const marejada = .8 + .2 * Math.sin(t*.26 + ph3);
     const surfAt = (x) => {
       const w =
-        Math.sin(x/R*1.7 + t*cur.spd)              * .62 +
-        Math.sin(x/R*3.1 - t*cur.spd*.62 + 1.7)    * .28 +
-        Math.sin(x/R*5.3 + t*cur.spd*1.31 + 4.1)   * .12;
+        Math.sin(x/R*1.3 + t*cur.spd*.7)           * .72 +
+        Math.sin(x/R*2.3 - t*cur.spd*.45 + 1.7)    * .28;
       let y = waterY + x*tilt + w * R*cur.amp * marejada;
       if (cur.choppy > .05) {
-        // picada: olas cortas que van y vienen en rachas
-        const gust = .55 + .45 * Math.sin(t*.9 + 2.2);
-        y += Math.sin(x/R*7.3 + t*cur.spd*2.1) * R*cur.amp*.35 * cur.choppy * gust;
+        // picada: una tercera ola media que va y viene en rachas suaves
+        const gust = .5 + .5 * Math.sin(t*.7 + 2.2);
+        y += Math.sin(x/R*4.2 + t*cur.spd*1.4) * R*cur.amp*.3 * cur.choppy * gust;
       }
       return y;
     };

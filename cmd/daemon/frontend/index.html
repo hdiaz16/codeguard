@@ -323,8 +323,9 @@
       const detail = Object.entries(byPillar)
         .map(([k, n]) => `${n} de ${PILAR[k] || k}`)
         .join(" · ");
+      // acordeón cerrado por defecto: solo el resumen; el dev expande lo que le interesa
       html += `<section><h2>Bloqueantes <span class="bd">— ${detail}</span></h2>` +
-        blockers.map((f, i) => cardHTML(f, true, p.repo_root, i)).join("") + `</section>`;
+        blockers.map((f, i) => cardHTML(f, false, p.repo_root, i)).join("") + `</section>`;
     }
     if (shown.length) {
       html += `<section><h2>Sugerencias</h2>` +
