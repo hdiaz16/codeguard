@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"codeguard/internal/baseline"
 	"codeguard/internal/config"
 	"codeguard/internal/daemon"
 	"codeguard/internal/engines"
@@ -134,12 +135,13 @@ func runPreCommit() error {
 		ctx, cancel := context.WithTimeout(context.Background(), hookDeadline)
 		defer cancel()
 		res, err = pipeline.Run(ctx, pipeline.Options{
-			Config:   cfg,
-			Diff:     diff,
-			Secrets:  nil, // ya corrió arriba
-			Engines:  daemon.Engines(cfg, false),
-			Rulepack: daemon.RulepackDir(repoRoot, cfg.Rulepack),
-			Timeout:  hookDeadline,
+			Config:       cfg,
+			Diff:         diff,
+			Secrets:      nil, // ya corrió arriba
+			Engines:      daemon.Engines(cfg, false),
+			Rulepack:     daemon.RulepackDir(repoRoot, cfg.Rulepack),
+			Timeout:      hookDeadline,
+			Suppressions: baseline.Load(repoRoot),
 		})
 		if err != nil {
 			progress("análisis local falló (se permite el commit): " + err.Error())
@@ -171,7 +173,7 @@ func runPreCommit() error {
 		progress("capas no revisadas: " + strings.Join(res.Degraded, ", "))
 	}
 
-	if err := persist(repoRoot, cfg, res, len(diff.Files)); err != nil {
+	if err := persistRun(repoRoot, cfg, res, len(diff.Files), false, runID); err != nil {
 		fmt.Fprintln(os.Stderr, "CodeGuard  aviso: no se pudo registrar el run:", err)
 	}
 	if res.BlockingFindings > 0 {

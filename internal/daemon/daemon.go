@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"codeguard/internal/baseline"
 	"codeguard/internal/config"
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/linters"
@@ -138,12 +139,13 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		deadline = 5 * time.Second
 	}
 	res, err := pipeline.Run(ctx, pipeline.Options{
-		Config:   cfg,
-		Diff:     &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified},
-		Secrets:  nil, // ya corrió en el hook
-		Engines:  Engines(cfg, false),
-		Rulepack: rulepack,
-		Timeout:  deadline,
+		Config:       cfg,
+		Diff:         &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified},
+		Secrets:      nil, // ya corrió en el hook
+		Engines:      Engines(cfg, false),
+		Rulepack:     rulepack,
+		Timeout:      deadline,
+		Suppressions: baseline.Load(req.RepoRoot),
 	})
 	if err != nil {
 		resp.Degraded = append(resp.Degraded, fmt.Sprintf("pipeline:%v", err))

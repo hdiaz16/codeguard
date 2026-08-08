@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"codeguard/internal/baseline"
 	"codeguard/internal/config"
 	"codeguard/internal/daemon"
 	glengine "codeguard/internal/engines/gitleaks"
@@ -32,7 +33,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(ciCmd(), versionCmd(), hookCmd(), installCmd(), repairCmd(), daemonCmd())
+	root.AddCommand(ciCmd(), versionCmd(), hookCmd(), installCmd(), repairCmd(), daemonCmd(), baselineCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "codeguard:", err)
 		os.Exit(2)
@@ -91,12 +92,13 @@ func ciCmd() *cobra.Command {
 
 			inCI := os.Getenv("GITHUB_ACTIONS") == "true"
 			res, err := pipeline.Run(context.Background(), pipeline.Options{
-				Config:   cfg,
-				Diff:     diff,
-				Secrets:  &glengine.Engine{Mode: "range", Base: base, Head: head},
-				Engines:  daemon.Engines(cfg, inCI),
-				Rulepack: rulepack,
-				Timeout:  5 * time.Minute,
+				Config:       cfg,
+				Diff:         diff,
+				Secrets:      &glengine.Engine{Mode: "range", Base: base, Head: head},
+				Engines:      daemon.Engines(cfg, inCI),
+				Rulepack:     rulepack,
+				Timeout:      5 * time.Minute,
+				Suppressions: baseline.Load(repoRoot),
 			})
 			if err != nil {
 				return err
@@ -164,10 +166,16 @@ func printSummary(res *pipeline.Result) {
 }
 
 func persist(repoRoot string, cfg *config.Config, res *pipeline.Result, filesChanged int) error {
-	return persistWith(repoRoot, cfg, res, filesChanged, false)
+	return persistRun(repoRoot, cfg, res, filesChanged, false, store.NewULID())
 }
 
 func persistWith(repoRoot string, cfg *config.Config, res *pipeline.Result, filesChanged int, bypassed bool) error {
+	return persistRun(repoRoot, cfg, res, filesChanged, bypassed, store.NewULID())
+}
+
+// persistRun guarda el run con el ID dado — el hook pasa el mismo run id que
+// viaja en el trailer Codeguard-Run-Id, para que BD y trailer coincidan.
+func persistRun(repoRoot string, cfg *config.Config, res *pipeline.Result, filesChanged int, bypassed bool, runID string) error {
 	dbDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard")
 	if dbDir == filepath.Join("", "codeguard") { // sin LOCALAPPDATA (runner Linux)
 		dbDir = filepath.Join(os.TempDir(), "codeguard")
@@ -194,7 +202,7 @@ func persistWith(repoRoot string, cfg *config.Config, res *pipeline.Result, file
 		env = "ci"
 	}
 	return st.SaveRun(store.RunMeta{
-		RunID:       store.NewULID(),
+		RunID:       runID,
 		RepoID:      repoID,
 		Branch:      gitBranch(repoRoot),
 		RulepackVer: cfg.Rulepack,

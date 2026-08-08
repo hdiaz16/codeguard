@@ -32,6 +32,7 @@ type Result struct {
 	Reason           string            `json:"reason,omitempty"`
 	BlockingFindings int               `json:"blocking_findings"`
 	AdvisoryFindings int               `json:"advisory_findings"`
+	Suppressed       int               `json:"suppressed"`
 	Degraded         []string          `json:"degraded"`
 	Findings         []finding.Finding `json:"findings"`
 	ElapsedMs        int64             `json:"elapsed_ms"`
@@ -46,6 +47,9 @@ type Options struct {
 	IsMerge   bool
 	IsRevert  bool
 	Timeout   time.Duration
+	// Suppressions: fingerprints de la baseline (§17 paso 4) — hallazgos
+	// preexistentes que no deben bloquear. Los secretos NUNCA se suprimen.
+	Suppressions map[string]bool
 }
 
 // Run ejecuta el embudo determinista y devuelve el resultado consolidado.
@@ -128,6 +132,21 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 				res.Degraded = append(res.Degraded, opt.Engines[i].Name()+":error")
 			}
 		}
+	}
+
+	// ── Supresiones de baseline: solo lo nuevo bloquea ──────────────────
+	if len(opt.Suppressions) > 0 {
+		kept := res.Findings[:0]
+		for _, f := range res.Findings {
+			// La compuerta de secretos no admite baseline: un secreto viejo
+			// sigue siendo un secreto vivo.
+			if f.Engine != "gitleaks" && opt.Suppressions[f.Fingerprint] {
+				res.Suppressed++
+				continue
+			}
+			kept = append(kept, f)
+		}
+		res.Findings = kept
 	}
 
 	// ── Etapa 7: consolidación ───────────────────────────────────────────
