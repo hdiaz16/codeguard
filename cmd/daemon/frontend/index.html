@@ -22,6 +22,21 @@
     -webkit-app-region: drag; /* ventana sin marco: la cabecera arrastra */
   }
   header .brand { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  .winbtns {
+    position: absolute; top: 10px; right: 10px; display: flex; gap: 4px;
+    -webkit-app-region: no-drag;
+  }
+  .winbtns button {
+    width: 26px; height: 24px; border: none; border-radius: 4px;
+    background: transparent; color: var(--ink-3); font-size: 13px;
+    cursor: pointer; line-height: 1;
+  }
+  .winbtns button:hover { background: var(--surface-2); color: var(--ink); }
+  .winbtns button.close:hover { background: #5c2a23; color: #fff; }
+  .traynote {
+    color: var(--ink-3); font-size: 10.5px; text-align: center;
+    padding: 10px 16px 14px;
+  }
   header .verdict { font-size: 15px; font-weight: 600; margin-top: 4px; }
   header .meta { color: var(--ink-3); font-size: 11px; margin-top: 2px; }
   .verdict.block { color: var(--block); }
@@ -91,6 +106,10 @@
 </head>
 <body>
   <header>
+    <div class="winbtns">
+      <button id="btn-min" title="Contraer al último veredicto">–</button>
+      <button id="btn-close" class="close" title="Ocultar panel — CodeGuard sigue en la bandeja">✕</button>
+    </div>
     <div class="brand">CodeGuard</div>
     <div class="verdict" id="verdict">esperando el primer análisis…</div>
     <div class="meta" id="meta"></div>
@@ -99,6 +118,7 @@
   <main id="main">
     <div class="empty">Haz un commit en un repo enrolado y aquí aparecerá el resultado.</div>
   </main>
+  <div class="traynote">✕ solo oculta el panel — CodeGuard sigue vigilando desde la bandeja del sistema</div>
 
 <script type="module">
   import { Events } from "/wails/runtime.js";
@@ -208,6 +228,14 @@
     v.textContent = `Analizando ${d?.repo ?? ""} @ ${d?.branch ?? ""}…`;
     v.className = "verdict working";
   });
+
+  $("btn-close").addEventListener("click", () => emit("panel-close", null));
+  $("btn-min").addEventListener("click", () => {
+    const main = $("main");
+    main.hidden = !main.hidden; // contrae a solo el veredicto de la cabecera
+    $("btn-min").textContent = main.hidden ? "+" : "–";
+  });
+
   emit("panel-ready", null);
 </script>
 </body>

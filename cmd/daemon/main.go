@@ -149,8 +149,26 @@ func main() {
 	menu.Add("Mostrar panel").OnClick(func(*application.Context) { dockPanel(); panel.Show() })
 	menu.Add("Ocultar panel").OnClick(func(*application.Context) { panel.Hide() })
 	menu.AddSeparator()
-	menu.Add("Salir").OnClick(func(*application.Context) { app.Quit() })
+	menu.Add("Salir de CodeGuard").OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(menu)
+
+	// Clic izquierdo en el ícono: alterna el panel (§12 — consultable siempre
+	// desde la bandeja; cerrarlo nunca detiene el daemon).
+	tray.OnClick(func() {
+		application.InvokeAsync(func() {
+			if panel.IsVisible() {
+				panel.Hide()
+			} else {
+				dockPanel()
+				panel.Show()
+			}
+		})
+	})
+
+	// El ✕ del panel solo lo oculta; el proceso sigue en la bandeja.
+	app.Event.On("panel-close", func(*application.CustomEvent) {
+		application.InvokeAsync(func() { panel.Hide() })
+	})
 
 	var lastPayload *panelPayload
 
