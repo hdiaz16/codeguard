@@ -17,6 +17,8 @@ import (
 	"codeguard/internal/engines"
 	glengine "codeguard/internal/engines/gitleaks"
 	sgengine "codeguard/internal/engines/semgrep"
+	sqengine "codeguard/internal/engines/squawk"
+	tvengine "codeguard/internal/engines/trivy"
 	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/pipeline"
@@ -90,11 +92,21 @@ func ciCmd() *cobra.Command {
 				}
 			}
 
+			inCI := os.Getenv("GITHUB_ACTIONS") == "true"
+			var migGlobs []string
+			if cfg != nil {
+				migGlobs = cfg.Paths.Migrations
+			}
 			res, err := pipeline.Run(context.Background(), pipeline.Options{
-				Config:   cfg,
-				Diff:     diff,
-				Secrets:  &glengine.Engine{Mode: "range", Base: base, Head: head},
-				Engines:  []engines.Engine{&sgengine.Engine{}},
+				Config:  cfg,
+				Diff:    diff,
+				Secrets: &glengine.Engine{Mode: "range", Base: base, Head: head},
+				Engines: []engines.Engine{
+					&sgengine.Engine{},
+					&sqengine.Engine{MigrationGlobs: migGlobs},
+					// Política §7: CVE crítico advierte en local, bloquea en CI.
+					&tvengine.Engine{BlockCritical: inCI, SkipDBUpdate: !inCI},
+				},
 				Rulepack: rulepack,
 				Timeout:  5 * time.Minute,
 			})
