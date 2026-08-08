@@ -22,6 +22,7 @@ import (
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/ipc"
 	"codeguard/internal/pipeline"
+	"codeguard/internal/shadow"
 	"codeguard/internal/store"
 )
 
@@ -32,6 +33,9 @@ type Server struct {
 	// OnRequest se dispara al entrar una petición (estado working en la UI).
 	OnRequest func(req *ipc.Request)
 	OnResult  OnResult
+	// Shadow, si no es nil, corre las etapas 3-6 (LLM en sombra) DESPUÉS de
+	// responder al hook — nunca en el camino del commit.
+	Shadow *shadow.Runner
 }
 
 // Engines arma la lista de motores de la etapa 2. Compartida con `codeguard ci`.
@@ -110,6 +114,16 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 	if s.OnResult != nil {
 		s.OnResult(req, resp)
+	}
+	if s.Shadow != nil && (resp.Verdict == "pass" || resp.Verdict == "block") {
+		if cfg, err := config.Load(req.RepoRoot); err == nil && cfg != nil {
+			go func() {
+				// El hook persiste el run justo después de recibir la respuesta;
+				// esta espera evita actualizar un run que aún no existe.
+				time.Sleep(2 * time.Second)
+				s.Shadow.Run(context.Background(), cfg, req, resp.Findings)
+			}()
+		}
 	}
 }
 

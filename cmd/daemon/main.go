@@ -21,6 +21,7 @@ import (
 	"codeguard/internal/daemon"
 	"codeguard/internal/finding"
 	"codeguard/internal/ipc"
+	"codeguard/internal/shadow"
 	"codeguard/internal/store"
 )
 
@@ -203,7 +204,17 @@ func main() {
 		}
 	})
 
+	shadowStore, err := store.Open(store.DefaultPath())
+	if err != nil {
+		log.Println("sombra desactivada — no se pudo abrir la BD:", err)
+	}
+	var shadowRunner *shadow.Runner
+	if shadowStore != nil {
+		shadowRunner = &shadow.Runner{Store: shadowStore}
+	}
+
 	srv := &daemon.Server{
+		Shadow: shadowRunner,
 		OnRequest: func(req *ipc.Request) {
 			repo := filepath.Base(req.RepoRoot)
 			ts.set("working", "analizando "+repo+"@"+req.Branch+"…")

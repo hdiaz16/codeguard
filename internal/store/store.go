@@ -184,6 +184,82 @@ func b2i(b bool) int {
 	return 0
 }
 
+type LLMCall struct {
+	RunID             string
+	Pillar            string
+	Model             string
+	PromptTokens      int
+	CompletionTokens  int
+	LatencyMs         int64
+	Status            string // ok | timeout | error | skipped
+	FindingsReturned  int
+	FindingsRejected  int
+}
+
+// SaveLLMCall registra la telemetría de una llamada al modelo (fase 3 sombra).
+func (s *Store) SaveLLMCall(c LLMCall) error {
+	_, err := s.db.Exec(`INSERT INTO llm_calls
+		(id, run_id, pillar, model, prompt_tokens, completion_tokens, cost_micros,
+		 latency_ms, status, findings_returned, findings_rejected, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+		NewULID(), c.RunID, c.Pillar, c.Model, c.PromptTokens, c.CompletionTokens,
+		c.LatencyMs, c.Status, c.FindingsReturned, c.FindingsRejected, nowISO())
+	return err
+}
+
+// SaveLLMFindings persiste hallazgos del modelo en sombra: shown=0 siempre.
+func (s *Store) SaveLLMFindings(runID string, fs []finding.Finding) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, f := range fs {
+		id := f.ID
+		if id == "" {
+			id = NewULID()
+		}
+		_, err := tx.Exec(`INSERT INTO findings
+			(id, run_id, engine, rule_key, pillar, severity, source, blocking,
+			 verified, shown, file_path, line_start, line_end, fingerprint,
+			 message, why, fix_hint, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, 'llm', 0, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, runID, f.Engine, f.RuleKey, string(f.Pillar), string(f.Severity),
+			b2i(f.Verified), f.File, f.Line, f.EndLine, f.Fingerprint,
+			f.Message, f.Why, f.FixHint, nowISO())
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// UpdateRunLLM anota el puntaje de riesgo y si se usó el modelo.
+func (s *Store) UpdateRunLLM(runID string, riskScore int, llmUsed bool) error {
+	_, err := s.db.Exec(`UPDATE runs SET risk_score = ?, llm_used = ? WHERE id = ?`,
+		riskScore, b2i(llmUsed), runID)
+	return err
+}
+
+// DiffCacheGet / DiffCachePut: caché de resultados LLM por diff (§9).
+func (s *Store) DiffCacheGet(repoID, diffSHA, rulepack, configHash, model string) (string, bool) {
+	var result string
+	err := s.db.QueryRow(`SELECT result_json FROM diff_cache
+		WHERE repo_id=? AND diff_sha256=? AND rulepack_ver=? AND config_hash=? AND model=?`,
+		repoID, diffSHA, rulepack, configHash, model).Scan(&result)
+	return result, err == nil
+}
+
+func (s *Store) DiffCachePut(repoID, diffSHA, rulepack, configHash, model, resultJSON string) error {
+	_, err := s.db.Exec(`INSERT INTO diff_cache
+		(id, repo_id, diff_sha256, rulepack_ver, config_hash, model, result_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (repo_id, diff_sha256, rulepack_ver, config_hash, model)
+		DO UPDATE SET result_json = excluded.result_json, created_at = excluded.created_at`,
+		NewULID(), repoID, diffSHA, rulepack, configHash, model, resultJSON, nowISO())
+	return err
+}
+
 // DefaultPath es la BD local por usuario, compartida por hook, ci y daemon.
 func DefaultPath() string {
 	base := os.Getenv("LOCALAPPDATA")

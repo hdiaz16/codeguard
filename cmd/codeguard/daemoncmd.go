@@ -8,6 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"codeguard/internal/daemon"
+	"codeguard/internal/shadow"
+	"codeguard/internal/store"
 )
 
 func daemonCmd() *cobra.Command {
@@ -17,7 +19,12 @@ func daemonCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
-			srv := &daemon.Server{}
+			st, err := store.Open(store.DefaultPath())
+			if err != nil {
+				return err
+			}
+			defer st.Close()
+			srv := &daemon.Server{Shadow: &shadow.Runner{Store: st}}
 			return srv.Serve(ctx)
 		},
 	}
