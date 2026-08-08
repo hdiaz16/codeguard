@@ -1,0 +1,35 @@
+version: 1
+rulepack: "2026.08.1"
+
+languages: [go, typescript, python]
+
+paths:
+  exclude: ["**/node_modules/**", "spikes/**", "**/testrepo/**", "**/tsproject/**"]
+  migrations: ["migrations/*.sql"]
+  sensitive: []
+  generated: []
+
+gates:
+  secrets: block
+  format: block
+  compile: block
+  lint_error: block
+  semgrep_error: block
+  migration_unsafe: block
+  cve_critical: warn_local_block_ci
+  llm: never_block
+
+risk:
+  threshold: 35
+  weights:
+    touches_migration: 30
+    touches_sensitive: 25
+    ai_generated: 20
+    touches_security_config: 20
+    adds_dependency: 15
+    touches_query: 15
+    many_files: 10
+    tests_only: -20
+    docs_only: -40
+
+max_diff_lines: 2000

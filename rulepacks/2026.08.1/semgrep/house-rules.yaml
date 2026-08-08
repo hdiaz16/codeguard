@@ -1,0 +1,77 @@
+rules:
+  - id: ts-explicit-any
+    languages: [typescript]
+    severity: ERROR
+    message: "'any' explícito prohibido por regla de la casa"
+    metadata:
+      pillar: quality
+      why: "'any' desactiva el chequeo de tipos justo donde más se necesita."
+      fix_hint: "Usa 'unknown' y estrecha el tipo, o declara el tipo real."
+    patterns:
+      - pattern: "function $F($X: any) { ... }"
+
+  - id: go-ignored-error
+    languages: [go]
+    severity: ERROR
+    message: "Error ignorado con blank identifier"
+    metadata:
+      pillar: quality
+      why: "Un error tragado se convierte en un fallo silencioso en producción."
+      fix_hint: "Maneja el error o propágalo; si de verdad es ignorable, documenta por qué."
+    pattern: "_ = $F(...)"
+
+  - id: python-eval
+    languages: [python]
+    severity: ERROR
+    message: "eval() sobre entrada — inyección de código"
+    metadata:
+      pillar: security
+      why: "eval ejecuta cualquier expresión: entrada de usuario = ejecución remota."
+      fix_hint: "Usa ast.literal_eval o un parser específico del formato esperado."
+    pattern: "eval(...)"
+
+  - id: csharp-empty-catch
+    languages: [csharp]
+    severity: ERROR
+    message: "Bloque catch vacío traga la excepción"
+    metadata:
+      pillar: quality
+      why: "OWASP A10 2025: manejo de condiciones excepcionales. El fallo desaparece sin rastro."
+      fix_hint: "Registra la excepción y decide: recuperar, reintentar o propagar."
+    pattern: |
+      try { ... } catch ($T $E) { }
+
+  - id: java-empty-catch
+    languages: [java]
+    severity: ERROR
+    message: "Bloque catch vacío traga la excepción"
+    metadata:
+      pillar: quality
+      why: "OWASP A10 2025: manejo de condiciones excepcionales. El fallo desaparece sin rastro."
+      fix_hint: "Registra la excepción y decide: recuperar, reintentar o propagar."
+    pattern: |
+      try { ... } catch ($T $E) { }
+
+  - id: sql-in-loop-ts
+    languages: [typescript]
+    severity: WARNING
+    message: "Posible N+1: consulta dentro de bucle"
+    metadata:
+      pillar: data
+      why: "Una consulta por elemento multiplica la latencia por el tamaño de la lista."
+      fix_hint: "Trae todo en una consulta (IN / JOIN) o usa el batching del ORM."
+    patterns:
+      - pattern-inside: |
+          for (...) { ... }
+      - pattern: "await $DB.query(...)"
+
+  - id: hardcoded-connstring
+    languages: [csharp, java, typescript, python, go]
+    severity: ERROR
+    message: "Cadena de conexión hardcodeada"
+    metadata:
+      pillar: security
+      why: "Credenciales en el código llegan al historial de git y a cada clon."
+      fix_hint: "Muévela a configuración/variable de entorno y rota la credencial."
+    patterns:
+      - pattern-regex: "(Server|Data Source)=.*;.*(Password|Pwd)=[^;\"']+"

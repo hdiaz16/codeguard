@@ -1,0 +1,48 @@
+name: CodeGuard (sombra)
+on:
+  pull_request:
+  push:
+    branches: [main, master, develop]
+
+jobs:
+  analyze:
+    # Mismo SO que los devs: elimina divergencias de ruta y de finales de línea (spec §11).
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Fase 1: se compila del fuente. Desde la fase 2 se descargará el binario
+      # firmado con la versión pinneada en config y se verificará su firma.
+      - name: Construir CodeGuard
+        run: go build -o codeguard.exe ./cmd/codeguard
+
+      - name: Instalar motores
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@latest
+          pip install semgrep
+          echo "$(go env GOPATH)\bin" >> $env:GITHUB_PATH
+
+      - name: Analizar (modo sombra — nunca falla el job)
+        run: |
+          $base = "${{ github.event.pull_request.base.sha }}"
+          if (-not $base) { $base = "${{ github.event.before }}" }
+          ./codeguard.exe ci --base $base --head ${{ github.sha }} --out results.sarif --shadow
+        # Sin credenciales de Foundry: el CI corre SOLO la capa determinista (spec §11)
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif

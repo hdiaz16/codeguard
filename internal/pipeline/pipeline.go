@@ -1,0 +1,195 @@
+// Package pipeline orquesta las etapas del embudo (sección 5).
+// Fase 1: etapas 0 (elegibilidad), 1 (secretos), 2 (deterministas) y 7 (consolidación).
+package pipeline
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/gobwas/glob"
+	"golang.org/x/sync/errgroup"
+
+	"codeguard/internal/config"
+	"codeguard/internal/engines"
+	"codeguard/internal/engines/gitleaks"
+	"codeguard/internal/finding"
+	"codeguard/internal/gitdiff"
+)
+
+type Verdict string
+
+const (
+	Pass    Verdict = "pass"
+	Block   Verdict = "block"
+	Skipped Verdict = "skipped"
+)
+
+type Result struct {
+	Verdict          Verdict           `json:"verdict"`
+	Reason           string            `json:"reason,omitempty"`
+	BlockingFindings int               `json:"blocking_findings"`
+	AdvisoryFindings int               `json:"advisory_findings"`
+	Degraded         []string          `json:"degraded"`
+	Findings         []finding.Finding `json:"findings"`
+	ElapsedMs        int64             `json:"elapsed_ms"`
+}
+
+type Options struct {
+	Config    *config.Config
+	Diff      *gitdiff.Diff
+	Secrets   engines.Engine   // etapa 1, fail-closed
+	Engines   []engines.Engine // etapa 2
+	Rulepack  string           // ruta al rulepack pinneado
+	IsMerge   bool
+	IsRevert  bool
+	Timeout   time.Duration
+}
+
+// Run ejecuta el embudo determinista y devuelve el resultado consolidado.
+func Run(ctx context.Context, opt Options) (*Result, error) {
+	start := time.Now()
+	res := &Result{Verdict: Pass, Degraded: []string{}}
+	defer func() { res.ElapsedMs = time.Since(start).Milliseconds() }()
+
+	// ── Etapa 0: elegibilidad ────────────────────────────────────────────
+	if opt.Config == nil {
+		res.Verdict, res.Reason = Skipped, "repo no enrolado (falta .codeguard/config.yaml)"
+		return res, nil
+	}
+	if opt.IsMerge || opt.IsRevert {
+		res.Verdict, res.Reason = Skipped, "merge o revert"
+		return res, nil
+	}
+	files := filterExcluded(opt.Config, opt.Diff.Files)
+	if len(files) == 0 {
+		res.Verdict, res.Reason = Skipped, "todos los archivos tocados están excluidos"
+		return res, nil
+	}
+	degradeToSecretsOnly := opt.Diff.Lines > opt.Config.MaxDiffLines
+
+	if opt.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opt.Timeout)
+		defer cancel()
+	}
+
+	in := engines.Input{
+		RepoRoot:    opt.Config.RepoRoot,
+		Files:       files,
+		RulepackDir: opt.Rulepack,
+	}
+
+	// ── Etapa 1: secretos (BLOQUEANTE, fail-closed) ──────────────────────
+	secretFindings, err := opt.Secrets.Run(ctx, in)
+	if err != nil {
+		if errors.Is(err, gitleaks.ErrUnavailable) {
+			// Única ruta de error que bloquea (sección 14).
+			res.Verdict = Block
+			res.Reason = fmt.Sprintf("la compuerta de secretos no pudo correr (fail-closed): %v", err)
+			return res, nil
+		}
+		return nil, err
+	}
+	res.Findings = append(res.Findings, secretFindings...)
+
+	// ── Etapa 2: compuertas deterministas en paralelo ────────────────────
+	if degradeToSecretsOnly {
+		res.Degraded = append(res.Degraded, "deterministic:diff_too_large")
+	} else {
+		g, gctx := errgroup.WithContext(ctx)
+		results := make([][]finding.Finding, len(opt.Engines))
+		failures := make([]error, len(opt.Engines))
+		for i, eng := range opt.Engines {
+			if !eng.Applies(in) {
+				continue
+			}
+			g.Go(func() error {
+				fs, err := eng.Run(gctx, in)
+				if err != nil {
+					failures[i] = err // no bloquea: se degrada (sección 14)
+					return nil
+				}
+				results[i] = fs
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
+			return nil, err
+		}
+		for i, fs := range results {
+			res.Findings = append(res.Findings, fs...)
+			if failures[i] != nil {
+				res.Degraded = append(res.Degraded, opt.Engines[i].Name()+":error")
+			}
+		}
+	}
+
+	// ── Etapa 7: consolidación ───────────────────────────────────────────
+	res.Findings = consolidate(res.Findings)
+	for _, f := range res.Findings {
+		if f.Blocking {
+			res.BlockingFindings++
+		} else {
+			res.AdvisoryFindings++
+		}
+	}
+	if res.BlockingFindings > 0 {
+		res.Verdict = Block
+	}
+	return res, nil
+}
+
+func filterExcluded(cfg *config.Config, files []gitdiff.ChangedFile) []gitdiff.ChangedFile {
+	patterns := make([]glob.Glob, 0, len(cfg.Paths.Exclude)+len(cfg.Paths.Generated))
+	for _, p := range append(append([]string{}, cfg.Paths.Exclude...), cfg.Paths.Generated...) {
+		if g, err := glob.Compile(p, '/'); err == nil {
+			patterns = append(patterns, g)
+		}
+	}
+	var kept []gitdiff.ChangedFile
+	for _, f := range files {
+		excluded := false
+		for _, g := range patterns {
+			if g.Match(f.Path) {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			kept = append(kept, f)
+		}
+	}
+	return kept
+}
+
+// consolidate implementa la etapa 7: dedupe por (archivo, línea, regla) y
+// orden por severidad (error > warning > info) y luego por archivo/línea.
+func consolidate(fs []finding.Finding) []finding.Finding {
+	seen := map[string]bool{}
+	out := fs[:0]
+	for _, f := range fs {
+		key := fmt.Sprintf("%s|%d|%s", f.File, f.Line, f.RuleKey)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, f)
+	}
+	rank := map[finding.Severity]int{finding.Error: 0, finding.Warning: 1, finding.Info: 2}
+	sort.SliceStable(out, func(a, b int) bool {
+		if out[a].Blocking != out[b].Blocking {
+			return out[a].Blocking
+		}
+		if rank[out[a].Severity] != rank[out[b].Severity] {
+			return rank[out[a].Severity] < rank[out[b].Severity]
+		}
+		if out[a].File != out[b].File {
+			return out[a].File < out[b].File
+		}
+		return out[a].Line < out[b].Line
+	})
+	return out
+}
