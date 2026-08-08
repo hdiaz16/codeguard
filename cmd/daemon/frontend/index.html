@@ -4,12 +4,35 @@
 <meta charset="utf-8">
 <title>CodeGuard</title>
 <style>
+  /* ── Sistema de diseño MONTAÑA v2 ──────────────────────────────────────
+     Profundidad por 3 niveles de color + sombra. CERO bordes: toda la
+     separación es luz y elevación. Colores semánticos definidos para
+     escanear hallazgos de un vistazo. */
   :root {
-    /* paleta MONTAÑA (coherente con la esfera): pizarra, niebla y nieve */
-    --bg: #17191c; --surface: #1e2125; --surface-2: #262a2f;
-    --ink: #e6e9ec; --ink-2: #a9b1b8; --ink-3: #7b838a;
-    --accent: #9db4c0; --block: #b97a6c; --warn: #bfae7f; --ok: #9dbfa9;
-    --hairline: #2c3034;
+    /* profundidad: excavado → base → elevado (+ interactivo) */
+    --d0: #121417;   /* excavado: snippets, pozos */
+    --d1: #1b1e22;   /* base: la tarjeta del panel */
+    --d2: #23272c;   /* elevado: tarjetas de hallazgo */
+    --d3: #2c3138;   /* interactivo: botones, hover */
+
+    /* tinta en 3 pesos */
+    --ink: #edf0f2; --ink-2: #a9b2ba; --ink-3: #78818a;
+
+    /* semánticos definidos — cada uno significa UNA cosa */
+    --accent: #8fb8ce;   /* niebla: marca, enlaces, acciones */
+    --block:  #e4604b;   /* bloquea: rojo franco */
+    --warn:   #e5b54a;   /* atención: ámbar franco */
+    --ok:     #4ec28e;   /* bien: verde franco */
+
+    /* pilares: fondo tintado + texto definido */
+    --p-sec-bg: #46231d; --p-sec-fg: #f0937d;
+    --p-qua-bg: #1d2b36; --p-qua-fg: #8fc1e3;
+    --p-dat-bg: #1d332a; --p-dat-fg: #7fd6a8;
+
+    /* sombras del sistema (la única fuente de separación) */
+    --raise: 0 1px 2px rgba(0,0,0,.45), 0 4px 12px rgba(0,0,0,.22);
+    --carve: inset 0 2px 6px rgba(0,0,0,.45);
+    --float: 0 8px 28px rgba(0,0,0,.5);
   }
   * { box-sizing: border-box; }
   html, body { background: transparent; }
@@ -19,17 +42,16 @@
     line-height: 1.45; user-select: none; overflow: hidden;
     height: 100vh; padding: 14px;
   }
-  /* tarjeta flotante: la superficie real del panel (semi-translúcida
-     para dejar ver el acrílico de Windows detrás) */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── nivel d1: la tarjeta flotante (sin borde: solo sombra) ── */
   .shell {
     height: 100%; display: flex; flex-direction: column;
-    background: #17191c; /* opaco explícito: sin nada traslúcido */
+    background: var(--d1);
     border-radius: 22px;
-    border: 1px solid rgba(255,255,255,.07);
-    /* sombra discreta — la difusa grande se veía como un segundo fondo */
-    box-shadow: 0 6px 20px rgba(0,0,0,.38);
+    box-shadow: var(--float);
     overflow: hidden;
-    transform-origin: 92% 105%; /* nace del orbe, abajo a la derecha */
+    transform-origin: 92% 105%;
     opacity: 0;
   }
   .shell.enter { animation: bloom .55s cubic-bezier(.22, 1.18, .36, 1) forwards; }
@@ -43,7 +65,6 @@
     0%   { transform: scale(1); opacity: 1; }
     100% { transform: translate(20px, 46px) scale(.5); opacity: 0; filter: blur(6px); }
   }
-  /* el contenido florece en cascada, tarjeta por tarjeta */
   .shell.enter section h2, .shell.enter .degraded, .shell.enter .traynote {
     animation: rise .5s cubic-bezier(.2, .9, .3, 1) both;
   }
@@ -56,39 +77,43 @@
     from { transform: translateY(14px); opacity: 0; }
     to   { transform: translateY(0);    opacity: 1; }
   }
-  main { flex: 1; overflow-y: auto; overflow-x: hidden; }
+  main { flex: 1; overflow-y: auto; overflow-x: hidden; padding-bottom: 6px; }
   main::-webkit-scrollbar { width: 8px; }
-  main::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 4px; }
+  main::-webkit-scrollbar-thumb { background: var(--d3); border-radius: 4px; }
   @media (prefers-reduced-motion: reduce) {
     .shell, .shell.enter, .shell.leave, .shell.enter section h2,
     .shell.enter details.card, .shell.enter .degraded, .shell.enter .traynote { animation: none !important; opacity: 1; }
   }
+
+  /* ── cabecera: se separa del contenido con luz, no con línea ── */
   header {
-    padding: 14px 16px 10px; border-bottom: 1px solid var(--hairline);
-    position: sticky; top: 0; background: var(--bg); z-index: 2;
-    -webkit-app-region: drag; /* ventana sin marco: la cabecera arrastra */
+    padding: 16px 18px 12px;
+    position: sticky; top: 0; background: var(--d1); z-index: 2;
+    box-shadow: 0 10px 14px -12px rgba(0,0,0,.6);
+    -webkit-app-region: drag;
   }
-  header .brand { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  header .brand { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
   .winbtns {
-    position: absolute; top: 10px; right: 10px; display: flex; gap: 4px;
+    position: absolute; top: 12px; right: 12px; display: flex; gap: 6px;
     -webkit-app-region: no-drag;
   }
   .winbtns button {
-    width: 26px; height: 24px; border: none; border-radius: 4px;
-    background: transparent; color: var(--ink-3); font-size: 13px;
-    cursor: pointer; line-height: 1;
+    width: 28px; height: 26px; border: none; border-radius: 8px;
+    background: var(--d2); color: var(--ink-3); font-size: 13px;
+    cursor: pointer; line-height: 1; box-shadow: var(--raise);
+    transition: background .15s, color .15s, transform .1s;
   }
-  .winbtns button:hover { background: var(--surface-2); color: var(--ink); }
-  .winbtns button.close:hover { background: #5c2a23; color: #fff; }
-  .traynote {
-    color: var(--ink-3); font-size: 10.5px; text-align: center;
-    padding: 10px 16px 14px;
-  }
-  header .verdict { font-size: 15px; font-weight: 600; margin-top: 4px; }
-  header .meta { color: var(--ink-3); font-size: 11px; margin-top: 2px; }
-  /* hilo de pensamiento del modelo: efímero, una línea, se desvanece solo */
+  .winbtns button:hover { background: var(--d3); color: var(--ink); transform: translateY(-1px); }
+  .winbtns button.close:hover { background: var(--block); color: #fff; }
+  header .verdict { font-size: 15.5px; font-weight: 650; margin-top: 6px; letter-spacing: -.01em; }
+  header .meta { color: var(--ink-3); font-size: 11px; margin-top: 3px; }
+  .verdict.block   { color: var(--block); }
+  .verdict.pass    { color: var(--ok); }
+  .verdict.working { color: var(--warn); }
+
+  /* hilo de pensamiento: efímero */
   #thinking {
-    color: var(--ink-3); font-size: 11px; font-style: italic; margin-top: 4px;
+    color: var(--ink-3); font-size: 11px; font-style: italic; margin-top: 5px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     opacity: 0; transition: opacity .5s;
   }
@@ -99,87 +124,103 @@
     animation: think 1.2s ease-in-out infinite;
   }
   @keyframes think { 50% { opacity: .3; } }
-  .verdict.block { color: var(--block); }
-  .verdict.pass  { color: var(--ok); }
+
   .parity {
-    background: #3a2b15; color: var(--warn); padding: 8px 16px; font-size: 12px;
-    border-bottom: 1px solid var(--hairline);
+    background: rgba(229,181,74,.12); color: var(--warn);
+    padding: 9px 18px; font-size: 12px; font-weight: 500;
   }
-  .degraded { color: var(--ink-3); font-size: 11px; padding: 8px 16px 14px; }
+  .degraded { color: var(--ink-3); font-size: 11px; padding: 8px 18px 14px; }
+  .traynote { color: var(--ink-3); font-size: 10.5px; text-align: center; padding: 10px 16px 14px; }
+  .empty { color: var(--ink-3); text-align: center; padding: 44px 20px; }
+  .truncated { color: var(--ink-3); font-size: 11px; margin: 2px 18px 10px; }
+
   section h2 {
-    font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
-    color: var(--ink-3); margin: 14px 16px 6px; font-weight: 600;
+    font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-3); margin: 16px 18px 8px; font-weight: 650;
   }
+  section h2 .bd { color: var(--ink-3); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+  /* ── nivel d2: tarjetas de hallazgo — elevadas por sombra, cero borde ── */
   .card {
-    background: var(--surface); border: 1px solid var(--hairline);
-    border-radius: 6px; margin: 0 10px 8px; overflow: hidden;
+    background: var(--d2);
+    border-radius: 12px; margin: 0 12px 10px; overflow: hidden;
+    box-shadow: var(--raise);
   }
+  .card.blocking { box-shadow: 0 1px 2px rgba(0,0,0,.45), 0 4px 14px rgba(228,96,75,.13); }
   .card summary {
-    list-style: none; cursor: pointer; padding: 9px 12px;
-    display: flex; gap: 8px; align-items: baseline;
+    list-style: none; cursor: pointer; padding: 11px 13px;
+    display: flex; gap: 9px; align-items: baseline;
+    transition: background .15s;
   }
+  .card summary:hover { background: var(--d3); }
   .card summary::-webkit-details-marker { display: none; }
   .rule { font-family: Consolas, monospace; font-size: 11px; color: var(--accent); white-space: nowrap; }
-  .card.blocking .rule { color: var(--block); }
-  /* pilar visible de frente en cada tarjeta */
+  .card.blocking .rule { color: var(--block); font-weight: 600; }
+  .msg { flex: 1; }
+  .body { padding: 2px 13px 12px; }
+
+  /* pilar: tinte de fondo + texto definido, sin borde */
   .pillbadge {
-    font-size: 9.5px; font-weight: 650; text-transform: uppercase;
-    letter-spacing: .07em; padding: 2px 7px; border-radius: 999px;
+    font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; padding: 3px 8px; border-radius: 999px;
     white-space: nowrap; align-self: center;
   }
-  .pillbadge.p-security { background: #3a2723; color: #d9a294; }
-  .pillbadge.p-quality  { background: #232c33; color: #9db4c0; }
-  .pillbadge.p-data     { background: #22302a; color: #9dbfa9; }
-  section h2 .bd { color: var(--ink-3); font-weight: 400; text-transform: none; letter-spacing: 0; }
-  .msg { flex: 1; }
-  .loc { color: var(--ink-3); font-size: 11px; font-family: Consolas, monospace; }
-  .body { padding: 0 12px 10px; }
-  .snippet {
-    background: var(--bg); border: 1px solid var(--hairline); border-radius: 4px;
-    font-family: Consolas, monospace; font-size: 11.5px; overflow-x: auto;
-    padding: 6px 0; margin: 4px 0 8px; user-select: text;
-  }
-  .snippet div { padding: 0 10px; white-space: pre; }
-  .snippet .no { color: var(--ink-3); display: inline-block; width: 34px; text-align: right; margin-right: 10px; }
-  .snippet .culprit { background: #3a211d; }
-  .card.advisory .snippet .culprit { background: #362b15; }
-  .why { color: var(--ink-2); margin: 6px 0; }
-  .fix { color: var(--ink-2); margin: 6px 0; }
-  .fix b, .why b { color: var(--ink); font-weight: 600; }
-  .fb { display: flex; gap: 6px; margin-top: 8px; }
-  .fb button {
-    background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--hairline);
-    border-radius: 4px; padding: 4px 10px; font-size: 11px; cursor: pointer;
-    font-family: inherit;
-  }
-  .fb button:hover { color: var(--ink); border-color: var(--ink-3); }
-  .fb button.sent { color: var(--accent); border-color: var(--accent); pointer-events: none; }
-  .explain {
-    margin: 8px 0 2px; padding: 8px 10px; border-radius: 6px;
-    background: #20262c; border-left: 2px solid var(--accent);
-    color: var(--ink-2); font-size: 12.5px; line-height: 1.5;
-    animation: rise .4s ease both;
-  }
-  .explain b { color: var(--accent); font-weight: 600; font-size: 10.5px;
-    text-transform: uppercase; letter-spacing: .08em; display: block; margin-bottom: 3px; }
-  .empty { color: var(--ink-3); text-align: center; padding: 40px 20px; }
-  .truncated { color: var(--ink-3); font-size: 11px; margin: 2px 16px 10px; }
-  .verdict.working { color: var(--warn); }
-  .chips { display: flex; gap: 5px; margin: 6px 0 2px; flex-wrap: wrap; }
+  .pillbadge.p-security { background: var(--p-sec-bg); color: var(--p-sec-fg); }
+  .pillbadge.p-quality  { background: var(--p-qua-bg); color: var(--p-qua-fg); }
+  .pillbadge.p-data     { background: var(--p-dat-bg); color: var(--p-dat-fg); }
+
+  .chips { display: flex; gap: 6px; margin: 6px 0 4px; flex-wrap: wrap; }
   .chip {
     font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
-    padding: 2px 7px; border-radius: 999px; border: 1px solid var(--hairline);
-    color: var(--ink-2); background: var(--surface-2);
+    padding: 3px 8px; border-radius: 999px;
+    color: var(--ink-2); background: var(--d3);
   }
-  .chip.sev-error { color: var(--block); border-color: var(--block); }
-  .chip.sev-warning { color: var(--warn); border-color: var(--warn); }
+  .chip.sev-error   { background: rgba(228,96,75,.16);  color: var(--block); font-weight: 650; }
+  .chip.sev-warning { background: rgba(229,181,74,.15); color: var(--warn); font-weight: 650; }
+
   .path {
     color: var(--ink-3); font-size: 11px; font-family: Consolas, monospace;
     cursor: pointer; word-break: break-all; user-select: text;
+    transition: color .15s;
   }
   .path:hover { color: var(--accent); }
-  .path .hint { font-family: "Segoe UI", sans-serif; font-size: 10px; opacity: 0; }
+  .path .hint { font-family: "Segoe UI", sans-serif; font-size: 10px; opacity: 0; transition: opacity .15s; }
   .path:hover .hint { opacity: 1; }
+
+  /* ── nivel d0: el código va EXCAVADO (sombra interior, sin borde) ── */
+  .snippet {
+    background: var(--d0); border-radius: 8px;
+    box-shadow: var(--carve);
+    font-family: Consolas, monospace; font-size: 11.5px; overflow-x: auto;
+    padding: 7px 0; margin: 6px 0 9px; user-select: text;
+  }
+  .snippet div { padding: 1px 12px; white-space: pre; }
+  .snippet .no { color: var(--ink-3); display: inline-block; width: 34px; text-align: right; margin-right: 12px; }
+  .snippet .culprit { background: rgba(228,96,75,.16); }
+  .card.advisory .snippet .culprit { background: rgba(229,181,74,.14); }
+
+  .why, .fix { color: var(--ink-2); margin: 7px 0; }
+  .fix b, .why b { color: var(--ink); font-weight: 600; }
+
+  /* ── nivel d3: lo interactivo — botones que se levantan al tocarlos ── */
+  .fb { display: flex; gap: 8px; margin-top: 10px; }
+  .fb button {
+    background: var(--d3); color: var(--ink-2); border: none;
+    border-radius: 8px; padding: 6px 13px; font-size: 11px; cursor: pointer;
+    font-family: inherit; box-shadow: var(--raise);
+    transition: background .15s, color .15s, transform .1s, box-shadow .15s;
+  }
+  .fb button:hover { color: var(--ink); transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,.5), 0 6px 16px rgba(0,0,0,.3); }
+  .fb button.sent { background: rgba(143,184,206,.16); color: var(--accent); pointer-events: none; transform: none; box-shadow: none; }
+
+  .explain {
+    margin: 9px 0 2px; padding: 10px 12px; border-radius: 10px;
+    background: rgba(143,184,206,.09);
+    color: var(--ink-2); font-size: 12.5px; line-height: 1.55;
+    animation: rise .4s ease both;
+  }
+  .explain b { color: var(--accent); font-weight: 650; font-size: 10px;
+    text-transform: uppercase; letter-spacing: .1em; display: block; margin-bottom: 4px; }
 </style>
 </head>
 <body>
@@ -236,7 +277,6 @@
       <div class="body">
         <div class="chips">
           <span class="chip sev-${esc(f.severity)}">${esc(SEV[f.severity] || f.severity)}</span>
-          <span class="chip">${esc(PILAR[f.pillar] || f.pillar)}</span>
           <span class="chip">motor: ${esc(f.engine)}</span>
           ${f.is_fact ? `<span class="chip">verificado</span>` : `<span class="chip">observación</span>`}
         </div>
