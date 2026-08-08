@@ -4,260 +4,215 @@
 <meta charset="utf-8">
 <title>CodeGuard estado</title>
 <style>
+  /* ── Orbe de plasma (portado de os-samantha): 3 capas fusionadas por un
+     filtro gooey — resplandor que respira, núcleo que morfa y rota, destello
+     que pulsa. Los estados de CodeGuard reasignan paleta y velocidades. ── */
+  :root {
+    /* default = idle (el rojo/naranja cálido de Her) */
+    --plasma-glow: rgba(200, 30, 30, 0.5);
+    --plasma-hot-a: #ff3300;
+    --plasma-hot-b: #ff8800;
+    --plasma-spark-mid: #ffaa55;
+    --speed-breathe: 6s;
+    --speed-morph: 9s;
+    --speed-spin: 20s;
+    --speed-pulse: 4s;
+    --dim: 1;
+  }
+  * { box-sizing: border-box; }
   html, body {
     margin: 0; width: 100%; height: 100%; overflow: hidden;
     background: transparent; user-select: none;
+    font-family: "Segoe UI", system-ui, sans-serif;
   }
-  canvas { display: block; }
+  svg { display: none; }
+
+  .stage {
+    position: relative; width: 100%; height: 100%;
+    display: flex; justify-content: flex-end; align-items: flex-end;
+  }
+  .container {
+    position: relative;
+    width: 128px; height: 128px;
+    margin: 0 2px 2px 0;
+    display: flex; justify-content: center; align-items: center;
+    filter: url(#goo);
+    cursor: pointer;
+    opacity: var(--dim);
+    transition: opacity .8s ease, transform .3s cubic-bezier(.3, 1.4, .5, 1);
+  }
+  .container.gesto { transform: scale(1.12); }
+
+  .orb-layer {
+    position: absolute;
+    mix-blend-mode: screen;
+    transition: background 0.8s ease, filter 0.8s ease, opacity 0.6s ease;
+    pointer-events: none;
+  }
+  /* Capa 1: resplandor base (respira) */
+  .layer-base {
+    width: 88px; height: 88px; border-radius: 50%;
+    background: radial-gradient(circle, var(--plasma-glow) 0%, rgba(0,0,0,0) 70%);
+    filter: blur(7px);
+    animation: breathe var(--speed-breathe) infinite ease-in-out;
+  }
+  /* Capa 2: núcleo de plasma (morfa + rota) */
+  .layer-core {
+    width: 62px; height: 62px;
+    background: linear-gradient(45deg, var(--plasma-hot-a), var(--plasma-hot-b));
+    filter: blur(2px);
+    animation: morph var(--speed-morph) infinite linear,
+               spin var(--speed-spin) infinite linear;
+  }
+  /* Capa 3: destello interno (pulsa) */
+  .layer-spark {
+    width: 44px; height: 44px;
+    background: radial-gradient(circle, #ffffff 0%, var(--plasma-spark-mid) 50%, transparent 80%);
+    opacity: 0.8;
+    animation: morph var(--speed-morph) infinite reverse linear,
+               pulse var(--speed-pulse) infinite alternate ease-in-out;
+  }
+
+  /* ── paletas por estado de CodeGuard ── */
+  .orb-idle {
+    --plasma-glow: rgba(200, 30, 30, 0.5);
+    --plasma-hot-a: #ff3300; --plasma-hot-b: #ff8800; --plasma-spark-mid: #ffaa55;
+    --speed-breathe: 6s; --speed-morph: 9s; --speed-spin: 20s; --speed-pulse: 4s;
+  }
+  .orb-working { /* cómputo: violeta + ámbar (el "thinking" de Samantha) */
+    --plasma-glow: rgba(160, 70, 255, 0.7);
+    --plasma-hot-a: #a040ff; --plasma-hot-b: #ffae3a; --plasma-spark-mid: #ffcc88;
+    --speed-breathe: 3s; --speed-morph: 3s; --speed-spin: 6s; --speed-pulse: 1.2s;
+  }
+  .orb-pass { /* todo bien: esmeralda + cyan, calmo */
+    --plasma-glow: rgba(40, 220, 160, 0.6);
+    --plasma-hot-a: #14d99a; --plasma-hot-b: #00d4ff; --plasma-spark-mid: #a8f5dd;
+    --speed-breathe: 5s; --speed-morph: 8s; --speed-spin: 18s; --speed-pulse: 3s;
+  }
+  .orb-blocked { /* alarma: carmesí intenso, todo late rápido */
+    --plasma-glow: rgba(255, 30, 60, 0.85);
+    --plasma-hot-a: #ff1a3c; --plasma-hot-b: #ff6633; --plasma-spark-mid: #ffb0a0;
+    --speed-breathe: 1.6s; --speed-morph: 2.4s; --speed-spin: 8s; --speed-pulse: 0.6s;
+  }
+  .orb-degraded { /* parcial: naranja apagado */
+    --plasma-glow: rgba(230, 140, 50, 0.55);
+    --plasma-hot-a: #e08a30; --plasma-hot-b: #c05f20; --plasma-spark-mid: #ffd9a8;
+    --speed-breathe: 4s; --speed-morph: 6s; --speed-spin: 14s; --speed-pulse: 2.5s;
+  }
+  .orb-offline { /* dormido: brasa gris, casi quieta */
+    --plasma-glow: rgba(120, 125, 130, 0.35);
+    --plasma-hot-a: #5a6168; --plasma-hot-b: #3a4046; --plasma-spark-mid: #9aa2a8;
+    --speed-breathe: 10s; --speed-morph: 16s; --speed-spin: 40s; --speed-pulse: 8s;
+    --dim: .75;
+  }
+
+  @keyframes breathe {
+    0%, 100% { transform: scale(1);    opacity: 0.5; }
+    50%      { transform: scale(1.15); opacity: 0.9; }
+  }
+  /* líquido en gravedad cero */
+  @keyframes morph {
+    0%   { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
+    25%  { border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%; }
+    50%  { border-radius: 50% 50% 20% 80% / 25% 80% 20% 75%; }
+    75%  { border-radius: 70% 30% 50% 50% / 70% 70% 30% 30%; }
+    100% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse {
+    0%   { transform: scale(0.85) rotate(0deg); }
+    100% { transform: scale(1.1)  rotate(-15deg); }
+  }
+
+  /* susurro de estado: arriba del orbe, efímero */
+  .whisper {
+    position: absolute; right: 14px; bottom: 128px;
+    margin: 0; font-size: 12px; font-weight: 300;
+    color: var(--plasma-spark-mid);
+    text-shadow: 0 1px 4px rgba(0,0,0,.6);
+    opacity: 0; transition: opacity .6s ease;
+    white-space: nowrap;
+  }
+  .whisper.on { opacity: .9; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .orb-layer { animation-duration: 20s !important; }
+  }
 </style>
 </head>
 <body>
-<canvas id="c"></canvas>
+  <!-- filtro gooey: suelda las 3 capas en un solo cuerpo de plasma -->
+  <svg aria-hidden="true">
+    <defs>
+      <filter id="goo">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+        <feColorMatrix in="blur" mode="matrix"
+          values="1 0 0 0 0
+                  0 1 0 0 0
+                  0 0 1 0 0
+                  0 0 0 22 -10" result="goo" />
+        <feBlend in="SourceGraphic" in2="goo" />
+      </filter>
+    </defs>
+  </svg>
+
+  <main class="stage orb-idle" id="stage">
+    <p class="whisper" id="whisper"></p>
+    <div class="container" id="orb" title="CodeGuard — sin análisis todavía">
+      <div class="orb-layer layer-base"></div>
+      <div class="orb-layer layer-core"></div>
+      <div class="orb-layer layer-spark"></div>
+    </div>
+  </main>
+
 <script type="module">
   import { Events } from "/wails/runtime.js";
 
-  // ── MONTAÑA: cordillera monocroma dentro de un cristal.
-  //    Una sola esfera; los estados son climas que se funden en vivo. ──────
+  const stage = document.getElementById("stage");
+  const orb = document.getElementById("orb");
+  const whisperEl = document.getElementById("whisper");
 
-  const canvas = document.getElementById("c");
-  const ctx = canvas.getContext("2d");
-  const DPR = window.devicePixelRatio || 1;
-  let W, H, OX, OY;
-  function resize() {
-    W = window.innerWidth; H = window.innerHeight;
-    canvas.width = W * DPR; canvas.height = H * DPR;
-    canvas.style.width = W + "px"; canvas.style.height = H + "px";
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    OX = W - 62; OY = H - 64;
-  }
-  resize();
-  window.addEventListener("resize", resize);
-
-  const GLASS = [22, 24, 27];
-
-  // clima por estado: TODOS los parámetros son interpolables
-  const STATES = {
-    idle:     { liq:"#8e979e", deep:"#565f66", level:.46, amp:.030, spd:.32, br:.026, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.30, sleep:0, dim:1,   whisper:"en reposo" },
-    working:  { liq:"#bcc5cc", deep:"#6d777f", level:.52, amp:.065, spd:1.1, br:.014, slosh:.035,choppy:0, throb:0,    sweep:0, drift:1, mist:.15, sleep:0, dim:1,   whisper:"analizando…" },
-    pass:     { liq:"#e9eef2", deep:"#b3bdc5", level:.90, amp:.018, spd:.32, br:.040, slosh:0,   choppy:0, throb:0,    sweep:1, drift:0, mist:0,   sleep:0, dim:1,   whisper:"todo bien" },
-    blocked:  { liq:"#a67265", deep:"#63413a", level:.62, amp:.055, spd:.8,  br:0,    slosh:0,   choppy:1, throb:.04,  sweep:0, drift:0, mist:0,   sleep:0, dim:1,   whisper:"commit bloqueado" },
-    degraded: { liq:"#9e9484", deep:"#645c50", level:.40, amp:.04,  spd:.45, br:.018, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.45, sleep:0, dim:.95, whisper:"revisión parcial" },
-    offline:  { liq:"#565b60", deep:"#35393d", level:.20, amp:.005, spd:.08, br:.007, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.85, sleep:1, dim:.75, whisper:"sin conexión" },
+  const WHISPERS = {
+    idle: "en reposo", working: "analizando…", pass: "todo bien",
+    blocked: "commit bloqueado", degraded: "revisión parcial", offline: "sin conexión",
   };
+  const VALID = new Set(Object.keys(WHISPERS));
 
-  const hex = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
-  const lerp = (x,y,t) => x + (y-x)*t;
-  const lerp3 = (u,v,t) => [lerp(u[0],v[0],t), lerp(u[1],v[1],t), lerp(u[2],v[2],t)];
-  const css = (c,a=1) => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
-
-  let target = STATES.idle;
-  // clima vivo (interpolado)
-  const cur = { liq: hex(target.liq), deep: hex(target.deep), level: target.level,
-    amp: target.amp, spd: target.spd, br: target.br, slosh: 0, choppy: 0,
-    throb: 0, sweep: 0, drift: 0, mist: target.mist, sleep: 0, dim: 1 };
-
-  const flakes = [];
-  let whisper = { text: "", t0: -9 };
-  let gesture = { t0: -9, dir: 1 };
-  // Sin reacción al mouse: la esfera queda fija — solo el clic actúa.
-
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const ph3 = Math.random() * Math.PI * 2; // fase propia de la marejada
-  let t = 0, tNow = 0, last = performance.now();
-
-  function frame(now) {
-    // 30 fps bastan para agua serena — mitad de CPU/GPU que 60
-    if (now - last < 30) { if (!reduced) requestAnimationFrame(frame); return; }
-    try { paint(now); } catch (e) {
-      // un error de dibujo JAMÁS deja la esfera invisible en silencio:
-      // se pinta un círculo de emergencia y se sigue intentando
-      console.error(e);
-      ctx.clearRect(0, 0, W, H);
-      ctx.beginPath(); ctx.arc(OX, OY, 20, 0, 7);
-      ctx.fillStyle = "rgba(140,150,158,.9)"; ctx.fill();
-    }
-    if (!reduced) requestAnimationFrame(frame);
+  let whisperTimer = null;
+  function say(text) {
+    whisperEl.textContent = text;
+    whisperEl.classList.add("on");
+    clearTimeout(whisperTimer);
+    whisperTimer = setTimeout(() => whisperEl.classList.remove("on"), 3200);
   }
 
-  function paint(now) {
-    const dt = Math.min((now - last) / 1000, .05);
-    last = now;
-    tNow = now / 1000;
-    t += dt;
-
-    // fundido de clima
-    const k = 1 - Math.pow(.002, dt);
-    cur.liq = lerp3(cur.liq, hex(target.liq), k);
-    cur.deep = lerp3(cur.deep, hex(target.deep), k);
-    for (const p of ["amp","spd","br","slosh","choppy","throb","sweep","drift","mist","sleep","dim"])
-      cur[p] = lerp(cur[p], target[p], k);
-    let lvlTarget = target.level;
-    if (cur.slosh > .005) lvlTarget += Math.sin(t*.8) * cur.slosh;
-    cur.level = lerp(cur.level, lvlTarget, 1 - Math.pow(.3, dt));
-
-    ctx.clearRect(0, 0, W, H);
-    const dim = cur.dim;
-    let R = 27;
-    R *= 1 + Math.sin(t*.7) * cur.br;
-    if (cur.throb > .002) R *= 1 + Math.max(0, Math.sin((t*1.45)%(Math.PI*2)))**4 * cur.throb;
-    const g = tNow - gesture.t0;
-    if (g < .6) R *= 1 + gesture.dir * Math.sin(g/.6*Math.PI) * .08;
-
-    // esfera fija: sin inclinación ni hinchazón por el cursor
-    const ox = OX, oy = OY;
-
-    // pulso de sueño
-    const sleepGlow = cur.sleep > .05 ? Math.max(0, Math.sin(t*.5))**12 * cur.sleep : 0;
-
-    // halo mínimo
-    const halo = ctx.createRadialGradient(ox,oy,R*.8, ox,oy,R*1.6);
-    halo.addColorStop(0, css(cur.liq, (.07 + sleepGlow*.1)*dim));
-    halo.addColorStop(1, css(cur.liq, 0));
-    ctx.fillStyle = halo; ctx.fillRect(0,0,W,H);
-
-    ctx.save();
-    ctx.beginPath(); ctx.arc(ox,oy,R,0,7); ctx.clip();
-
-    // cielo de piedra
-    const bg = ctx.createRadialGradient(ox-R*.25, oy-R*.35, R*.15, ox, oy, R*1.35);
-    bg.addColorStop(0, css(lerp3(GLASS,[255,255,255],.09*dim),.98));
-    bg.addColorStop(1, css(GLASS,.99));
-    ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
-
-    const waterY = oy + R - 2*R*cur.level;
-    const tilt = Math.sin(t*cur.spd*.45) * cur.amp*.5 + Math.sin(t*.21)*.008;
-
-    // cordillera (capa profunda): es roca — silueta de picos anchos, casi quieta
-    const ridgeAt = (x) => {
-      const k1 = Math.sin(x/R*1.5 + t*cur.spd*.10 + 1.3);
-      const k2 = Math.sin(x/R*3.1 - t*cur.spd*.06 + .5);
-      return waterY + R*.11 + x*tilt*.3 + (-Math.abs(k1)*.7 - Math.abs(k2)*.3) * R * (cur.amp*1.3 + .03);
-    };
-    ctx.beginPath(); ctx.moveTo(ox-R, oy+R+2);
-    for (let x=-R; x<=R; x+=2) ctx.lineTo(ox+x, ridgeAt(x));
-    ctx.lineTo(ox+R, oy+R+2); ctx.closePath();
-    ctx.fillStyle = css(cur.deep, .85*dim); ctx.fill();
-
-    // línea de agua/nieve: oleaje natural — tres componentes con frecuencias
-    // no armónicas (como el mar real) y marejada que crece y amaina sola.
-    // OJO: nombre distinto a "swell" (hover) — la colisión dejaba la esfera
-    // invisible por TDZ (ReferenceError en cada frame).
-    // A 27 px de radio, menos es más: dos ondulaciones largas y lentas, con
-    // marejada que respira. Las frecuencias altas se veían nerviosas.
-    const marejada = .8 + .2 * Math.sin(t*.26 + ph3);
-    const surfAt = (x) => {
-      const w =
-        Math.sin(x/R*1.3 + t*cur.spd*.7)           * .72 +
-        Math.sin(x/R*2.3 - t*cur.spd*.45 + 1.7)    * .28;
-      let y = waterY + x*tilt + w * R*cur.amp * marejada;
-      if (cur.choppy > .05) {
-        // picada: una tercera ola media que va y viene en rachas suaves
-        const gust = .5 + .5 * Math.sin(t*.7 + 2.2);
-        y += Math.sin(x/R*4.2 + t*cur.spd*1.4) * R*cur.amp*.3 * cur.choppy * gust;
-      }
-      return y;
-    };
-    ctx.beginPath(); ctx.moveTo(ox-R, oy+R+2);
-    for (let x=-R; x<=R; x+=2) ctx.lineTo(ox+x, surfAt(x));
-    ctx.lineTo(ox+R, oy+R+2); ctx.closePath();
-    ctx.fillStyle = css(cur.liq, .88*dim); ctx.fill();
-
-    // cresta con luz fría
-    ctx.beginPath();
-    for (let x=-R; x<=R; x+=2) { const y = surfAt(x); x===-R ? ctx.moveTo(ox+x,y) : ctx.lineTo(ox+x,y); }
-    ctx.strokeStyle = css(lerp3(cur.liq,[255,255,255],.55), .28*dim);
-    ctx.lineWidth = 1; ctx.stroke();
-
-    // amanecer (pass): barrido de sol
-    if (cur.sweep > .05) {
-      const sx = ox - R*1.6 + (((t*.28)%2.2)/2.2) * R*3.2;
-      const sg = ctx.createLinearGradient(sx-R*.6, 0, sx+R*.6, 0);
-      sg.addColorStop(0, "rgba(255,255,255,0)");
-      sg.addColorStop(.5, `rgba(255,255,255,${.16*cur.sweep})`);
-      sg.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = sg;
-      ctx.fillRect(ox-R, waterY-R*.3, R*2, R*2);
-    }
-
-    // ventisca (working)
-    if (cur.drift > .05) {
-      if (Math.random() < dt*3*cur.drift) {
-        const x0 = (Math.random()-.5)*R*1.4;
-        flakes.push({ x:x0, y:surfAt(x0)-1, vx:8+Math.random()*10, vy:-(5+Math.random()*6), a:0, r:.5+Math.random()*.8 });
-      }
-      for (const f of flakes) {
-        f.x += f.vx*dt; f.y += f.vy*dt; f.vy += 4*dt;
-        f.a = f.a < .28 ? f.a + dt*1.4 : f.a;
-        f.a -= dt*.5;
-        if (f.a <= 0) continue;
-        ctx.beginPath(); ctx.arc(ox+f.x, f.y, f.r, 0, 7);
-        ctx.fillStyle = css(lerp3(cur.liq,[255,255,255],.6), f.a*cur.drift);
-        ctx.fill();
-      }
-      while (flakes.length && flakes[0].a <= 0) flakes.shift();
-      if (flakes.length > 14) flakes.shift();
-    }
-
-    // niebla que deriva
-    if (cur.mist > .03) {
-      for (const [ph, spdM, yy, hh] of [[0,.06,-.15,.34],[2.5,.04,.12,.28]]) {
-        const mx = ox + Math.sin(t*spdM + ph) * R * .5;
-        const my = waterY + R*yy;
-        const mg = ctx.createRadialGradient(mx, my, 0, mx, my, R*.9);
-        mg.addColorStop(0, css(lerp3(cur.liq,[255,255,255],.3), .10*cur.mist));
-        mg.addColorStop(1, css(cur.liq, 0));
-        ctx.save(); ctx.scale(1, hh);
-        ctx.beginPath(); ctx.arc(mx, my/hh, R*.9, 0, 7);
-        ctx.fillStyle = mg; ctx.fill();
-        ctx.restore();
-      }
-    }
-
-    // luz de ventana
-    const hl = ctx.createRadialGradient(ox-R*.38, oy-R*.48, 0, ox-R*.38, oy-R*.48, R*.9);
-    hl.addColorStop(0, `rgba(255,255,255,${.09*dim + sleepGlow*.05})`);
-    hl.addColorStop(1, "rgba(255,255,255,0)");
-    ctx.fillStyle = hl; ctx.fillRect(0,0,W,H);
-    ctx.restore();
-
-    // filo del cristal
-    ctx.beginPath(); ctx.arc(ox,oy,R,0,7);
-    ctx.strokeStyle = css(lerp3(GLASS,[255,255,255],.35), .16*dim + sleepGlow*.12);
-    ctx.lineWidth = 1; ctx.stroke();
-
-    // susurro
-    const wAge = tNow - whisper.t0;
-    if (whisper.text && wAge < 4) {
-      let alpha = 1;
-      if (wAge < .6) alpha = wAge/.6;
-      else if (wAge > 2.8) alpha = Math.max(0, 1-(wAge-2.8)/1.2);
-      ctx.font = "300 13px 'Segoe UI', sans-serif";
-      ctx.textAlign = "right";
-      ctx.fillStyle = css(lerp3(cur.liq,[255,255,255],.5), alpha*.85);
-      ctx.fillText(whisper.text, W-12, OY - R - 22);
-    }
-  }
-  requestAnimationFrame(frame);
-
+  let current = "idle";
   function setState(s, tooltip) {
-    if (!STATES[s]) s = "idle";
-    const changed = target !== STATES[s];
-    target = STATES[s];
-    canvas.title = "CodeGuard [" + s + "]" + (tooltip ? " — " + tooltip : "");
-    if (changed) whisper = { text: target.whisper, t0: tNow };
+    if (!VALID.has(s)) s = "idle";
+    const changed = s !== current;
+    current = s;
+    stage.className = "stage orb-" + s;
+    orb.title = "CodeGuard [" + s + "]" + (tooltip ? " — " + tooltip : "");
+    if (changed) say(WHISPERS[s]);
   }
-  setState("idle", "sin análisis todavía");
 
   Events.On("state", (e) => {
     const d = Array.isArray(e.data) ? e.data[0] : e.data;
     if (typeof d === "string") setState(d, "");
     else if (d) setState(d.state, d.tooltip);
   });
-  Events.On("panel-show", () => { gesture = { t0: tNow, dir: 1 }; });
-  Events.On("panel-hide", () => { gesture = { t0: tNow, dir: -1 }; });
 
-  canvas.addEventListener("click", (e) => {
-    if (Math.hypot(e.offsetX - OX, e.offsetY - OY) > 52) return;
+  // gesto al abrir/cerrar el panel: el orbe se estira y vuelve
+  Events.On("panel-show", () => {
+    orb.classList.add("gesto");
+    setTimeout(() => orb.classList.remove("gesto"), 320);
+  });
+  Events.On("panel-hide", () => {
+    orb.classList.add("gesto");
+    setTimeout(() => orb.classList.remove("gesto"), 320);
+  });
+
+  orb.addEventListener("click", () => {
     try { Events.Emit("widget-click", null); }
     catch { Events.Emit({ name: "widget-click", data: null }); }
   });
