@@ -5,28 +5,58 @@
 <title>CodeGuard</title>
 <style>
   :root {
-    --bg: #151c23; --surface: #1c2530; --surface-2: #232f3c;
-    --ink: #dee6ec; --ink-2: #9db0bf; --ink-3: #6b7d8c;
-    --accent: #57bcb4; --block: #e38073; --warn: #d9a64a; --ok: #7cc094;
-    --hairline: #2c3944;
+    /* paleta cálida (coherente con la esfera): carbón tibio + coral */
+    --bg: #221d19; --surface: #2b2521; --surface-2: #362e28;
+    --ink: #efe7e0; --ink-2: #bfb1a6; --ink-3: #8d8178;
+    --accent: #e0876a; --block: #e0604c; --warn: #d9a64a; --ok: #74c193;
+    --hairline: #3b332c;
   }
   * { box-sizing: border-box; }
-  html { background: transparent; }
+  html, body { background: transparent; }
   body {
-    margin: 0; background: var(--bg); color: var(--ink);
+    margin: 0; color: var(--ink);
     font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px;
-    line-height: 1.45; user-select: none; overflow-x: hidden;
-    border-left: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-    min-height: 100vh;
-    transform-origin: 100% 100%; /* emerge desde el indicador (abajo-derecha) */
+    line-height: 1.45; user-select: none; overflow: hidden;
+    height: 100vh; padding: 14px;
   }
-  body.enter { animation: emerge .38s cubic-bezier(.2,.9,.3,1); }
-  @keyframes emerge {
-    0%   { transform: translateX(46px) scale(.94); opacity: 0; }
-    100% { transform: translateX(0)    scale(1);   opacity: 1; }
+  /* tarjeta flotante: la superficie real del panel */
+  .card {
+    height: 100%; display: flex; flex-direction: column;
+    background: var(--bg);
+    border-radius: 22px;
+    border: 1px solid rgba(255,255,255,.06);
+    box-shadow: 0 18px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.3);
+    overflow: hidden;
+    transform-origin: 92% 105%; /* nace del orbe, abajo a la derecha */
+    opacity: 0;
   }
+  .card.enter { animation: bloom .55s cubic-bezier(.22, 1.18, .36, 1) forwards; }
+  .card.leave { animation: fold .26s cubic-bezier(.55, 0, .8, .4) forwards; }
+  @keyframes bloom {
+    0%   { transform: translate(26px, 60px) scale(.35); opacity: 0; filter: blur(10px); }
+    60%  { opacity: 1; }
+    100% { transform: translate(0, 0) scale(1); opacity: 1; filter: blur(0); }
+  }
+  @keyframes fold {
+    0%   { transform: scale(1); opacity: 1; }
+    100% { transform: translate(20px, 46px) scale(.5); opacity: 0; filter: blur(6px); }
+  }
+  /* el contenido florece en cascada */
+  .card.enter section, .card.enter .degraded, .card.enter .traynote {
+    animation: rise .5s cubic-bezier(.2, .9, .3, 1) both;
+  }
+  .card.enter section:nth-of-type(2) { animation-delay: .08s; }
+  .card.enter .degraded, .card.enter .traynote { animation-delay: .14s; }
+  @keyframes rise {
+    from { transform: translateY(14px); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+  main { flex: 1; overflow-y: auto; overflow-x: hidden; }
+  main::-webkit-scrollbar { width: 8px; }
+  main::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 4px; }
   @media (prefers-reduced-motion: reduce) {
-    body.enter { animation: none; }
+    .card, .card.enter, .card.leave,
+    .card.enter section, .card.enter .degraded, .card.enter .traynote { animation: none !important; opacity: 1; }
   }
   header {
     padding: 14px 16px 10px; border-bottom: 1px solid var(--hairline);
@@ -117,6 +147,7 @@
 </style>
 </head>
 <body>
+  <div class="card" id="card">
   <header>
     <div class="winbtns">
       <button id="btn-min" title="Contraer al último veredicto">–</button>
@@ -130,7 +161,8 @@
   <main id="main">
     <div class="empty">Haz un commit en un repo enrolado y aquí aparecerá el resultado.</div>
   </main>
-  <div class="traynote">✕ solo oculta el panel — CodeGuard sigue vigilando desde la bandeja del sistema</div>
+  <div class="traynote">✕ solo oculta el panel — CodeGuard sigue vigilando desde el orbe</div>
+  </div>
 
 <script type="module">
   import { Events } from "/wails/runtime.js";
@@ -241,13 +273,21 @@
     v.className = "verdict working";
   });
 
+  const card = $("card");
   Events.On("panel-show", () => {
-    document.body.classList.remove("enter");
-    void document.body.offsetWidth; // reiniciar la animación
-    document.body.classList.add("enter");
+    card.classList.remove("leave", "enter");
+    void card.offsetWidth; // reiniciar la animación
+    card.classList.add("enter");
   });
+  // El cierre también es orgánico: se pliega hacia el orbe y LUEGO se oculta.
+  function closeOrganic() {
+    card.classList.remove("enter");
+    card.classList.add("leave");
+    setTimeout(() => emit("panel-close", null), 240);
+  }
+  Events.On("panel-hide", closeOrganic);
 
-  $("btn-close").addEventListener("click", () => emit("panel-close", null));
+  $("btn-close").addEventListener("click", closeOrganic);
   $("btn-min").addEventListener("click", () => {
     const main = $("main");
     main.hidden = !main.hidden; // contrae a solo el veredicto de la cabecera

@@ -29,7 +29,7 @@ import (
 //go:embed all:frontend
 var assets embed.FS
 
-const panelWidth = 380
+const panelWidth = 420
 
 // panelFinding es lo que pinta el panel: el hallazgo + su código señalado.
 type panelFinding struct {
@@ -131,25 +131,32 @@ func main() {
 	})
 
 	panel := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:         "CodeGuard",
-		Frameless:     true,
-		AlwaysOnTop:   true,
-		Hidden:        true, // §12.2: oculto mientras no haya nada que mostrar
-		Width:         panelWidth,
-		Height:        600,
-		DisableResize: true,
-		URL:           "/",
+		Title:            "CodeGuard",
+		Frameless:        true,
+		AlwaysOnTop:      true,
+		Hidden:           true, // §12.2: oculto mientras no haya nada que mostrar
+		Width:            panelWidth,
+		Height:           600,
+		DisableResize:    true,
+		URL:              "/",
+		BackgroundType:   application.BackgroundTypeTransparent,
+		BackgroundColour: application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 0},
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar:                   true,
 			DisableFramelessWindowDecorations: true,
 		},
 	})
 
+	// Tarjeta flotante anclada sobre el orbe (abajo-derecha), no muro completo.
 	dockPanel := func() {
 		if screen := app.Screen.GetPrimary(); screen != nil {
 			w := screen.WorkArea
-			panel.SetPosition(w.X+w.Width-panelWidth, w.Y)
-			panel.SetSize(panelWidth, w.Height)
+			h := w.Height * 72 / 100
+			if h > 780 {
+				h = 780
+			}
+			panel.SetSize(panelWidth, h)
+			panel.SetPosition(w.X+w.Width-panelWidth-2, w.Y+w.Height-h-108)
 		}
 	}
 	// showPanel siempre via este helper: el contenido "emerge" desde el
@@ -194,11 +201,11 @@ func main() {
 	}}
 	ts.set("idle", "sin análisis todavía")
 
-	// Clic en la burbuja: alterna el panel.
+	// Clic en la burbuja: alterna el panel (cierre con animación de plegado).
 	app.Event.On("widget-click", func(*application.CustomEvent) {
 		application.InvokeAsync(func() {
 			if panel.IsVisible() {
-				panel.Hide()
+				app.Event.Emit("panel-hide", nil)
 			} else {
 				showPanel()
 			}
@@ -209,7 +216,7 @@ func main() {
 
 	menu := application.NewMenu()
 	menu.Add("Mostrar panel").OnClick(func(*application.Context) { showPanel() })
-	menu.Add("Ocultar panel").OnClick(func(*application.Context) { panel.Hide() })
+	menu.Add("Ocultar panel").OnClick(func(*application.Context) { app.Event.Emit("panel-hide", nil) })
 	menu.Add("Mostrar/ocultar burbuja").OnClick(func(*application.Context) {
 		application.InvokeAsync(func() {
 			if widget.IsVisible() {
@@ -240,7 +247,7 @@ func main() {
 	tray.OnClick(func() {
 		application.InvokeAsync(func() {
 			if panel.IsVisible() {
-				panel.Hide()
+				app.Event.Emit("panel-hide", nil)
 			} else {
 				showPanel()
 			}
