@@ -91,8 +91,9 @@ type trayState struct {
 }
 
 func (t *trayState) set(state, tooltip string) {
+	t.tray.SetIcon(trayIcon(state))
 	t.tray.SetLabel("CodeGuard: " + state)
-	t.tray.SetTooltip("CodeGuard — " + tooltip)
+	t.tray.SetTooltip("CodeGuard [" + state + "] — " + tooltip)
 }
 
 // pass vuelve a idle a los 10 s (§12.1).
@@ -149,6 +150,17 @@ func main() {
 	menu := application.NewMenu()
 	menu.Add("Mostrar panel").OnClick(func(*application.Context) { dockPanel(); panel.Show() })
 	menu.Add("Ocultar panel").OnClick(func(*application.Context) { panel.Hide() })
+	menu.AddSeparator()
+	menu.Add("Demo de estados (12 s)").OnClick(func(*application.Context) {
+		go func() {
+			states := []string{"idle", "working", "pass", "blocked", "degraded", "offline"}
+			for _, s := range states {
+				ts.set(s, "demo del estado «"+s+"»")
+				time.Sleep(2 * time.Second)
+			}
+			ts.set("idle", "demo terminada")
+		}()
+	})
 	menu.AddSeparator()
 	menu.Add("Salir de CodeGuard").OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(menu)
