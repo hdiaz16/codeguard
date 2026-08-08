@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 )
@@ -14,6 +15,9 @@ import (
 func runTool(ctx context.Context, dir, bin string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
+	// Herramientas Python en Windows: sin esto leen/escriben en cp1252
+	// y rompen los acentos (mismo fix que en el adaptador de semgrep).
+	cmd.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

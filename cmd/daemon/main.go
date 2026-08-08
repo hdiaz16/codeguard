@@ -8,6 +8,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -102,10 +103,16 @@ func (t *trayState) setPass(tooltip string) {
 }
 
 func main() {
+	frontend, err := fs.Sub(assets, "frontend")
+	if err != nil {
+		log.Fatal(err)
+	}
 	app := application.New(application.Options{
 		Name: "CodeGuard",
 		Assets: application.AssetOptions{
-			Handler: application.AssetFileServerFS(assets),
+			// BundledAssetFileServer sirve también /wails/runtime.js,
+			// que el panel importa para los eventos.
+			Handler: application.BundledAssetFileServer(frontend),
 		},
 	})
 
@@ -122,7 +129,7 @@ func main() {
 		Width:         panelWidth,
 		Height:        600,
 		DisableResize: true,
-		URL:           "/frontend/index.html",
+		URL:           "/",
 	})
 
 	dockPanel := func() {

@@ -81,6 +81,9 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = in.RepoRoot
+	// Sin esto, el CLI de Python lee las reglas YAML con la codificación
+	// regional de Windows (cp1252) y los mensajes con acentos salen rotos.
+	cmd.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 	out, runErr := cmd.Output()
 	// Semgrep sale con 1 cuando hay hallazgos bloqueantes; el JSON sigue siendo válido.
 	if runErr != nil && len(out) == 0 {
