@@ -7,3 +7,5 @@ codeguard.exe
 *.db
 codeguard-daemon.exe
 codeguard-daemon.exe~
+dist/*.exe
+dist/rulepacks/

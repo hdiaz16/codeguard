@@ -1,0 +1,10 @@
+llm:
+  # Plantilla de la ORGANIZACIÓN: codeguard init copia este bloque a cada
+  # repo nuevo. Cambiar el modelo aquí + reinstalar = todo el equipo actualizado.
+  endpoint: "https://TU-RECURSO.services.ai.azure.com/openai/v1"
+  api_key_env: "FOUNDRY_API_KEY"
+  model: "FW-Kimi-K3"
+  model_fast: "gpt-5.6-sol"
+  timeout_ms: 20000
+  max_diff_tokens: 12000
+  monthly_budget_usd: 0
