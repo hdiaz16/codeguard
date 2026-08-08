@@ -129,6 +129,7 @@ type RunMeta struct {
 	RulepackVer string
 	ConfigHash  string
 	Environment string // local | ci
+	Bypassed    bool
 }
 
 // SaveRun persiste el run y sus hallazgos (modo sombra: se registra todo,
@@ -146,10 +147,10 @@ func (s *Store) SaveRun(meta RunMeta, res *pipeline.Result, filesChanged int) er
 	}
 	_, err = tx.Exec(`INSERT INTO runs
 		(id, repo_id, branch, started_at, finished_at, verdict, files_changed,
-		 lines_changed, degraded_layers, rulepack_ver, config_hash, elapsed_ms, environment)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 lines_changed, bypassed, degraded_layers, rulepack_ver, config_hash, elapsed_ms, environment)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		meta.RunID, meta.RepoID, meta.Branch, nowISO(), nowISO(), verdict,
-		filesChanged, 0, strings.Join(res.Degraded, ","),
+		filesChanged, 0, b2i(meta.Bypassed), strings.Join(res.Degraded, ","),
 		meta.RulepackVer, meta.ConfigHash, res.ElapsedMs, meta.Environment)
 	if err != nil {
 		return err

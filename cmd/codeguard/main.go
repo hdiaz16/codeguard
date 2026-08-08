@@ -14,12 +14,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"codeguard/internal/config"
-	"codeguard/internal/engines"
+	"codeguard/internal/daemon"
 	glengine "codeguard/internal/engines/gitleaks"
-	"codeguard/internal/engines/linters"
-	sgengine "codeguard/internal/engines/semgrep"
-	sqengine "codeguard/internal/engines/squawk"
-	tvengine "codeguard/internal/engines/trivy"
 	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/pipeline"
@@ -36,7 +32,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(ciCmd(), versionCmd())
+	root.AddCommand(ciCmd(), versionCmd(), hookCmd(), installCmd(), repairCmd(), daemonCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "codeguard:", err)
 		os.Exit(2)
@@ -94,25 +90,11 @@ func ciCmd() *cobra.Command {
 			}
 
 			inCI := os.Getenv("GITHUB_ACTIONS") == "true"
-			var migGlobs []string
-			if cfg != nil {
-				migGlobs = cfg.Paths.Migrations
-			}
 			res, err := pipeline.Run(context.Background(), pipeline.Options{
-				Config:  cfg,
-				Diff:    diff,
-				Secrets: &glengine.Engine{Mode: "range", Base: base, Head: head},
-				Engines: []engines.Engine{
-					&sgengine.Engine{},
-					&sqengine.Engine{MigrationGlobs: migGlobs},
-					// Política §7: CVE crítico advierte en local, bloquea en CI.
-					&tvengine.Engine{BlockCritical: inCI, SkipDBUpdate: !inCI},
-					linters.GoFmt{},
-					linters.GoVet{},
-					linters.Ruff{},
-					linters.Tsc{},
-					linters.DotnetFormat{},
-				},
+				Config:   cfg,
+				Diff:     diff,
+				Secrets:  &glengine.Engine{Mode: "range", Base: base, Head: head},
+				Engines:  daemon.Engines(cfg, inCI),
 				Rulepack: rulepack,
 				Timeout:  5 * time.Minute,
 			})
@@ -182,6 +164,10 @@ func printSummary(res *pipeline.Result) {
 }
 
 func persist(repoRoot string, cfg *config.Config, res *pipeline.Result, filesChanged int) error {
+	return persistWith(repoRoot, cfg, res, filesChanged, false)
+}
+
+func persistWith(repoRoot string, cfg *config.Config, res *pipeline.Result, filesChanged int, bypassed bool) error {
 	dbDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard")
 	if dbDir == filepath.Join("", "codeguard") { // sin LOCALAPPDATA (runner Linux)
 		dbDir = filepath.Join(os.TempDir(), "codeguard")
@@ -214,6 +200,7 @@ func persist(repoRoot string, cfg *config.Config, res *pipeline.Result, filesCha
 		RulepackVer: cfg.Rulepack,
 		ConfigHash:  cfg.Hash,
 		Environment: env,
+		Bypassed:    bypassed,
 	}, res, filesChanged)
 }
 

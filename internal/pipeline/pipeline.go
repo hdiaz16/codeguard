@@ -83,17 +83,20 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 	}
 
 	// ── Etapa 1: secretos (BLOQUEANTE, fail-closed) ──────────────────────
-	secretFindings, err := opt.Secrets.Run(ctx, in)
-	if err != nil {
-		if errors.Is(err, gitleaks.ErrUnavailable) {
-			// Única ruta de error que bloquea (sección 14).
-			res.Verdict = Block
-			res.Reason = fmt.Sprintf("la compuerta de secretos no pudo correr (fail-closed): %v", err)
-			return res, nil
+	// Secrets es nil cuando la etapa ya corrió en el proceso del hook (§5).
+	if opt.Secrets != nil {
+		secretFindings, err := opt.Secrets.Run(ctx, in)
+		if err != nil {
+			if errors.Is(err, gitleaks.ErrUnavailable) {
+				// Única ruta de error que bloquea (sección 14).
+				res.Verdict = Block
+				res.Reason = fmt.Sprintf("la compuerta de secretos no pudo correr (fail-closed): %v", err)
+				return res, nil
+			}
+			return nil, err
 		}
-		return nil, err
+		res.Findings = append(res.Findings, secretFindings...)
 	}
-	res.Findings = append(res.Findings, secretFindings...)
 
 	// ── Etapa 2: compuertas deterministas en paralelo ────────────────────
 	if degradeToSecretsOnly {
