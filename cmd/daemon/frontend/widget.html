@@ -16,8 +16,8 @@
 <script type="module">
   import { Events } from "/wails/runtime.js";
 
-  // ── Esfera viva (estética "Her"): blob orgánico con partículas internas,
-  //    reacción al mouse, susurros de estado y gestos al abrir/cerrar el panel.
+  // ── Esfera "Her": una sola forma fluida, minimalista y cálida.
+  //    Sin partículas, sin anillos, sin ruido — solo luz y respiración. ──
 
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
@@ -28,18 +28,18 @@
     canvas.width = W * DPR; canvas.height = H * DPR;
     canvas.style.width = W + "px"; canvas.style.height = H + "px";
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    OX = W - 64; OY = H - 66; // el orbe vive abajo a la derecha del lienzo
+    OX = W - 64; OY = H - 66;
   }
   resize();
   window.addEventListener("resize", resize);
 
   const STATES = {
-    idle:     { a:"#ffd9c4", b:"#e0876a", amp:.045, spd:.35, br:.05, beat:0, whisper:"en reposo" },
-    working:  { a:"#ffe2a8", b:"#e8a13d", amp:.10,  spd:1.5, br:.03, beat:0, whisper:"analizando…" },
-    pass:     { a:"#d2f5dd", b:"#4fbe7d", amp:.05,  spd:.5,  br:.06, beat:0, whisper:"todo bien ✓" },
-    blocked:  { a:"#ffc9bd", b:"#d9412e", amp:.075, spd:1.1, br:0,   beat:1, whisper:"commit bloqueado" },
-    degraded: { a:"#ffd9b0", b:"#dd8040", amp:.06,  spd:.7,  br:.04, beat:0, whisper:"revisión parcial" },
-    offline:  { a:"#9aa4ac", b:"#535c64", amp:.015, spd:.15, br:.02, beat:0, whisper:"sin conexión" },
+    idle:     { a:"#ffe3d3", b:"#e2896b", amp:.030, spd:.30, br:.045, beat:0, whisper:"en reposo" },
+    working:  { a:"#ffe9c2", b:"#e8a13d", amp:.060, spd:.95, br:.030, beat:0, whisper:"analizando…" },
+    pass:     { a:"#ddf5e5", b:"#57b97e", amp:.032, spd:.40, br:.055, beat:0, whisper:"todo bien" },
+    blocked:  { a:"#ffd4c9", b:"#d9503c", amp:.045, spd:.75, br:0,    beat:1, whisper:"commit bloqueado" },
+    degraded: { a:"#ffe0bd", b:"#dd8850", amp:.040, spd:.50, br:.040, beat:0, whisper:"revisión parcial" },
+    offline:  { a:"#aeb6bd", b:"#5c656d", amp:.012, spd:.12, br:.020, beat:0, whisper:"sin conexión" },
   };
 
   const hex = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
@@ -50,37 +50,10 @@
   let target = STATES.idle;
   let cur = { amp: target.amp, spd: target.spd, br: target.br, beat: 0 };
   let curA = hex(target.a), curB = hex(target.b);
-  const ph = Array.from({length: 5}, () => Math.random() * Math.PI * 2);
+  const ph = [Math.random()*6.28, Math.random()*6.28, Math.random()*6.28, Math.random()*6.28];
 
-  // vida interior: motas de luz que derivan dentro del blob
-  const motes = Array.from({length: 13}, () => ({
-    ang: Math.random() * Math.PI * 2,
-    rr: .15 + Math.random() * .6,          // fracción del radio
-    va: (Math.random() - .5) * .35,        // velocidad angular
-    vr: (Math.random() - .5) * .06,
-    sz: .8 + Math.random() * 1.8,
-    tw: Math.random() * Math.PI * 2,       // fase de parpadeo
-  }));
-
-  // ráfagas efímeras (cambios de estado, gestos del panel)
-  let sparks = [];
-  function burst(n, speed, spread=1) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const v = speed * (.5 + Math.random() * .8);
-      sparks.push({ x: 0, y: 0, vx: Math.cos(a)*v*spread, vy: Math.sin(a)*v*spread,
-                    life: 1, sz: 1 + Math.random() * 1.6 });
-    }
-  }
-
-  // susurro: texto que aparece y se desvanece junto al orbe
   let whisper = { text: "", t0: -9 };
-  function say(text) { whisper = { text, t0: tNow }; }
-
-  // gestos: el orbe "suelta" el panel al abrirlo y lo "traga" al cerrarlo
   let gesture = { t0: -9, dir: 1 };
-
-  // reacción al mouse: se inclina hacia el cursor y se hincha un poco
   let mouse = null, lean = { x: 0, y: 0 }, swell = 1;
   canvas.addEventListener("mousemove", e => { mouse = { x: e.offsetX, y: e.offsetY }; });
   canvas.addEventListener("mouseleave", () => { mouse = null; });
@@ -94,7 +67,7 @@
     tNow = now / 1000;
     t += dt * cur.spd;
 
-    const k = 1 - Math.pow(.001, dt);
+    const k = 1 - Math.pow(.002, dt); // fundidos lentos y serenos
     cur.amp = lerp(cur.amp, target.amp, k);
     cur.spd = lerp(cur.spd, target.spd, k);
     cur.br  = lerp(cur.br,  target.br,  k);
@@ -103,111 +76,77 @@
     curB = lerp3(curB, hex(target.b), k);
 
     ctx.clearRect(0, 0, W, H);
-    let R = 24;
+    let R = 26;
 
-    // respiración + latido doble
-    R *= 1 + Math.sin(t * .9 + ph[0]) * cur.br;
+    // respiración
+    R *= 1 + Math.sin(t * .8 + ph[0]) * cur.br;
+    // latido sereno cuando está bloqueado (un solo pulso profundo)
     if (cur.beat > .01) {
-      const b = t * 2.4 % (Math.PI * 2);
-      const pulse = Math.max(0, Math.sin(b)) ** 6 + .55 * Math.max(0, Math.sin(b - .9)) ** 6;
-      R *= 1 + pulse * .09 * cur.beat;
+      const b = t * 1.6 % (Math.PI * 2);
+      R *= 1 + Math.max(0, Math.sin(b)) ** 4 * .07 * cur.beat;
     }
-
-    // gesto del panel: soltar (expande) / tragar (contrae y rebota)
+    // gesto del panel: se expande al soltarlo, se recoge al recibirlo
     const g = tNow - gesture.t0;
-    if (g < .55) {
-      const e = Math.sin(g / .55 * Math.PI);
-      R *= 1 + gesture.dir * e * .13;
-    }
+    if (g < .7) R *= 1 + gesture.dir * Math.sin(g / .7 * Math.PI) * .09;
 
-    // inclinación hacia el mouse
-    let targetLean = { x: 0, y: 0 }, targetSwell = 1;
+    // se inclina apenas hacia el cursor
+    let tl = { x: 0, y: 0 }, ts = 1;
     if (mouse) {
       const dx = mouse.x - OX, dy = mouse.y - OY, d = Math.hypot(dx, dy);
-      if (d < 85) {
-        targetLean = { x: dx / d * 5, y: dy / d * 5 };
-        targetSwell = 1.07;
-      }
+      if (d < 90) { tl = { x: dx/d*4, y: dy/d*4 }; ts = 1.05; }
     }
-    lean.x = lerp(lean.x, targetLean.x, k * 2);
-    lean.y = lerp(lean.y, targetLean.y, k * 2);
-    swell = lerp(swell, targetSwell, k * 2);
+    lean.x = lerp(lean.x, tl.x, k*1.5);
+    lean.y = lerp(lean.y, tl.y, k*1.5);
+    swell = lerp(swell, ts, k*1.5);
     R *= swell;
 
-    const ox = OX + lean.x + Math.sin(t * .43 + ph[1]) * R * .06;
-    const oy = OY + lean.y + Math.cos(t * .31 + ph[2]) * R * .06;
+    const ox = OX + lean.x + Math.sin(t * .37 + ph[1]) * R * .05;
+    const oy = OY + lean.y + Math.cos(t * .29 + ph[2]) * R * .05;
 
-    // contorno orgánico
-    ctx.beginPath();
-    const N = 90;
-    for (let i = 0; i <= N; i++) {
+    // contorno: DOS ondulaciones lentas, unidas con curvas — seda, no polígono
+    const N = 14;
+    const pts = [];
+    for (let i = 0; i < N; i++) {
       const th = (i / N) * Math.PI * 2;
-      const w =
-        Math.sin(th * 3 + t * 1.1 + ph[3]) * .55 +
-        Math.sin(th * 5 - t * .8  + ph[4]) * .30 +
-        Math.sin(th * 2 + t * .5)          * .15;
+      const w = Math.sin(th * 2 + t * .7 + ph[3]) * .7 +
+                Math.sin(th * 3 - t * .5) * .3;
       const r = R * (1 + w * cur.amp);
-      const x = ox + Math.cos(th) * r;
-      const y = oy + Math.sin(th) * r;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      pts.push([ox + Math.cos(th) * r, oy + Math.sin(th) * r]);
     }
+    ctx.beginPath();
+    for (let i = 0; i < N; i++) {
+      const p0 = pts[i], p1 = pts[(i + 1) % N];
+      const mx = (p0[0] + p1[0]) / 2, my = (p0[1] + p1[1]) / 2;
+      i === 0 ? ctx.moveTo(mx, my) : ctx.quadraticCurveTo(p0[0], p0[1], mx, my);
+    }
+    const pl = pts[0], pp = pts[N - 1];
+    ctx.quadraticCurveTo(pp[0], pp[1], (pp[0]+pl[0])/2, (pp[1]+pl[1])/2);
     ctx.closePath();
 
-    // halo
-    const halo = ctx.createRadialGradient(ox, oy, R*.5, ox, oy, R*2.6);
-    halo.addColorStop(0, css(curB, .30));
+    // halo apenas perceptible
+    const halo = ctx.createRadialGradient(ox, oy, R*.6, ox, oy, R*2.2);
+    halo.addColorStop(0, css(curB, .16));
     halo.addColorStop(1, css(curB, 0));
     ctx.save(); ctx.fillStyle = halo; ctx.fillRect(0, 0, W, H); ctx.restore();
 
-    // cuerpo
-    const grad = ctx.createRadialGradient(ox - R*.35, oy - R*.4, R*.1, ox, oy, R*1.25);
-    grad.addColorStop(0, css(curA, .98));
-    grad.addColorStop(.55, css(lerp3(curA, curB, .55), .96));
-    grad.addColorStop(1, css(curB, .92));
+    // cuerpo: gradiente cremoso, transiciones largas, sin contrastes duros
+    const grad = ctx.createRadialGradient(ox - R*.3, oy - R*.35, R*.15, ox, oy, R*1.3);
+    grad.addColorStop(0,   css(curA, .97));
+    grad.addColorStop(.45, css(lerp3(curA, curB, .42), .96));
+    grad.addColorStop(1,   css(curB, .94));
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // motas de luz interiores (recortadas al blob)
-    ctx.save();
-    ctx.clip();
-    for (const m of motes) {
-      m.ang += m.va * dt * (1 + cur.spd * .5);
-      m.rr += m.vr * dt;
-      if (m.rr < .12 || m.rr > .78) m.vr *= -1;
-      const mx = ox + Math.cos(m.ang) * m.rr * R;
-      const my = oy + Math.sin(m.ang) * m.rr * R;
-      const glow = .35 + .3 * Math.sin(tNow * 1.7 + m.tw);
-      ctx.beginPath();
-      ctx.arc(mx, my, m.sz, 0, Math.PI * 2);
-      ctx.fillStyle = css(lerp3(curA, [255,255,255], .6), glow);
-      ctx.fill();
-    }
-    ctx.restore();
-
-    // ráfagas
-    sparks = sparks.filter(s => s.life > 0);
-    for (const s of sparks) {
-      s.life -= dt * 1.2;
-      s.x += s.vx * dt; s.y += s.vy * dt;
-      s.vx *= .985; s.vy *= .985;
-      ctx.beginPath();
-      ctx.arc(ox + s.x, oy + s.y, s.sz * s.life, 0, Math.PI * 2);
-      ctx.fillStyle = css(curA, s.life * .8);
-      ctx.fill();
-    }
-
-    // susurro
+    // susurro: tipografía ligera, aparece y se va sin prisa
     const wAge = tNow - whisper.t0;
-    if (whisper.text && wAge < 3.4) {
+    if (whisper.text && wAge < 4) {
       let alpha = 1;
-      if (wAge < .35) alpha = wAge / .35;
-      else if (wAge > 2.4) alpha = Math.max(0, 1 - (wAge - 2.4));
-      ctx.font = "500 12.5px 'Segoe UI', sans-serif";
+      if (wAge < .6) alpha = wAge / .6;
+      else if (wAge > 2.8) alpha = Math.max(0, 1 - (wAge - 2.8) / 1.2);
+      ctx.font = "300 13px 'Segoe UI', sans-serif";
       ctx.textAlign = "right";
-      ctx.fillStyle = css(lerp3(curA, [255,255,255], .35), alpha * .95);
-      ctx.shadowColor = "rgba(0,0,0,.6)"; ctx.shadowBlur = 6;
-      ctx.fillText(whisper.text, W - 12, OY - R - 22 - (1 - alpha) * 4);
-      ctx.shadowBlur = 0;
+      ctx.fillStyle = css(lerp3(curB, [255,255,255], .5), alpha * .85);
+      ctx.fillText(whisper.text, W - 14, OY - R - 24);
     }
 
     if (!reduced) requestAnimationFrame(frame);
@@ -219,10 +158,7 @@
     const changed = target !== STATES[s];
     target = STATES[s];
     canvas.title = "CodeGuard [" + s + "]" + (tooltip ? " — " + tooltip : "");
-    if (changed) {
-      say(target.whisper);
-      burst(s === "blocked" ? 22 : 12, s === "blocked" ? 95 : 60);
-    }
+    if (changed) whisper = { text: target.whisper, t0: tNow };
   }
   setState("idle", "sin análisis todavía");
 
@@ -231,13 +167,10 @@
     if (typeof d === "string") setState(d, "");
     else if (d) setState(d.state, d.tooltip);
   });
-
-  // gestos coordinados con el panel
-  Events.On("panel-show", () => { gesture = { t0: tNow, dir: 1 }; burst(8, 70); });
+  Events.On("panel-show", () => { gesture = { t0: tNow, dir: 1 }; });
   Events.On("panel-hide", () => { gesture = { t0: tNow, dir: -1 }; });
 
   canvas.addEventListener("click", (e) => {
-    // solo el área del orbe es clickeable
     if (Math.hypot(e.offsetX - OX, e.offsetY - OY) > 52) return;
     try { Events.Emit("widget-click", null); }
     catch { Events.Emit({ name: "widget-click", data: null }); }
