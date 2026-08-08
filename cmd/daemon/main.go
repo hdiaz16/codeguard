@@ -139,11 +139,13 @@ func main() {
 		Height:           600,
 		DisableResize:    true,
 		URL:              "/",
-		BackgroundType:   application.BackgroundTypeTransparent,
+		BackgroundType:   application.BackgroundTypeTranslucent,
 		BackgroundColour: application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 0},
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar:                   true,
 			DisableFramelessWindowDecorations: true,
+			// Vidrio esmerilado real de Windows 11 detrás de la tarjeta.
+			BackdropType: application.Acrylic,
 		},
 	})
 
@@ -169,13 +171,14 @@ func main() {
 
 	// Burbuja de estado: widget flotante abajo a la izquierda (§12.1),
 	// transparente, siempre visible, con ondas animadas por estado.
-	const widgetSize = 120
+	// Más ancho que alto: deja espacio para el "susurro" de estado.
+	const widgetW, widgetH = 210, 150
 	widget := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "CodeGuard estado",
 		Frameless:        true,
 		AlwaysOnTop:      true,
-		Width:            widgetSize,
-		Height:           widgetSize,
+		Width:            widgetW,
+		Height:           widgetH,
 		DisableResize:    true,
 		BackgroundType:   application.BackgroundTypeTransparent,
 		BackgroundColour: application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 0},
@@ -191,7 +194,7 @@ func main() {
 	dockWidget := func() {
 		if screen := app.Screen.GetPrimary(); screen != nil {
 			w := screen.WorkArea
-			widget.SetPosition(w.X+w.Width-widgetSize-4, w.Y+w.Height-widgetSize-4)
+			widget.SetPosition(w.X+w.Width-widgetW-2, w.Y+w.Height-widgetH-2)
 		}
 	}
 

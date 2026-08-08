@@ -19,19 +19,20 @@
     line-height: 1.45; user-select: none; overflow: hidden;
     height: 100vh; padding: 14px;
   }
-  /* tarjeta flotante: la superficie real del panel */
-  .card {
+  /* tarjeta flotante: la superficie real del panel (semi-translúcida
+     para dejar ver el acrílico de Windows detrás) */
+  .shell {
     height: 100%; display: flex; flex-direction: column;
-    background: var(--bg);
+    background: rgba(34, 29, 25, .72);
     border-radius: 22px;
-    border: 1px solid rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.07);
     box-shadow: 0 18px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.3);
     overflow: hidden;
     transform-origin: 92% 105%; /* nace del orbe, abajo a la derecha */
     opacity: 0;
   }
-  .card.enter { animation: bloom .55s cubic-bezier(.22, 1.18, .36, 1) forwards; }
-  .card.leave { animation: fold .26s cubic-bezier(.55, 0, .8, .4) forwards; }
+  .shell.enter { animation: bloom .55s cubic-bezier(.22, 1.18, .36, 1) forwards; }
+  .shell.leave { animation: fold .26s cubic-bezier(.55, 0, .8, .4) forwards; }
   @keyframes bloom {
     0%   { transform: translate(26px, 60px) scale(.35); opacity: 0; filter: blur(10px); }
     60%  { opacity: 1; }
@@ -41,12 +42,15 @@
     0%   { transform: scale(1); opacity: 1; }
     100% { transform: translate(20px, 46px) scale(.5); opacity: 0; filter: blur(6px); }
   }
-  /* el contenido florece en cascada */
-  .card.enter section, .card.enter .degraded, .card.enter .traynote {
+  /* el contenido florece en cascada, tarjeta por tarjeta */
+  .shell.enter section h2, .shell.enter .degraded, .shell.enter .traynote {
     animation: rise .5s cubic-bezier(.2, .9, .3, 1) both;
   }
-  .card.enter section:nth-of-type(2) { animation-delay: .08s; }
-  .card.enter .degraded, .card.enter .traynote { animation-delay: .14s; }
+  .shell.enter details.card {
+    animation: rise .45s cubic-bezier(.2, .9, .3, 1) both;
+    animation-delay: calc(var(--i, 0) * 55ms + 70ms);
+  }
+  .shell.enter .degraded, .shell.enter .traynote { animation-delay: .28s; }
   @keyframes rise {
     from { transform: translateY(14px); opacity: 0; }
     to   { transform: translateY(0);    opacity: 1; }
@@ -55,8 +59,8 @@
   main::-webkit-scrollbar { width: 8px; }
   main::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 4px; }
   @media (prefers-reduced-motion: reduce) {
-    .card, .card.enter, .card.leave,
-    .card.enter section, .card.enter .degraded, .card.enter .traynote { animation: none !important; opacity: 1; }
+    .shell, .shell.enter, .shell.leave, .shell.enter section h2,
+    .shell.enter details.card, .shell.enter .degraded, .shell.enter .traynote { animation: none !important; opacity: 1; }
   }
   header {
     padding: 14px 16px 10px; border-bottom: 1px solid var(--hairline);
@@ -147,7 +151,7 @@
 </style>
 </head>
 <body>
-  <div class="card" id="card">
+  <div class="shell" id="card">
   <header>
     <div class="winbtns">
       <button id="btn-min" title="Contraer al último veredicto">–</button>
@@ -186,11 +190,11 @@
   const PILAR = { quality: "calidad", security: "seguridad", data: "datos" };
   const SEV = { error: "error", warning: "aviso", info: "info" };
 
-  function cardHTML(f, open, repoRoot) {
+  function cardHTML(f, open, repoRoot, i) {
     // Tono §12.2 — determinista = hecho; modelo = observación.
     const kind = f.blocking ? "blocking" : "advisory";
     const full = `${repoRoot}/${f.file}:${f.line}`;
-    return `<details class="card ${kind}" ${open ? "open" : ""}>
+    return `<details class="card ${kind}" style="--i:${i || 0}" ${open ? "open" : ""}>
       <summary>
         <span class="rule">${esc(f.rule_id)}</span>
         <span class="msg">${esc(f.message)}</span>
@@ -236,11 +240,11 @@
     let html = "";
     if (blockers.length) {
       html += `<section><h2>Bloqueantes</h2>` +
-        blockers.map(f => cardHTML(f, true, p.repo_root)).join("") + `</section>`;
+        blockers.map((f, i) => cardHTML(f, true, p.repo_root, i)).join("") + `</section>`;
     }
     if (shown.length) {
       html += `<section><h2>Sugerencias</h2>` +
-        shown.map(f => cardHTML(f, false, p.repo_root)).join("") + `</section>`;
+        shown.map((f, i) => cardHTML(f, false, p.repo_root, blockers.length + i)).join("") + `</section>`;
       if (hidden > 0) html += `<div class="truncated">${hidden} sugerencia(s) más, colapsadas por prioridad.</div>`;
     }
     if (p.degraded && p.degraded.length) {
