@@ -16,8 +16,8 @@
 <script type="module">
   import { Events } from "/wails/runtime.js";
 
-  // ── Esfera "Her": una sola forma fluida, minimalista y cálida.
-  //    Sin partículas, sin anillos, sin ruido — solo luz y respiración. ──
+  // ── MONTAÑA: cordillera monocroma dentro de un cristal.
+  //    Una sola esfera; los estados son climas que se funden en vivo. ──────
 
   const canvas = document.getElementById("c");
   const ctx = canvas.getContext("2d");
@@ -28,18 +28,21 @@
     canvas.width = W * DPR; canvas.height = H * DPR;
     canvas.style.width = W + "px"; canvas.style.height = H + "px";
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    OX = W - 64; OY = H - 66;
+    OX = W - 62; OY = H - 64;
   }
   resize();
   window.addEventListener("resize", resize);
 
+  const GLASS = [22, 24, 27];
+
+  // clima por estado: TODOS los parámetros son interpolables
   const STATES = {
-    idle:     { a:"#ffe3d3", b:"#e2896b", amp:.030, spd:.30, br:.045, beat:0, whisper:"en reposo" },
-    working:  { a:"#ffe9c2", b:"#e8a13d", amp:.060, spd:.95, br:.030, beat:0, whisper:"analizando…" },
-    pass:     { a:"#ddf5e5", b:"#57b97e", amp:.032, spd:.40, br:.055, beat:0, whisper:"todo bien" },
-    blocked:  { a:"#ffd4c9", b:"#d9503c", amp:.045, spd:.75, br:0,    beat:1, whisper:"commit bloqueado" },
-    degraded: { a:"#ffe0bd", b:"#dd8850", amp:.040, spd:.50, br:.040, beat:0, whisper:"revisión parcial" },
-    offline:  { a:"#aeb6bd", b:"#5c656d", amp:.012, spd:.12, br:.020, beat:0, whisper:"sin conexión" },
+    idle:     { liq:"#8e979e", deep:"#565f66", level:.46, amp:.035, spd:.45, br:.028, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.30, sleep:0, dim:1,   whisper:"en reposo" },
+    working:  { liq:"#bcc5cc", deep:"#6d777f", level:.52, amp:.085, spd:1.6, br:.016, slosh:.04, choppy:0, throb:0,    sweep:0, drift:1, mist:.15, sleep:0, dim:1,   whisper:"analizando…" },
+    pass:     { liq:"#e9eef2", deep:"#b3bdc5", level:.90, amp:.022, spd:.4,  br:.045, slosh:0,   choppy:0, throb:0,    sweep:1, drift:0, mist:0,   sleep:0, dim:1,   whisper:"todo bien" },
+    blocked:  { liq:"#a67265", deep:"#63413a", level:.62, amp:.075, spd:1.05,br:0,    slosh:0,   choppy:1, throb:.045, sweep:0, drift:0, mist:0,   sleep:0, dim:1,   whisper:"commit bloqueado" },
+    degraded: { liq:"#9e9484", deep:"#645c50", level:.40, amp:.05,  spd:.6,  br:.02,  slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.45, sleep:0, dim:.95, whisper:"revisión parcial" },
+    offline:  { liq:"#565b60", deep:"#35393d", level:.20, amp:.006, spd:.10, br:.008, slosh:0,   choppy:0, throb:0,    sweep:0, drift:0, mist:.85, sleep:1, dim:.75, whisper:"sin conexión" },
   };
 
   const hex = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
@@ -48,10 +51,12 @@
   const css = (c,a=1) => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
 
   let target = STATES.idle;
-  let cur = { amp: target.amp, spd: target.spd, br: target.br, beat: 0 };
-  let curA = hex(target.a), curB = hex(target.b);
-  const ph = [Math.random()*6.28, Math.random()*6.28, Math.random()*6.28, Math.random()*6.28];
+  // clima vivo (interpolado)
+  const cur = { liq: hex(target.liq), deep: hex(target.deep), level: target.level,
+    amp: target.amp, spd: target.spd, br: target.br, slosh: 0, choppy: 0,
+    throb: 0, sweep: 0, drift: 0, mist: target.mist, sleep: 0, dim: 1 };
 
+  const flakes = [];
   let whisper = { text: "", t0: -9 };
   let gesture = { t0: -9, dir: 1 };
   let mouse = null, lean = { x: 0, y: 0 }, swell = 1;
@@ -65,88 +70,155 @@
     const dt = Math.min((now - last) / 1000, .05);
     last = now;
     tNow = now / 1000;
-    t += dt * cur.spd;
+    t += dt;
 
-    const k = 1 - Math.pow(.002, dt); // fundidos lentos y serenos
-    cur.amp = lerp(cur.amp, target.amp, k);
-    cur.spd = lerp(cur.spd, target.spd, k);
-    cur.br  = lerp(cur.br,  target.br,  k);
-    cur.beat = lerp(cur.beat, target.beat, k);
-    curA = lerp3(curA, hex(target.a), k);
-    curB = lerp3(curB, hex(target.b), k);
+    // fundido de clima
+    const k = 1 - Math.pow(.002, dt);
+    cur.liq = lerp3(cur.liq, hex(target.liq), k);
+    cur.deep = lerp3(cur.deep, hex(target.deep), k);
+    for (const p of ["amp","spd","br","slosh","choppy","throb","sweep","drift","mist","sleep","dim"])
+      cur[p] = lerp(cur[p], target[p], k);
+    let lvlTarget = target.level;
+    if (cur.slosh > .005) lvlTarget += Math.sin(t*.8) * cur.slosh;
+    cur.level = lerp(cur.level, lvlTarget, 1 - Math.pow(.3, dt));
 
     ctx.clearRect(0, 0, W, H);
-    let R = 26;
-
-    // respiración
-    R *= 1 + Math.sin(t * .8 + ph[0]) * cur.br;
-    // latido sereno cuando está bloqueado (un solo pulso profundo)
-    if (cur.beat > .01) {
-      const b = t * 1.6 % (Math.PI * 2);
-      R *= 1 + Math.max(0, Math.sin(b)) ** 4 * .07 * cur.beat;
-    }
-    // gesto del panel: se expande al soltarlo, se recoge al recibirlo
+    const dim = cur.dim;
+    let R = 27;
+    R *= 1 + Math.sin(t*.7) * cur.br;
+    if (cur.throb > .002) R *= 1 + Math.max(0, Math.sin((t*1.45)%(Math.PI*2)))**4 * cur.throb;
     const g = tNow - gesture.t0;
-    if (g < .7) R *= 1 + gesture.dir * Math.sin(g / .7 * Math.PI) * .09;
+    if (g < .6) R *= 1 + gesture.dir * Math.sin(g/.6*Math.PI) * .08;
 
     // se inclina apenas hacia el cursor
-    let tl = { x: 0, y: 0 }, ts = 1;
+    let tl = {x:0,y:0}, tsw = 1;
     if (mouse) {
-      const dx = mouse.x - OX, dy = mouse.y - OY, d = Math.hypot(dx, dy);
-      if (d < 90) { tl = { x: dx/d*4, y: dy/d*4 }; ts = 1.05; }
+      const dx = mouse.x-OX, dy = mouse.y-OY, d = Math.hypot(dx,dy);
+      if (d < 85) { tl = {x:dx/d*3.5, y:dy/d*3.5}; tsw = 1.04; }
     }
-    lean.x = lerp(lean.x, tl.x, k*1.5);
-    lean.y = lerp(lean.y, tl.y, k*1.5);
-    swell = lerp(swell, ts, k*1.5);
+    lean.x = lerp(lean.x, tl.x, k*1.5); lean.y = lerp(lean.y, tl.y, k*1.5);
+    swell = lerp(swell, tsw, k*1.5);
     R *= swell;
+    const ox = OX + lean.x, oy = OY + lean.y;
 
-    const ox = OX + lean.x + Math.sin(t * .37 + ph[1]) * R * .05;
-    const oy = OY + lean.y + Math.cos(t * .29 + ph[2]) * R * .05;
+    // pulso de sueño
+    const sleepGlow = cur.sleep > .05 ? Math.max(0, Math.sin(t*.5))**12 * cur.sleep : 0;
 
-    // contorno: DOS ondulaciones lentas, unidas con curvas — seda, no polígono
-    const N = 14;
-    const pts = [];
-    for (let i = 0; i < N; i++) {
-      const th = (i / N) * Math.PI * 2;
-      const w = Math.sin(th * 2 + t * .7 + ph[3]) * .7 +
-                Math.sin(th * 3 - t * .5) * .3;
-      const r = R * (1 + w * cur.amp);
-      pts.push([ox + Math.cos(th) * r, oy + Math.sin(th) * r]);
-    }
+    // halo mínimo
+    const halo = ctx.createRadialGradient(ox,oy,R*.8, ox,oy,R*1.6);
+    halo.addColorStop(0, css(cur.liq, (.07 + sleepGlow*.1)*dim));
+    halo.addColorStop(1, css(cur.liq, 0));
+    ctx.fillStyle = halo; ctx.fillRect(0,0,W,H);
+
+    ctx.save();
+    ctx.beginPath(); ctx.arc(ox,oy,R,0,7); ctx.clip();
+
+    // cielo de piedra
+    const bg = ctx.createRadialGradient(ox-R*.25, oy-R*.35, R*.15, ox, oy, R*1.35);
+    bg.addColorStop(0, css(lerp3(GLASS,[255,255,255],.09*dim),.98));
+    bg.addColorStop(1, css(GLASS,.99));
+    ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+
+    const waterY = oy + R - 2*R*cur.level;
+    const tilt = Math.sin(t*cur.spd*.45) * cur.amp*.5 + Math.sin(t*.21)*.008;
+
+    // cordillera (capa profunda)
+    const ridgeAt = (x) => {
+      const k1 = Math.sin(x/R*1.9 + t*cur.spd*.5 + 1.3);
+      const k2 = Math.sin(x/R*4.3 - t*cur.spd*.3 + .5);
+      return waterY + R*.10 + x*tilt + (-Math.abs(k1)*.65 - Math.abs(k2)*.35) * R * (cur.amp*1.6 + .02);
+    };
+    ctx.beginPath(); ctx.moveTo(ox-R, oy+R+2);
+    for (let x=-R; x<=R; x+=2) ctx.lineTo(ox+x, ridgeAt(x));
+    ctx.lineTo(ox+R, oy+R+2); ctx.closePath();
+    ctx.fillStyle = css(cur.deep, .85*dim); ctx.fill();
+
+    // línea de nieve (capa frontal)
+    const surfAt = (x) => {
+      let y = waterY + x*tilt
+        + Math.sin(x/R*2.4 + t*cur.spd) * R*cur.amp
+        + Math.sin(x/R*4.6 - t*cur.spd*1.5) * R*cur.amp*.4;
+      if (cur.choppy > .05) y += Math.sin(x/R*7.5 + t*cur.spd*2.3) * R*cur.amp*.35*cur.choppy;
+      return y;
+    };
+    ctx.beginPath(); ctx.moveTo(ox-R, oy+R+2);
+    for (let x=-R; x<=R; x+=2) ctx.lineTo(ox+x, surfAt(x));
+    ctx.lineTo(ox+R, oy+R+2); ctx.closePath();
+    ctx.fillStyle = css(cur.liq, .88*dim); ctx.fill();
+
+    // cresta con luz fría
     ctx.beginPath();
-    for (let i = 0; i < N; i++) {
-      const p0 = pts[i], p1 = pts[(i + 1) % N];
-      const mx = (p0[0] + p1[0]) / 2, my = (p0[1] + p1[1]) / 2;
-      i === 0 ? ctx.moveTo(mx, my) : ctx.quadraticCurveTo(p0[0], p0[1], mx, my);
+    for (let x=-R; x<=R; x+=2) { const y = surfAt(x); x===-R ? ctx.moveTo(ox+x,y) : ctx.lineTo(ox+x,y); }
+    ctx.strokeStyle = css(lerp3(cur.liq,[255,255,255],.55), .28*dim);
+    ctx.lineWidth = 1; ctx.stroke();
+
+    // amanecer (pass): barrido de sol
+    if (cur.sweep > .05) {
+      const sx = ox - R*1.6 + (((t*.28)%2.2)/2.2) * R*3.2;
+      const sg = ctx.createLinearGradient(sx-R*.6, 0, sx+R*.6, 0);
+      sg.addColorStop(0, "rgba(255,255,255,0)");
+      sg.addColorStop(.5, `rgba(255,255,255,${.16*cur.sweep})`);
+      sg.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = sg;
+      ctx.fillRect(ox-R, waterY-R*.3, R*2, R*2);
     }
-    const pl = pts[0], pp = pts[N - 1];
-    ctx.quadraticCurveTo(pp[0], pp[1], (pp[0]+pl[0])/2, (pp[1]+pl[1])/2);
-    ctx.closePath();
 
-    // halo apenas perceptible
-    const halo = ctx.createRadialGradient(ox, oy, R*.6, ox, oy, R*2.2);
-    halo.addColorStop(0, css(curB, .16));
-    halo.addColorStop(1, css(curB, 0));
-    ctx.save(); ctx.fillStyle = halo; ctx.fillRect(0, 0, W, H); ctx.restore();
+    // ventisca (working)
+    if (cur.drift > .05) {
+      if (Math.random() < dt*3*cur.drift) {
+        const x0 = (Math.random()-.5)*R*1.4;
+        flakes.push({ x:x0, y:surfAt(x0)-1, vx:8+Math.random()*10, vy:-(5+Math.random()*6), a:0, r:.5+Math.random()*.8 });
+      }
+      for (const f of flakes) {
+        f.x += f.vx*dt; f.y += f.vy*dt; f.vy += 4*dt;
+        f.a = f.a < .28 ? f.a + dt*1.4 : f.a;
+        f.a -= dt*.5;
+        if (f.a <= 0) continue;
+        ctx.beginPath(); ctx.arc(ox+f.x, f.y, f.r, 0, 7);
+        ctx.fillStyle = css(lerp3(cur.liq,[255,255,255],.6), f.a*cur.drift);
+        ctx.fill();
+      }
+      while (flakes.length && flakes[0].a <= 0) flakes.shift();
+      if (flakes.length > 14) flakes.shift();
+    }
 
-    // cuerpo: gradiente cremoso, transiciones largas, sin contrastes duros
-    const grad = ctx.createRadialGradient(ox - R*.3, oy - R*.35, R*.15, ox, oy, R*1.3);
-    grad.addColorStop(0,   css(curA, .97));
-    grad.addColorStop(.45, css(lerp3(curA, curB, .42), .96));
-    grad.addColorStop(1,   css(curB, .94));
-    ctx.fillStyle = grad;
-    ctx.fill();
+    // niebla que deriva
+    if (cur.mist > .03) {
+      for (const [ph, spdM, yy, hh] of [[0,.06,-.15,.34],[2.5,.04,.12,.28]]) {
+        const mx = ox + Math.sin(t*spdM + ph) * R * .5;
+        const my = waterY + R*yy;
+        const mg = ctx.createRadialGradient(mx, my, 0, mx, my, R*.9);
+        mg.addColorStop(0, css(lerp3(cur.liq,[255,255,255],.3), .10*cur.mist));
+        mg.addColorStop(1, css(cur.liq, 0));
+        ctx.save(); ctx.scale(1, hh);
+        ctx.beginPath(); ctx.arc(mx, my/hh, R*.9, 0, 7);
+        ctx.fillStyle = mg; ctx.fill();
+        ctx.restore();
+      }
+    }
 
-    // susurro: tipografía ligera, aparece y se va sin prisa
+    // luz de ventana
+    const hl = ctx.createRadialGradient(ox-R*.38, oy-R*.48, 0, ox-R*.38, oy-R*.48, R*.9);
+    hl.addColorStop(0, `rgba(255,255,255,${.09*dim + sleepGlow*.05})`);
+    hl.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = hl; ctx.fillRect(0,0,W,H);
+    ctx.restore();
+
+    // filo del cristal
+    ctx.beginPath(); ctx.arc(ox,oy,R,0,7);
+    ctx.strokeStyle = css(lerp3(GLASS,[255,255,255],.35), .16*dim + sleepGlow*.12);
+    ctx.lineWidth = 1; ctx.stroke();
+
+    // susurro
     const wAge = tNow - whisper.t0;
     if (whisper.text && wAge < 4) {
       let alpha = 1;
-      if (wAge < .6) alpha = wAge / .6;
-      else if (wAge > 2.8) alpha = Math.max(0, 1 - (wAge - 2.8) / 1.2);
+      if (wAge < .6) alpha = wAge/.6;
+      else if (wAge > 2.8) alpha = Math.max(0, 1-(wAge-2.8)/1.2);
       ctx.font = "300 13px 'Segoe UI', sans-serif";
       ctx.textAlign = "right";
-      ctx.fillStyle = css(lerp3(curB, [255,255,255], .5), alpha * .85);
-      ctx.fillText(whisper.text, W - 14, OY - R - 24);
+      ctx.fillStyle = css(lerp3(cur.liq,[255,255,255],.5), alpha*.85);
+      ctx.fillText(whisper.text, W-12, OY - R - 22);
     }
 
     if (!reduced) requestAnimationFrame(frame);
