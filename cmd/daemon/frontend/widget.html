@@ -68,6 +68,8 @@
   let t = 0, tNow = 0, last = performance.now();
 
   function frame(now) {
+    // 30 fps bastan para agua serena — mitad de CPU/GPU que 60
+    if (now - last < 30) { if (!reduced) requestAnimationFrame(frame); return; }
     const dt = Math.min((now - last) / 1000, .05);
     last = now;
     tNow = now / 1000;

@@ -134,11 +134,8 @@ func main() {
 		},
 	})
 
-	// Ventana principal requerida por Wails; nunca se muestra.
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "codeguard-main", Hidden: true, Width: 200, Height: 100,
-	})
-
+	// Sin ventana principal: el panel y la burbuja son las únicas ventanas.
+	// Una ventana oculta extra costaba un renderer de WebView2 (~60 MB).
 	panel := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "CodeGuard",
 		Frameless:        true,
