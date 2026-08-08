@@ -67,7 +67,13 @@ func snippet(repoRoot, rel string, line int) []snippetLine {
 	if line < 1 {
 		return nil
 	}
-	f, err := os.Open(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	// Confinado al repo: una ruta manipulada en la salida de un escáner no
+	// debe poder mostrar archivos de fuera (gosec G304/G703).
+	full := filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	if !strings.HasPrefix(full, filepath.Clean(repoRoot)+string(filepath.Separator)) {
+		return nil
+	}
+	f, err := os.Open(full)
 	if err != nil {
 		return nil
 	}

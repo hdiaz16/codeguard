@@ -161,8 +161,9 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 	}
 	r.Store.UpdateRunLLM(req.RunID, risk, true)
 
-	// Contexto común: diff truncado por presupuesto + lo ya encontrado.
-	diff := req.DiffUnified
+	// Contexto común: diff REDACTADO (P5 — nada que parezca credencial sale
+	// a la red) y truncado por presupuesto, + lo ya encontrado.
+	diff := Redact(req.DiffUnified)
 	if maxChars := cfg.LLM.MaxDiffTokens * 4; len(diff) > maxChars {
 		diff = diff[:maxChars] + "\n[diff truncado por presupuesto]"
 	}
@@ -302,7 +303,12 @@ func verify(req *ipc.Request, pillar finding.Pillar, content string, determinist
 }
 
 func fileLines(repoRoot, rel string) int {
-	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	// Confinado al repo (gosec G304): rutas citadas por el modelo no salen de él.
+	full := filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	if !strings.HasPrefix(full, filepath.Clean(repoRoot)+string(filepath.Separator)) {
+		return 0
+	}
+	raw, err := os.ReadFile(full)
 	if err != nil {
 		return 0
 	}

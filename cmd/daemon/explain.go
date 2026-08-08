@@ -14,6 +14,7 @@ import (
 	"codeguard/internal/config"
 	"codeguard/internal/foundry"
 	"codeguard/internal/ipc"
+	"codeguard/internal/shadow"
 )
 
 // D1 — el agente que habla tu idioma, literal: los mensajes crípticos de las
@@ -44,7 +45,6 @@ func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request,
 	}
 
 	// máximo 3 bloqueantes por llamada; caché por fingerprint
-	var pending []string
 	count := 0
 	var sb strings.Builder
 	for _, f := range resp.Findings {
@@ -56,9 +56,10 @@ func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request,
 			continue
 		}
 		count++
-		pending = append(pending, f.ID)
+		// P5: el código que viaja al modelo va redactado.
 		fmt.Fprintf(&sb, "— id: %s\n  regla: %s (%s)\n  mensaje: %s\n  archivo: %s línea %d\n  código:\n%s\n\n",
-			f.ID, f.RuleKey, f.Engine, f.Message, f.File, f.Line, snippetText(req.RepoRoot, f.File, f.Line))
+			f.ID, f.RuleKey, f.Engine, f.Message, f.File, f.Line,
+			shadow.Redact(snippetText(req.RepoRoot, f.File, f.Line)))
 	}
 	if count == 0 {
 		return
@@ -94,7 +95,6 @@ func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request,
 		}
 		emitExplain(app, e.ID, e.Text)
 	}
-	_ = pending
 }
 
 func emitExplain(app *application.App, findingID, text string) {
