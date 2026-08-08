@@ -1,0 +1,5 @@
+spikes/*/testrepo/
+spikes/*/tsproject/
+spikes/**/*.exe
+spikes/**/run*.json
+node_modules/
