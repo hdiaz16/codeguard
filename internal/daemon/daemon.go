@@ -152,6 +152,13 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	if deadline <= 0 {
 		deadline = 5 * time.Second
 	}
+	// Margen H3: los motores se cortan ANTES del deadline del hook, para que
+	// la respuesta (aunque degradada) siempre llegue a tiempo. Un tsc frío
+	// se degrada aquí y el CI lo aplica como bloqueante.
+	deadline -= 700 * time.Millisecond
+	if deadline < time.Second {
+		deadline = time.Second
+	}
 	res, err := pipeline.Run(ctx, pipeline.Options{
 		Config:       cfg,
 		Diff:         &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified},

@@ -139,13 +139,13 @@ func main() {
 		Height:           600,
 		DisableResize:    true,
 		URL:              "/",
-		BackgroundType:   application.BackgroundTypeTranslucent,
+		// Transparente puro: el acrílico cubría todo el rectángulo de la
+		// ventana y se veía como un fondo doble alrededor de la tarjeta.
+		BackgroundType:   application.BackgroundTypeTransparent,
 		BackgroundColour: application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 0},
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar:                   true,
 			DisableFramelessWindowDecorations: true,
-			// Vidrio esmerilado real de Windows 11 detrás de la tarjeta.
-			BackdropType: application.Acrylic,
 		},
 	})
 

@@ -71,19 +71,22 @@ func Listen() (net.Listener, error) {
 	})
 }
 
-// Call conecta con el daemon, manda la petición y espera la respuesta
-// dentro del deadline. Cualquier error se traduce en degradación del hook.
+// Call conecta con el daemon, manda la petición y espera la respuesta.
+// La conexión debe ser inmediata (el daemon está o no está: 2 s); la
+// respuesta puede tardar hasta timeout + margen, porque el daemon corta
+// sus motores antes del deadline y siempre alcanza a responder.
 func Call(req *Request, timeout time.Duration) (*Response, error) {
 	name, err := PipeName()
 	if err != nil {
 		return nil, err
 	}
-	conn, err := winio.DialPipe(name, &timeout)
+	dial := 2 * time.Second
+	conn, err := winio.DialPipe(name, &dial)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(timeout))
+	conn.SetDeadline(time.Now().Add(timeout + 3*time.Second))
 
 	req.ProtocolVersion = ProtocolVersion
 	payload, err := json.Marshal(req)
