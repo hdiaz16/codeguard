@@ -86,6 +86,19 @@
   }
   header .verdict { font-size: 15px; font-weight: 600; margin-top: 4px; }
   header .meta { color: var(--ink-3); font-size: 11px; margin-top: 2px; }
+  /* hilo de pensamiento del modelo: efímero, una línea, se desvanece solo */
+  #thinking {
+    color: var(--ink-3); font-size: 11px; font-style: italic; margin-top: 4px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    opacity: 0; transition: opacity .5s;
+  }
+  #thinking.on { opacity: .85; }
+  #thinking .dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--warn); margin-right: 6px; vertical-align: middle;
+    animation: think 1.2s ease-in-out infinite;
+  }
+  @keyframes think { 50% { opacity: .3; } }
   .verdict.block { color: var(--block); }
   .verdict.pass  { color: var(--ok); }
   .parity {
@@ -141,6 +154,14 @@
   }
   .fb button:hover { color: var(--ink); border-color: var(--ink-3); }
   .fb button.sent { color: var(--accent); border-color: var(--accent); pointer-events: none; }
+  .explain {
+    margin: 8px 0 2px; padding: 8px 10px; border-radius: 6px;
+    background: #20262c; border-left: 2px solid var(--accent);
+    color: var(--ink-2); font-size: 12.5px; line-height: 1.5;
+    animation: rise .4s ease both;
+  }
+  .explain b { color: var(--accent); font-weight: 600; font-size: 10.5px;
+    text-transform: uppercase; letter-spacing: .08em; display: block; margin-bottom: 3px; }
   .empty { color: var(--ink-3); text-align: center; padding: 40px 20px; }
   .truncated { color: var(--ink-3); font-size: 11px; margin: 2px 16px 10px; }
   .verdict.working { color: var(--warn); }
@@ -171,6 +192,7 @@
     <div class="brand">CodeGuard</div>
     <div class="verdict" id="verdict">esperando el primer análisis…</div>
     <div class="meta" id="meta"></div>
+    <div id="thinking"><span class="dot"></span><span id="thinking-text"></span></div>
   </header>
   <div id="parity" class="parity" hidden>Tu rule pack no coincide con el del repo; no puedo garantizar que pase el CI.</div>
   <main id="main">
@@ -241,7 +263,11 @@
         : "Commit realizado. Sin observaciones.";
       v.className = "verdict pass";
     }
-    $("meta").textContent = `${p.repo} @ ${p.branch} · ${p.at} · ${p.elapsed_ms} ms`;
+    const extras = [];
+    if (p.ai_generated) extras.push("✦ código generado por IA");
+    if (p.suppressed > 0) extras.push(`deuda suprimida: ${p.suppressed}`);
+    $("meta").textContent = `${p.repo} @ ${p.branch} · ${p.at} · ${p.elapsed_ms} ms` +
+      (extras.length ? ` · ${extras.join(" · ")}` : "");
     $("parity").hidden = p.ci_parity;
 
     const blockers = (p.findings || []).filter(f => f.blocking);
@@ -288,6 +314,30 @@
     const p = Array.isArray(e.data) ? e.data[0] : e.data;
     if (p) render(p);
   });
+  // Hilo de pensamiento del modelo (análisis en sombra), en vivo
+  const PILAR_THINK = { quality: "calidad", security: "seguridad", data: "datos" };
+  Events.On("thinking", (e) => {
+    const d = Array.isArray(e.data) ? e.data[0] : e.data;
+    const box = $("thinking");
+    if (!d || !d.pillar) { box.classList.remove("on"); return; }
+    $("thinking-text").textContent =
+      `analizando ${PILAR_THINK[d.pillar] || d.pillar} · ${d.text.replace(/\s+/g, " ").trim()}`;
+    box.classList.add("on");
+  });
+
+  // Explicación del modelo: llega asíncrona y se inserta en su tarjeta
+  Events.On("explain", (e) => {
+    const d = Array.isArray(e.data) ? e.data[0] : e.data;
+    if (!d?.finding_id || !d?.text) return;
+    const fb = document.querySelector(`.fb[data-id="${CSS.escape(d.finding_id)}"]`);
+    if (!fb || fb.parentElement.querySelector(".explain")) return;
+    const div = document.createElement("div");
+    div.className = "explain";
+    div.innerHTML = `<b>en palabras simples</b>`;
+    div.appendChild(document.createTextNode(d.text));
+    fb.parentElement.insertBefore(div, fb);
+  });
+
   Events.On("working", (e) => {
     const d = Array.isArray(e.data) ? e.data[0] : e.data;
     const v = $("verdict");

@@ -80,6 +80,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	defer l.Close()
 	log.Println("daemon escuchando en el pipe del usuario")
+	go WarmAll(ctx) // compiladores calientes antes del primer commit del día
 
 	go func() {
 		<-ctx.Done()
@@ -108,6 +109,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	if s.OnRequest != nil {
 		s.OnRequest(req)
 	}
+	go RememberRepo(req.RepoRoot) // para precalentar en el próximo arranque
 	resp := s.Analyze(ctx, req)
 	if err := ipc.WriteResponse(conn, resp); err != nil {
 		log.Println("no se pudo responder:", err)
@@ -159,6 +161,10 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	if deadline < time.Second {
 		deadline = time.Second
 	}
+	var demoted map[string]bool
+	if s.Shadow != nil && s.Shadow.Store != nil {
+		demoted, _ = s.Shadow.Store.DemotedRules(req.RepoID, 5, 0.20)
+	}
 	res, err := pipeline.Run(ctx, pipeline.Options{
 		Config:       cfg,
 		Diff:         &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified},
@@ -167,6 +173,7 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		Rulepack:     rulepack,
 		Timeout:      deadline,
 		Suppressions: baseline.Load(req.RepoRoot),
+		DemotedRules: demoted,
 	})
 	if err != nil {
 		resp.Degraded = append(resp.Degraded, fmt.Sprintf("pipeline:%v", err))
@@ -175,6 +182,7 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	resp.Verdict = string(res.Verdict)
 	resp.BlockingFindings = res.BlockingFindings
 	resp.AdvisoryFindings = res.AdvisoryFindings
+	resp.Suppressed = res.Suppressed
 	resp.Degraded = append(resp.Degraded, res.Degraded...)
 	// El daemon asigna los IDs: el hook persiste con los mismos y el panel
 	// puede referenciarlos en el feedback (etapa 9).

@@ -55,6 +55,9 @@ type LLM struct {
 	ModelQuality     string  `koanf:"model_quality"`
 	ModelSecurity    string  `koanf:"model_security"`
 	ModelData        string  `koanf:"model_data"`
+	// ModelFast: modelo no-razonador para tareas mecánicas (explicar
+	// hallazgos, generar reglas). El razonamiento ahí es peso muerto.
+	ModelFast string `koanf:"model_fast"`
 	TimeoutMs        int     `koanf:"timeout_ms"`
 	MaxDiffTokens    int     `koanf:"max_diff_tokens"`
 	MonthlyBudgetUSD float64 `koanf:"monthly_budget_usd"` // 0 = sin límite
@@ -75,6 +78,14 @@ func (l LLM) ModelFor(pillar string) string {
 		if l.ModelData != "" {
 			return l.ModelData
 		}
+	}
+	return l.Model
+}
+
+// Fast devuelve el modelo rápido para tareas mecánicas; sin override cae al default.
+func (l LLM) Fast() string {
+	if l.ModelFast != "" {
+		return l.ModelFast
 	}
 	return l.Model
 }

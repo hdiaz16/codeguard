@@ -132,6 +132,9 @@ type llmFinding struct {
 
 type Runner struct {
 	Store *store.Store
+	// OnThinking recibe fragmentos del razonamiento del modelo en vivo para
+	// mostrarlos en la UI. pillar=="" y text=="" señala que la sombra terminó.
+	OnThinking func(pillar, text string)
 }
 
 // Run ejecuta la sombra completa para una petición ya respondida al hook.
@@ -182,7 +185,15 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 			user := fmt.Sprintf("%s\n\nHallazgos deterministas ya reportados (NO repetir):\n%s\nDiff a analizar:\n```\n%s\n```", scope, detList.String(), diff)
 
 			call := store.LLMCall{RunID: req.RunID, Pillar: string(pillar), Model: model}
-			res, err := client.Complete(ctx, model, systemPrompt, user, timeout)
+			var onDelta func(kind, text string)
+			if r.OnThinking != nil {
+				onDelta = func(kind, text string) {
+					if kind == "reasoning" {
+						r.OnThinking(string(pillar), text)
+					}
+				}
+			}
+			res, err := client.CompleteStream(ctx, model, systemPrompt, user, timeout, 0, onDelta)
 			if err != nil {
 				call.Status = "error"
 				if ctx.Err() != nil || strings.Contains(err.Error(), "deadline") {
@@ -209,6 +220,9 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 		}(pillar, scope)
 	}
 	wg.Wait()
+	if r.OnThinking != nil {
+		r.OnThinking("", "") // señal de fin: la UI apaga el hilo de pensamiento
+	}
 
 	if err := r.Store.SaveLLMFindings(req.RunID, verified); err != nil {
 		log.Println("sombra: no se pudieron guardar hallazgos:", err)

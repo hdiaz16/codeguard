@@ -1,0 +1,96 @@
+rules:
+  - id: ts-eval
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "eval() sobre datos — inyección de código"
+    metadata:
+      pillar: security
+      why: "eval ejecuta cualquier cadena como código: entrada de usuario = ejecución remota."
+      fix_hint: "Usa JSON.parse para datos, o un mapa de funciones permitidas."
+    pattern: "eval(...)"
+
+  - id: ts-innerhtml-var
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: "innerHTML con contenido dinámico — riesgo de XSS"
+    metadata:
+      pillar: security
+      why: "Insertar HTML construido con datos permite inyectar scripts (OWASP A01/A03)."
+      fix_hint: "Usa textContent, o sanitiza con DOMPurify si de verdad necesitas HTML."
+    patterns:
+      - pattern: "$EL.innerHTML = $X"
+      - pattern-not: '$EL.innerHTML = "..."'
+
+  - id: python-subprocess-shell
+    languages: [python]
+    severity: ERROR
+    message: "subprocess con shell=True — inyección de comandos"
+    metadata:
+      pillar: security
+      why: "Con shell=True cualquier dato en el comando puede ejecutar lo que quiera en el sistema."
+      fix_hint: "Pasa el comando como lista de argumentos y quita shell=True."
+    pattern: "subprocess.$F(..., shell=True, ...)"
+
+  - id: python-yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: "yaml.load sin Loader seguro — deserialización peligrosa"
+    metadata:
+      pillar: security
+      why: "yaml.load puede instanciar objetos arbitrarios: un YAML malicioso ejecuta código."
+      fix_hint: "Usa yaml.safe_load(...)."
+    patterns:
+      - pattern: "yaml.load($X)"
+
+  - id: python-pickle-load
+    languages: [python]
+    severity: WARNING
+    message: "pickle.load sobre datos externos — deserialización insegura"
+    metadata:
+      pillar: security
+      why: "Deserializar pickle de origen no confiable ejecuta código (mismo patrón que BinaryFormatter en .NET)."
+      fix_hint: "Usa JSON u otro formato de datos; pickle solo para datos propios y firmados."
+    pattern: "pickle.load(...)"
+
+  - id: go-sql-concat
+    languages: [go]
+    severity: ERROR
+    message: "Consulta SQL construida por concatenación — inyección SQL"
+    metadata:
+      pillar: security
+      why: "Concatenar datos en el SQL permite inyectar consultas arbitrarias."
+      fix_hint: "Usa placeholders: db.Query(\"... WHERE id = ?\", id)."
+    patterns:
+      - pattern: '$DB.Query("..." + $X, ...)'
+
+  - id: csharp-binaryformatter
+    languages: [csharp]
+    severity: ERROR
+    message: "BinaryFormatter — deserialización insegura prohibida"
+    metadata:
+      pillar: security
+      why: "BinaryFormatter es vector conocido de ejecución remota; Microsoft lo declaró obsoleto e inseguro."
+      fix_hint: "Usa System.Text.Json o protobuf."
+    patterns:
+      - pattern: "new BinaryFormatter(...)"
+
+  - id: cors-wildcard
+    languages: [typescript, javascript, python, csharp, go, java]
+    severity: WARNING
+    message: "CORS con comodín * — cualquier origen puede llamar a esta API"
+    metadata:
+      pillar: security
+      why: "OWASP A02 2025 (configuración insegura): un origen comodín anula la protección del navegador."
+      fix_hint: "Lista explícita de orígenes permitidos por entorno."
+    patterns:
+      - pattern-regex: 'Access-Control-Allow-Origin[\"'']?\s*[:,]\s*[\"'']\*'
+
+  - id: ts-jwt-decode-no-verify
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "JWT decodificado sin verificar la firma"
+    metadata:
+      pillar: security
+      why: "decode sin verify acepta cualquier token fabricado: autenticación rota (BOLA)."
+      fix_hint: "Usa jwt.verify(token, secret) — nunca jwt.decode para decisiones de acceso."
+    pattern: "jwt.decode(...)"

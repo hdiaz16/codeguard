@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gobwas/glob"
@@ -50,6 +51,9 @@ type Options struct {
 	// Suppressions: fingerprints de la baseline (§17 paso 4) — hallazgos
 	// preexistentes que no deben bloquear. Los secretos NUNCA se suprimen.
 	Suppressions map[string]bool
+	// DemotedRules: "engine/rule_key" degradadas de bloqueante a aviso por el
+	// feedback del equipo (auto-calibración). Los secretos nunca se degradan.
+	DemotedRules map[string]bool
 }
 
 // Run ejecuta el embudo determinista y devuelve el resultado consolidado.
@@ -130,6 +134,19 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 			res.Findings = append(res.Findings, fs...)
 			if failures[i] != nil {
 				res.Degraded = append(res.Degraded, opt.Engines[i].Name()+":error")
+			}
+		}
+	}
+
+	// ── Auto-calibración: reglas con exceso de falsos positivos (según el
+	// feedback del equipo en ESTE repo) bajan a aviso. gitleaks jamás. ────
+	if len(opt.DemotedRules) > 0 {
+		for i := range res.Findings {
+			f := &res.Findings[i]
+			if f.Engine != "gitleaks" && f.Blocking && opt.DemotedRules[f.Engine+"/"+f.RuleKey] {
+				f.Blocking = false
+				f.Severity = finding.Warning
+				f.Why = strings.TrimSpace("Regla degradada a aviso por el feedback del equipo (exceso de falsos positivos aquí). " + f.Why)
 			}
 		}
 	}

@@ -40,6 +40,7 @@ type Response struct {
 	BlockingFindings int               `json:"blocking_findings"`
 	AdvisoryFindings int               `json:"advisory_findings"`
 	CIParity         bool              `json:"ci_parity"`
+	Suppressed       int               `json:"suppressed"` // deuda de baseline que no bloqueó
 	Degraded         []string          `json:"degraded"`
 	Findings         []finding.Finding `json:"findings"`
 	ElapsedMs        int64             `json:"elapsed_ms"`

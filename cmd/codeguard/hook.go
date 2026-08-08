@@ -103,6 +103,16 @@ func runPreCommit() error {
 	runID := store.NewULID()
 	os.WriteFile(lastRunFile(repoRoot), []byte(runID), 0o644)
 
+	// ── Señal de código generado por IA (RADAR): variables de entorno de la
+	// herramienta que invoca el commit. Sube el riesgo (+20) y se etiqueta. ──
+	aiGenerated := false
+	for _, v := range []string{"CLAUDECODE", "CLAUDE_CODE", "CURSOR_AGENT", "GITHUB_COPILOT_AGENT", "AIDER_MODEL", "GEMINI_CLI"} {
+		if os.Getenv(v) != "" {
+			aiGenerated = true
+			break
+		}
+	}
+
 	// ── Etapa 2: en el daemon; sin daemon, local degradado ──
 	req := &ipc.Request{
 		RunID:           runID,
@@ -113,6 +123,7 @@ func runPreCommit() error {
 		DiffUnified:     diff.Unified,
 		RulepackVersion: cfg.Rulepack,
 		ConfigHash:      cfg.Hash,
+		AIGenerated:     aiGenerated,
 		DeadlineMs:      int(hookDeadline.Milliseconds()),
 	}
 	var res *pipeline.Result

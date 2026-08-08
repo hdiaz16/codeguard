@@ -260,6 +260,58 @@ func (s *Store) DiffCachePut(repoID, diffSHA, rulepack, configHash, model, resul
 	return err
 }
 
+// RuleStat es la precisión medida de una regla según el feedback del equipo.
+type RuleStat struct {
+	Engine, RuleKey  string
+	Useful, FalsePos int
+}
+
+// RuleStats agrega el feedback por regla, opcionalmente filtrado por repo.
+func (s *Store) RuleStats(repoID string) ([]RuleStat, error) {
+	q := `SELECT f.engine, f.rule_key,
+	       SUM(CASE WHEN fb.verdict = 'useful' THEN 1 ELSE 0 END),
+	       SUM(CASE WHEN fb.verdict = 'false_positive' THEN 1 ELSE 0 END)
+	  FROM feedback fb
+	  JOIN findings f ON f.id = fb.finding_id
+	  JOIN runs r ON r.id = f.run_id
+	 WHERE (? = '' OR r.repo_id = ?)
+	 GROUP BY f.engine, f.rule_key
+	 ORDER BY 4 DESC, 3 DESC`
+	rows, err := s.db.Query(q, repoID, repoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RuleStat
+	for rows.Next() {
+		var st RuleStat
+		if err := rows.Scan(&st.Engine, &st.RuleKey, &st.Useful, &st.FalsePos); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
+// DemotedRules devuelve las reglas auto-degradadas para un repo: con al
+// menos minVotes votos y tasa de falsos positivos sobre el umbral, dejan de
+// bloquear (§17: precisión < 80% se corrige o se desactiva — aquí, se degrada
+// sola con el feedback del equipo, sin esperar a la calibración formal).
+func (s *Store) DemotedRules(repoID string, minVotes int, maxFPRate float64) (map[string]bool, error) {
+	stats, err := s.RuleStats(repoID)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, st := range stats {
+		total := st.Useful + st.FalsePos
+		if total >= minVotes && float64(st.FalsePos)/float64(total) > maxFPRate {
+			out[st.Engine+"/"+st.RuleKey] = true
+		}
+	}
+	return out, nil
+}
+
 // DefaultPath es la BD local por usuario, compartida por hook, ci y daemon.
 func DefaultPath() string {
 	base := os.Getenv("LOCALAPPDATA")

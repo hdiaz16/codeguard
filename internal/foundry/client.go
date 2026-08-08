@@ -3,6 +3,7 @@
 package foundry
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -39,7 +40,8 @@ func New(cfg config.LLM) *Client {
 	return &Client{
 		endpoint: endpoint,
 		apiKey:   key,
-		http:     &http.Client{Timeout: 60 * time.Second},
+		// El límite real lo pone el context de cada llamada; este es el techo.
+		http: &http.Client{Timeout: 3 * time.Minute},
 	}
 }
 
@@ -55,45 +57,72 @@ type Result struct {
 }
 
 // Complete hace una llamada de chat y devuelve el contenido del primer choice.
-func (c *Client) Complete(ctx context.Context, model, system, user string, timeout time.Duration) (*Result, error) {
+// maxTokens: 0 = default (4000). Los razonadores (Kimi K3) gastan presupuesto
+// en pensar ANTES de responder — tareas grandes necesitan techos grandes.
+func (c *Client) Complete(ctx context.Context, model, system, user string, timeout time.Duration, maxTokens int) (*Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	body, _ := json.Marshal(map[string]any{
+	if maxTokens <= 0 {
+		maxTokens = 4000
+	}
+	payload := map[string]any{
 		"model": model,
 		"messages": []map[string]string{
 			{"role": "system", "content": system},
 			{"role": "user", "content": user},
 		},
-		"temperature": 0,
-		"max_tokens":  1500,
 		// Fuerza JSON válido en endpoints que lo soportan; inofensivo si no.
 		"response_format": map[string]string{"type": "json_object"},
-	})
-	req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("api-key", c.apiKey) // estilo Azure
+	// Dialectos por familia: los GPT-5.x exigen max_completion_tokens y no
+	// aceptan temperature=0; el resto (Kimi, DeepSeek...) usa max_tokens.
+	do := func(useNewParams bool) (*http.Response, []byte, error) {
+		p := map[string]any{}
+		for k, v := range payload {
+			p[k] = v
+		}
+		if useNewParams {
+			p["max_completion_tokens"] = maxTokens
+		} else {
+			p["max_tokens"] = maxTokens
+			p["temperature"] = 0
+		}
+		body, _ := json.Marshal(p)
+		req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		req.Header.Set("api-key", c.apiKey) // estilo Azure
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(resp.Body)
+		return resp, raw, err
+	}
 
 	start := time.Now()
-	resp, err := c.http.Do(req)
+	resp, raw, err := do(false)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	if resp.StatusCode == 400 && strings.Contains(string(raw), "max_completion_tokens") {
+		resp, raw, err = do(true)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(raw), 300))
 	}
 	var parsed struct {
 		Choices []struct {
-			Message struct {
+			FinishReason string `json:"finish_reason"`
+			Message      struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
@@ -105,11 +134,129 @@ func (c *Client) Complete(ctx context.Context, model, system, user string, timeo
 	if len(parsed.Choices) == 0 {
 		return nil, fmt.Errorf("respuesta sin choices")
 	}
+	if parsed.Choices[0].FinishReason == "length" {
+		return nil, fmt.Errorf("respuesta truncada por max_tokens (%d): el razonamiento consumió el presupuesto — sube el techo", maxTokens)
+	}
 	return &Result{
 		Content:   parsed.Choices[0].Message.Content,
 		Usage:     parsed.Usage,
 		LatencyMs: time.Since(start).Milliseconds(),
 	}, nil
+}
+
+// CompleteStream: igual que Complete pero en streaming SSE, entregando los
+// deltas de razonamiento y contenido vía onDelta (kind: "reasoning"|"content").
+// Permite mostrar en la UI lo que el modelo va pensando mientras analiza.
+func (c *Client) CompleteStream(ctx context.Context, model, system, user string, timeout time.Duration, maxTokens int, onDelta func(kind, text string)) (*Result, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if maxTokens <= 0 {
+		maxTokens = 4000
+	}
+
+	do := func(useNewParams bool) (*http.Response, error) {
+		p := map[string]any{
+			"model": model,
+			"messages": []map[string]string{
+				{"role": "system", "content": system},
+				{"role": "user", "content": user},
+			},
+			"response_format": map[string]string{"type": "json_object"},
+			"stream":          true,
+			"stream_options":  map[string]bool{"include_usage": true},
+		}
+		if useNewParams {
+			p["max_completion_tokens"] = maxTokens
+		} else {
+			p["max_tokens"] = maxTokens
+			p["temperature"] = 0
+		}
+		body, _ := json.Marshal(p)
+		req, err := http.NewRequestWithContext(ctx, "POST", c.endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		req.Header.Set("api-key", c.apiKey)
+		return c.http.Do(req)
+	}
+
+	start := time.Now()
+	resp, err := do(false)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == 400 {
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(raw), "max_completion_tokens") {
+			return nil, fmt.Errorf("HTTP 400: %s", truncate(string(raw), 300))
+		}
+		if resp, err = do(true); err != nil {
+			return nil, err
+		}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(raw), 300))
+	}
+
+	var content strings.Builder
+	var usage Usage
+	finish := ""
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				FinishReason string `json:"finish_reason"`
+				Delta        struct {
+					Content          string `json:"content"`
+					ReasoningContent string `json:"reasoning_content"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *Usage `json:"usage"`
+		}
+		if json.Unmarshal([]byte(data), &chunk) != nil {
+			continue
+		}
+		if chunk.Usage != nil {
+			usage = *chunk.Usage
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		ch := chunk.Choices[0]
+		if ch.FinishReason != "" {
+			finish = ch.FinishReason
+		}
+		if ch.Delta.ReasoningContent != "" && onDelta != nil {
+			onDelta("reasoning", ch.Delta.ReasoningContent)
+		}
+		if ch.Delta.Content != "" {
+			content.WriteString(ch.Delta.Content)
+			if onDelta != nil {
+				onDelta("content", ch.Delta.Content)
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if finish == "length" {
+		return nil, fmt.Errorf("respuesta truncada por max_tokens (%d)", maxTokens)
+	}
+	return &Result{Content: content.String(), Usage: usage, LatencyMs: time.Since(start).Milliseconds()}, nil
 }
 
 func truncate(s string, n int) string {

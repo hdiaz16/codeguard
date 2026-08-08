@@ -1,0 +1,140 @@
+rules:
+  - id: sql-delete-sin-where
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "DELETE sin WHERE — borra la tabla completa"
+    metadata:
+      pillar: data
+      why: "Un DELETE sin filtro en producción es pérdida de datos irreversible."
+      fix_hint: "Agrega el WHERE; si de verdad quieres vaciar la tabla, usa TRUNCATE explícito y revisado."
+    patterns:
+      - pattern-regex: '(?i)DELETE\s+FROM\s+\w+\s*;'
+
+  - id: sql-update-sin-where
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "UPDATE sin WHERE — modifica todas las filas"
+    metadata:
+      pillar: data
+      why: "Un UPDATE sin filtro reescribe la tabla entera."
+      fix_hint: "Agrega el WHERE con la condición que delimita las filas."
+    patterns:
+      - pattern-regex: '(?i)UPDATE\s+\w+\s+SET\s+[^;]*;'
+      - pattern-not-regex: '(?i)WHERE'
+
+  - id: sql-select-star
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: WARNING
+    message: "SELECT * — trae columnas que no necesitas"
+    metadata:
+      pillar: data
+      why: "Acopla el código al esquema completo y arrastra datos de más por la red."
+      fix_hint: "Nombra las columnas que realmente usas."
+    patterns:
+      - pattern-regex: '(?i)SELECT\s+\*\s+FROM'
+
+  - id: sql-like-comodin-inicial
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: WARNING
+    message: "LIKE con comodín inicial — no puede usar índices"
+    metadata:
+      pillar: data
+      why: "LIKE '%...' obliga a escanear la tabla completa."
+      fix_hint: "Reordena el patrón o usa búsqueda de texto (tsvector/fulltext)."
+    patterns:
+      - pattern-regex: "(?i)LIKE\\s+'%"
+
+  - id: ts-query-en-bucle
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: "Posible N+1: consulta dentro de bucle"
+    metadata:
+      pillar: data
+      why: "Una consulta por elemento multiplica la latencia por el tamaño de la lista."
+      fix_hint: "Trae todo en una consulta (IN / include del ORM) fuera del bucle."
+    patterns:
+      - pattern-inside: |
+          for (...) { ... }
+      - pattern-either:
+          - pattern: "await $DB.query(...)"
+          - pattern: "await $M.findMany(...)"
+          - pattern: "await $M.findUnique(...)"
+          - pattern: "await $M.findFirst(...)"
+
+  - id: python-orm-en-bucle
+    languages: [python]
+    severity: WARNING
+    message: "Posible N+1: consulta al ORM dentro de bucle"
+    metadata:
+      pillar: data
+      why: "Django dispara una consulta por iteración; con 1000 filas son 1000 consultas."
+      fix_hint: "Usa select_related/prefetch_related o filtra con __in antes del bucle."
+    patterns:
+      - pattern-inside: |
+          for $X in $ITER:
+              ...
+      - pattern-either:
+          - pattern: "$M.objects.get(...)"
+          - pattern: "$M.objects.filter(...)"
+
+  - id: log-dato-sensible
+    languages: [typescript, javascript, python, go, csharp, java]
+    severity: WARNING
+    message: "Posible dato sensible hacia logs"
+    metadata:
+      pillar: data
+      why: "PII o credenciales en logs terminan en sistemas de terceros sin control de acceso (aproximación v1 de la spec §6.3.3)."
+      fix_hint: "Registra identificadores opacos, no el valor; o redacta antes de loggear."
+    patterns:
+      - pattern-regex: '(?i)(console\.(log|info|warn|error)|logger?\.(info|warn|error|debug)|log\.(Printf|Println|Info|Warn|Error))\([^)]*(password|api_key|apikey|token|secret|card_number|curp|rfc)'
+
+  - id: catch-vacio-ts
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "catch vacío traga la excepción"
+    metadata:
+      pillar: quality
+      why: "OWASP A10 2025: el fallo desaparece sin rastro y el sistema queda en estado inconsistente."
+      fix_hint: "Registra el error y decide: recuperar, reintentar o propagar."
+    pattern: "try { ... } catch ($E) {}"
+
+  - id: python-except-pass
+    languages: [python]
+    severity: ERROR
+    message: "except que traga la excepción con pass"
+    metadata:
+      pillar: quality
+      why: "El error desaparece en silencio; depurarlo después cuesta horas."
+      fix_hint: "Captura la excepción específica y al menos registra qué pasó."
+    patterns:
+      - pattern: |
+          try:
+              ...
+          except:
+              pass
+      - pattern: |
+          try:
+              ...
+          except $E:
+              pass
+
+  - id: todo-sin-ticket
+    languages: [generic]
+    paths:
+      exclude: ["*.md", "*.txt"]
+    severity: WARNING
+    message: "TODO sin ticket asociado"
+    metadata:
+      pillar: quality
+      why: "Un TODO sin ticket es una promesa que nadie va a rastrear."
+      fix_hint: "Crea el ticket y referencia: TODO(PROJ-123)."
+    patterns:
+      - pattern-regex: '(?://|#)\s*TODO(?!\s*\(\w+[-#]?\d+\))'

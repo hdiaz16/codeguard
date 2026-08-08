@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -46,9 +47,11 @@ type snippetLine struct {
 }
 
 type panelPayload struct {
-	Repo      string         `json:"repo"`
-	RepoRoot  string         `json:"repo_root"`
-	Branch    string         `json:"branch"`
+	Repo        string `json:"repo"`
+	RepoRoot    string `json:"repo_root"`
+	Branch      string `json:"branch"`
+	AIGenerated bool   `json:"ai_generated"`
+	Suppressed  int    `json:"suppressed"`
 	Verdict   string         `json:"verdict"`
 	Blocking  int            `json:"blocking"`
 	Advisory  int            `json:"advisory"`
@@ -301,7 +304,31 @@ func main() {
 	}
 	var shadowRunner *shadow.Runner
 	if shadowStore != nil {
-		shadowRunner = &shadow.Runner{Store: shadowStore}
+		// El razonamiento del modelo se transmite al panel, con acelerador:
+		// muchos deltas pequeños → una emisión cada ~350 ms con la cola.
+		var thinkMu sync.Mutex
+		var thinkBuf string
+		var lastEmit time.Time
+		shadowRunner = &shadow.Runner{
+			Store: shadowStore,
+			OnThinking: func(pillar, text string) {
+				if pillar == "" && text == "" {
+					app.Event.Emit("thinking", map[string]string{"pillar": "", "text": ""})
+					return
+				}
+				thinkMu.Lock()
+				defer thinkMu.Unlock()
+				thinkBuf += text
+				if len(thinkBuf) > 140 {
+					thinkBuf = thinkBuf[len(thinkBuf)-140:]
+				}
+				if time.Since(lastEmit) < 350*time.Millisecond {
+					return
+				}
+				lastEmit = time.Now()
+				app.Event.Emit("thinking", map[string]string{"pillar": pillar, "text": thinkBuf})
+			},
+		}
 	}
 
 	srv := &daemon.Server{
@@ -324,9 +351,11 @@ func main() {
 				}
 			}
 			payload := &panelPayload{
-				Repo:      filepath.Base(req.RepoRoot),
-				RepoRoot:  filepath.ToSlash(req.RepoRoot),
-				Branch:    req.Branch,
+				Repo:        filepath.Base(req.RepoRoot),
+				RepoRoot:    filepath.ToSlash(req.RepoRoot),
+				Branch:      req.Branch,
+				AIGenerated: req.AIGenerated,
+				Suppressed:  resp.Suppressed,
 				Verdict:   resp.Verdict,
 				Blocking:  resp.BlockingFindings,
 				Advisory:  resp.AdvisoryFindings,
@@ -362,6 +391,13 @@ func main() {
 			if shouldOpen {
 				// Las ventanas se tocan desde el hilo de la UI.
 				application.InvokeAsync(showPanel)
+			}
+
+			// Diferenciador D1: el modelo explica los bloqueantes en español
+			// claro, sobre TU código. Async, cacheado por fingerprint — el
+			// commit ya fue decidido; esto solo enriquece el panel.
+			if cfg != nil && resp.Verdict == "block" {
+				go explainBlockers(app, cfg, req, resp)
 			}
 		},
 	}
