@@ -28,7 +28,9 @@ import (
 type OnResult func(req *ipc.Request, resp *ipc.Response)
 
 type Server struct {
-	OnResult OnResult
+	// OnRequest se dispara al entrar una petición (estado working en la UI).
+	OnRequest func(req *ipc.Request)
+	OnResult  OnResult
 }
 
 // Engines arma la lista de motores de la etapa 2. Compartida con `codeguard ci`.
@@ -97,6 +99,9 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	if err != nil {
 		log.Println("petición inválida:", err)
 		return
+	}
+	if s.OnRequest != nil {
+		s.OnRequest(req)
 	}
 	resp := s.Analyze(ctx, req)
 	if err := ipc.WriteResponse(conn, resp); err != nil {

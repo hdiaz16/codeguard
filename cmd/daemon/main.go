@@ -45,6 +45,7 @@ type snippetLine struct {
 
 type panelPayload struct {
 	Repo      string         `json:"repo"`
+	RepoRoot  string         `json:"repo_root"`
 	Branch    string         `json:"branch"`
 	Verdict   string         `json:"verdict"`
 	Blocking  int            `json:"blocking"`
@@ -185,6 +186,11 @@ func main() {
 	})
 
 	srv := &daemon.Server{
+		OnRequest: func(req *ipc.Request) {
+			repo := filepath.Base(req.RepoRoot)
+			ts.set("working", "analizando "+repo+"@"+req.Branch+"…")
+			app.Event.Emit("working", map[string]string{"repo": repo, "branch": req.Branch})
+		},
 		OnResult: func(req *ipc.Request, resp *ipc.Response) {
 			cfg, _ := config.Load(req.RepoRoot)
 			maxShow := 7
@@ -199,6 +205,7 @@ func main() {
 			}
 			payload := &panelPayload{
 				Repo:      filepath.Base(req.RepoRoot),
+				RepoRoot:  filepath.ToSlash(req.RepoRoot),
 				Branch:    req.Branch,
 				Verdict:   resp.Verdict,
 				Blocking:  resp.BlockingFindings,

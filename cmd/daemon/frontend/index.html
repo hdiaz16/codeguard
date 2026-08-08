@@ -71,6 +71,22 @@
   .fb button.sent { color: var(--accent); border-color: var(--accent); pointer-events: none; }
   .empty { color: var(--ink-3); text-align: center; padding: 40px 20px; }
   .truncated { color: var(--ink-3); font-size: 11px; margin: 2px 16px 10px; }
+  .verdict.working { color: var(--warn); }
+  .chips { display: flex; gap: 5px; margin: 6px 0 2px; flex-wrap: wrap; }
+  .chip {
+    font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 2px 7px; border-radius: 999px; border: 1px solid var(--hairline);
+    color: var(--ink-2); background: var(--surface-2);
+  }
+  .chip.sev-error { color: var(--block); border-color: var(--block); }
+  .chip.sev-warning { color: var(--warn); border-color: var(--warn); }
+  .path {
+    color: var(--ink-3); font-size: 11px; font-family: Consolas, monospace;
+    cursor: pointer; word-break: break-all; user-select: text;
+  }
+  .path:hover { color: var(--accent); }
+  .path .hint { font-family: "Segoe UI", sans-serif; font-size: 10px; opacity: 0; }
+  .path:hover .hint { opacity: 1; }
 </style>
 </head>
 <body>
@@ -103,16 +119,26 @@
     return `<div class="snippet">${rows}</div>`;
   }
 
-  function cardHTML(f, open) {
+  const PILAR = { quality: "calidad", security: "seguridad", data: "datos" };
+  const SEV = { error: "error", warning: "aviso", info: "info" };
+
+  function cardHTML(f, open, repoRoot) {
     // Tono §12.2 — determinista = hecho; modelo = observación.
     const kind = f.blocking ? "blocking" : "advisory";
+    const full = `${repoRoot}/${f.file}:${f.line}`;
     return `<details class="card ${kind}" ${open ? "open" : ""}>
       <summary>
         <span class="rule">${esc(f.rule_id)}</span>
         <span class="msg">${esc(f.message)}</span>
       </summary>
       <div class="body">
-        <div class="loc">${esc(f.file)}:${f.line}</div>
+        <div class="chips">
+          <span class="chip sev-${esc(f.severity)}">${esc(SEV[f.severity] || f.severity)}</span>
+          <span class="chip">${esc(PILAR[f.pillar] || f.pillar)}</span>
+          <span class="chip">motor: ${esc(f.engine)}</span>
+          ${f.is_fact ? `<span class="chip">verificado</span>` : `<span class="chip">observación</span>`}
+        </div>
+        <div class="path" title="clic para copiar la ruta" data-path="${esc(full)}">${esc(full)} <span class="hint">⧉ copiar</span></div>
         ${snippetHTML(f.snippet)}
         ${f.why ? `<div class="why"><b>Por qué importa:</b> ${esc(f.why)}</div>` : ""}
         ${f.fix_hint ? `<div class="fix"><b>Cómo arreglarlo:</b> ${esc(f.fix_hint)}</div>` : ""}
@@ -146,11 +172,11 @@
     let html = "";
     if (blockers.length) {
       html += `<section><h2>Bloqueantes</h2>` +
-        blockers.map(f => cardHTML(f, true)).join("") + `</section>`;
+        blockers.map(f => cardHTML(f, true, p.repo_root)).join("") + `</section>`;
     }
     if (shown.length) {
       html += `<section><h2>Sugerencias</h2>` +
-        shown.map(f => cardHTML(f, false)).join("") + `</section>`;
+        shown.map(f => cardHTML(f, false, p.repo_root)).join("") + `</section>`;
       if (hidden > 0) html += `<div class="truncated">${hidden} sugerencia(s) más, colapsadas por prioridad.</div>`;
     }
     if (p.degraded && p.degraded.length) {
@@ -167,11 +193,20 @@
         btn.textContent = btn.dataset.v === "useful" ? "útil ✓" : "falso positivo ✓";
       });
     });
+    document.querySelectorAll(".path").forEach(el => {
+      el.addEventListener("click", () => navigator.clipboard?.writeText(el.dataset.path));
+    });
   }
 
   Events.On("analysis", (e) => {
     const p = Array.isArray(e.data) ? e.data[0] : e.data;
     if (p) render(p);
+  });
+  Events.On("working", (e) => {
+    const d = Array.isArray(e.data) ? e.data[0] : e.data;
+    const v = $("verdict");
+    v.textContent = `Analizando ${d?.repo ?? ""} @ ${d?.branch ?? ""}…`;
+    v.className = "verdict working";
   });
   emit("panel-ready", null);
 </script>
