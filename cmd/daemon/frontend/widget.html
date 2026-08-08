@@ -59,9 +59,7 @@
   const flakes = [];
   let whisper = { text: "", t0: -9 };
   let gesture = { t0: -9, dir: 1 };
-  let mouse = null, lean = { x: 0, y: 0 }, swell = 1;
-  canvas.addEventListener("mousemove", e => { mouse = { x: e.offsetX, y: e.offsetY }; });
-  canvas.addEventListener("mouseleave", () => { mouse = null; });
+  // Sin reacción al mouse: la esfera queda fija — solo el clic actúa.
 
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const ph3 = Math.random() * Math.PI * 2; // fase propia de la marejada
@@ -105,16 +103,8 @@
     const g = tNow - gesture.t0;
     if (g < .6) R *= 1 + gesture.dir * Math.sin(g/.6*Math.PI) * .08;
 
-    // se inclina apenas hacia el cursor
-    let tl = {x:0,y:0}, tsw = 1;
-    if (mouse) {
-      const dx = mouse.x-OX, dy = mouse.y-OY, d = Math.hypot(dx,dy);
-      if (d < 85) { tl = {x:dx/d*3.5, y:dy/d*3.5}; tsw = 1.04; }
-    }
-    lean.x = lerp(lean.x, tl.x, k*1.5); lean.y = lerp(lean.y, tl.y, k*1.5);
-    swell = lerp(swell, tsw, k*1.5);
-    R *= swell;
-    const ox = OX + lean.x, oy = OY + lean.y;
+    // esfera fija: sin inclinación ni hinchazón por el cursor
+    const ox = OX, oy = OY;
 
     // pulso de sueño
     const sleepGlow = cur.sleep > .05 ? Math.max(0, Math.sin(t*.5))**12 * cur.sleep : 0;
