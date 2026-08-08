@@ -29,10 +29,12 @@
     --p-qua-bg: #1d2b36; --p-qua-fg: #8fc1e3;
     --p-dat-bg: #1d332a; --p-dat-fg: #7fd6a8;
 
-    /* sombras del sistema (la única fuente de separación) */
+    /* sombras del sistema (la única fuente de separación).
+       --float pequeña a propósito: una sombra grande alrededor de la tarjeta
+       pinta un halo translúcido sobre el escritorio y se ve como doble fondo. */
     --raise: 0 1px 2px rgba(0,0,0,.45), 0 4px 12px rgba(0,0,0,.22);
     --carve: inset 0 2px 6px rgba(0,0,0,.45);
-    --float: 0 8px 28px rgba(0,0,0,.5);
+    --float: 0 3px 10px rgba(0,0,0,.3);
   }
   * { box-sizing: border-box; }
   html, body { background: transparent; }
@@ -40,7 +42,7 @@
     margin: 0; color: var(--ink);
     font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px;
     line-height: 1.45; user-select: none; overflow: hidden;
-    height: 100vh; padding: 14px;
+    height: 100vh; padding: 10px;
   }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -53,17 +55,19 @@
     overflow: hidden;
     transform-origin: 92% 105%;
     opacity: 0;
+    /* solo transform+opacity: el compositor los anima sin lag (el blur
+       de antes desenfocaba 480x940 px por frame y trababa la entrada) */
+    will-change: transform, opacity;
   }
-  .shell.enter { animation: bloom .55s cubic-bezier(.22, 1.18, .36, 1) forwards; }
-  .shell.leave { animation: fold .26s cubic-bezier(.55, 0, .8, .4) forwards; }
+  .shell.enter { animation: bloom .42s cubic-bezier(.22, 1.12, .36, 1) forwards; }
+  .shell.leave { animation: fold .22s cubic-bezier(.55, 0, .8, .4) forwards; }
   @keyframes bloom {
-    0%   { transform: translate(26px, 60px) scale(.35); opacity: 0; filter: blur(10px); }
-    60%  { opacity: 1; }
-    100% { transform: translate(0, 0) scale(1); opacity: 1; filter: blur(0); }
+    0%   { transform: translate(22px, 50px) scale(.5); opacity: 0; }
+    100% { transform: translate(0, 0) scale(1); opacity: 1; }
   }
   @keyframes fold {
     0%   { transform: scale(1); opacity: 1; }
-    100% { transform: translate(20px, 46px) scale(.5); opacity: 0; filter: blur(6px); }
+    100% { transform: translate(18px, 40px) scale(.6); opacity: 0; }
   }
   .shell.enter section h2, .shell.enter .degraded, .shell.enter .traynote {
     animation: rise .5s cubic-bezier(.2, .9, .3, 1) both;

@@ -156,16 +156,25 @@ func main() {
 	})
 
 	// Tarjeta flotante anclada sobre el orbe (abajo-derecha), no muro completo.
+	// Redimensionar un WebView en cada apertura causa lag: solo se acomoda
+	// cuando el área de trabajo cambió (otro monitor, taskbar movida).
+	var lastDock struct{ w, h int }
 	dockPanel := func() {
-		if screen := app.Screen.GetPrimary(); screen != nil {
-			w := screen.WorkArea
-			h := w.Height * 84 / 100
-			if h > 940 {
-				h = 940
-			}
-			panel.SetSize(panelWidth, h)
-			panel.SetPosition(w.X+w.Width-panelWidth-2, w.Y+w.Height-h-108)
+		screen := app.Screen.GetPrimary()
+		if screen == nil {
+			return
 		}
+		w := screen.WorkArea
+		if lastDock.w == w.Width && lastDock.h == w.Height {
+			return
+		}
+		lastDock.w, lastDock.h = w.Width, w.Height
+		h := w.Height * 84 / 100
+		if h > 940 {
+			h = 940
+		}
+		panel.SetSize(panelWidth, h)
+		panel.SetPosition(w.X+w.Width-panelWidth-2, w.Y+w.Height-h-108)
 	}
 	// showPanel siempre via este helper: el contenido "emerge" desde el
 	// indicador (animación de entrada disparada por el evento panel-show).
