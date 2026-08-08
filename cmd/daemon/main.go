@@ -111,13 +111,13 @@ func (t *trayState) set(state, tooltip string) {
 	}
 }
 
-// pass vuelve a idle a los 10 s (§12.1).
+// pass vuelve a idle a los 15 s — con 10 el verde pasaba desapercibido.
 func (t *trayState) setPass(tooltip string) {
 	t.set("pass", tooltip)
 	if t.reset != nil {
 		t.reset.Stop()
 	}
-	t.reset = time.AfterFunc(10*time.Second, func() { t.set("idle", tooltip) })
+	t.reset = time.AfterFunc(15*time.Second, func() { t.set("idle", tooltip) })
 }
 
 func main() {

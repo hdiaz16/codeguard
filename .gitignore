@@ -6,3 +6,4 @@ node_modules/
 codeguard.exe
 *.db
 codeguard-daemon.exe
+codeguard-daemon.exe~
