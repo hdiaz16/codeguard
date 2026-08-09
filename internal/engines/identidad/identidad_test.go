@@ -49,9 +49,6 @@ func TestBinarioAlteradoNoPasa(t *testing.T) {
 		if r.Estado != Desconocido {
 			t.Errorf("un binario alterado debe quedar como %q, quedó como %q", Desconocido, r.Estado)
 		}
-		if r.Bien() {
-			t.Error("un binario alterado no puede darse por bueno")
-		}
 		if !r.Critico {
 			t.Error("gitleaks debe reportarse como crítico")
 		}

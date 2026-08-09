@@ -11,3 +11,5 @@ dist/*.exe
 dist/rulepacks/
 docs/explorador/
 tests/ultimo-resultado.csv
+
+daemon.exe

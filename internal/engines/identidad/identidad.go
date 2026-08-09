@@ -74,9 +74,6 @@ type Resultado struct {
 	Detalle string
 }
 
-// Bien indica si el binario se puede usar sin reservas.
-func (r Resultado) Bien() bool { return r.Estado == Verificado }
-
 // Verificar revisa los motores descargables del directorio dado. Los motores
 // de Python (semgrep, squawk, ruff) no entran: los instala pip con sus propias
 // firmas y no los distribuimos nosotros.

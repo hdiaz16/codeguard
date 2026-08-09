@@ -24,7 +24,7 @@ import (
 
 func graphCmd() *cobra.Command {
 	var out string
-	var deep, abrir bool
+	var deep bool
 	cmd := &cobra.Command{
 		Use:   "graph",
 		Short: "Grafo del repo: --deep abre el explorador interactivo a nivel de función",
@@ -47,24 +47,20 @@ func graphCmd() *cobra.Command {
 					fmt.Println("explorador abierto en la ventana del agente")
 					return nil
 				}
-				// Sin daemon: se deja la carpeta autocontenida y se avisa.
-				fmt.Println("el agente no está corriendo — genero la versión de archivo")
+				// Antes había aquí una copia del explorador que se escribía a
+				// disco y se abría en el navegador. Se eliminó por dos motivos:
+				// el explorador vive en el escritorio, no en una pestaña, y esa
+				// copia se quedó atrás —arrastraba el fallo del lienzo en blanco
+				// mucho después de estar corregido en la buena.
 				cg, err := codegraph.Build(repoRoot)
 				if err != nil {
 					return err
 				}
-				dir := filepath.Join(repoRoot, "docs", "explorador")
-				page, err := codegraph.WriteExplorer(cg, dir)
-				if err != nil {
-					return err
-				}
-				fmt.Printf("explorador generado: %d funciones, %d relaciones\n", len(cg.Nodes), len(cg.Edges))
-				fmt.Printf("  %s\n", page)
-				if abrir {
-					exec.Command("cmd", "/c", "start", "", page).Start()
-				} else {
-					fmt.Println("  (arranca el agente para verlo en su ventana, o usa --abrir)")
-				}
+				fmt.Printf("el agente no está corriendo, así que no hay dónde dibujarlo.\n")
+				fmt.Printf("El grafo de este repo son %d funciones y %d relaciones.\n\n",
+					len(cg.Nodes), len(cg.Edges))
+				fmt.Println("Arranca el agente y vuelve a intentarlo:")
+				fmt.Println("  codeguard daemon        (o reinicia sesión: arranca solo)")
 				return nil
 			}
 
@@ -137,7 +133,6 @@ func graphCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&out, "out", "", "ruta de salida (default: docs/obsidian/ o docs/)")
 	cmd.Flags().BoolVar(&deep, "deep", false, "explorador interactivo a nivel de función (WebGL)")
-	cmd.Flags().BoolVar(&abrir, "abrir", false, "sin agente corriendo, abrir la copia de archivo en el navegador")
 	return cmd
 }
 

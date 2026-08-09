@@ -35,7 +35,7 @@ function LimpiarRepo($repo, $archivo) {
     # "nothing to commit" y la prueba pasa por el motivo equivocado. Deshacerlo
     # es obligatorio, no cosmetico.
     if ($script:HeadAntes -and (git rev-parse HEAD 2>$null) -ne $script:HeadAntes) {
-        Write-Host "    (deshaciendo commit que no debio pasar)" -ForegroundColor DarkYellow
+        Write-Host "    (deshaciendo el commit de prueba)" -ForegroundColor DarkGray
         git reset --hard -q $script:HeadAntes 2>$null
     }
     git reset -q 2>$null
@@ -178,8 +178,10 @@ $sw = [Diagnostics.Stopwatch]::StartNew(); $out = & $CG report 2>&1 | Out-String
 Prueba "report genera informe" $true ($out -match "informe:") "$($sw.ElapsedMilliseconds) ms"
 $sw = [Diagnostics.Stopwatch]::StartNew(); $out = & $CG graph --deep 2>&1 | Out-String; $sw.Stop()
 # Con el agente vivo abre en SU ventana; sin agente deja la copia de archivo.
-Prueba "graph --deep abre el explorador" $true ($out -match "ventana del agente|explorador generado") "$($sw.ElapsedMilliseconds) ms"
-Prueba "  no usa el navegador" $true (-not ($out -match "docs.explorador.index.html" -and $out -notmatch "ventana"))
+Prueba "graph --deep abre el explorador" $true ($out -match "ventana del agente") "$($sw.ElapsedMilliseconds) ms"
+# Sin agente, el CLI dice como arrancarlo; ya no escribe una copia para el
+# navegador (esa copia se quedaba atras y arrastraba fallos ya corregidos).
+Prueba "  no usa el navegador" $true (-not ($out -match "explorador generado|\.html"))
 $out = & $CG stats 2>&1 | Out-String
 Prueba "stats responde" $true ($out.Length -gt 0)
 $out = & $CG engines 2>&1 | Out-String
