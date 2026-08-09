@@ -9,3 +9,4 @@ codeguard-daemon.exe
 codeguard-daemon.exe~
 dist/*.exe
 dist/rulepacks/
+docs/explorador/

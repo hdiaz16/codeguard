@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"codeguard/internal/codegraph"
 	"codeguard/internal/gitdiff"
 )
 
@@ -21,13 +22,35 @@ import (
 
 func graphCmd() *cobra.Command {
 	var out string
+	var deep bool
 	cmd := &cobra.Command{
 		Use:   "graph",
-		Short: "Genera el grafo de dependencias del repo (Mermaid, listo para Obsidian)",
+		Short: "Grafo del repo: --deep abre el explorador interactivo a nivel de función",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := gitdiff.RepoRoot(".")
 			if err != nil {
 				return err
+			}
+
+			// ── modo profundo: función→función, función→consulta, WebGL ──
+			if deep {
+				if !fileExistsIn(repoRoot, "go.mod") {
+					return fmt.Errorf("el modo --deep hoy soporta Go (busqué go.mod); TS/Python vienen después")
+				}
+				fmt.Println("analizando el AST del repo…")
+				cg, err := codegraph.BuildGo(repoRoot)
+				if err != nil {
+					return err
+				}
+				dir := filepath.Join(repoRoot, "docs", "explorador")
+				page, err := codegraph.WriteExplorer(cg, dir)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("explorador generado: %d funciones, %d relaciones\n", len(cg.Nodes), len(cg.Edges))
+				fmt.Printf("  %s\n", page)
+				exec.Command("cmd", "/c", "start", "", page).Start()
+				return nil
 			}
 
 			var edges map[string]bool
@@ -98,6 +121,7 @@ func graphCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&out, "out", "", "ruta de salida (default: docs/obsidian/ o docs/)")
+	cmd.Flags().BoolVar(&deep, "deep", false, "explorador interactivo a nivel de función (WebGL)")
 	return cmd
 }
 

@@ -325,11 +325,20 @@ func main() {
 				return
 			}
 			cli := filepath.Join(filepath.Dir(exe), "codeguard.exe")
-			cmd := exec.Command(cli, "graph")
+			// Explorador interactivo si el repo es Go; el Mermaid es el respaldo.
+			args := []string{"graph"}
+			if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err == nil {
+				args = append(args, "--deep") // el propio comando abre la página
+			}
+			cmd := exec.Command(cli, args...)
 			cmd.Dir = repoRoot
-			if out, err := cmd.CombinedOutput(); err != nil {
+			out, err := cmd.CombinedOutput()
+			if err != nil {
 				log.Println("graph falló:", err, string(out))
 				return
+			}
+			if len(args) > 1 {
+				return // --deep ya abrió el explorador
 			}
 			target := filepath.Join(repoRoot, "docs", "obsidian", "Grafo de dependencias.md")
 			if _, err := os.Stat(target); err != nil {
