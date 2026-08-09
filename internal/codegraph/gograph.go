@@ -39,6 +39,47 @@ type Graph struct {
 	Edges []Edge `json:"edges"`
 	Lang  string `json:"lang"`
 	Root  string `json:"root"`
+	// Overlay del último análisis: el grafo deja de ser un mapa bonito y se
+	// convierte en el radar del agente (dónde duele, qué tocaste).
+	Overlay *Overlay `json:"overlay,omitempty"`
+}
+
+// Overlay proyecta los hallazgos y el diff sobre el grafo.
+type Overlay struct {
+	Repo     string           `json:"repo"`
+	Branch   string           `json:"branch"`
+	At       string           `json:"at"`
+	Verdict  string           `json:"verdict"`
+	Findings []OverlayFinding `json:"findings"`
+	Touched  []string         `json:"touched"` // IDs de funciones tocadas por el diff
+}
+
+type OverlayFinding struct {
+	NodeID   string `json:"node_id"`
+	Pillar   string `json:"pillar"`
+	Severity string `json:"severity"`
+	Blocking bool   `json:"blocking"`
+	Rule     string `json:"rule"`
+	Message  string `json:"message"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+}
+
+// NodeAt devuelve el ID de la función que contiene ese archivo:línea — así se
+// mapea un hallazgo (que vive en una línea) a un nodo del grafo.
+func (g *Graph) NodeAt(file string, line int) string {
+	file = strings.TrimPrefix(filepath.ToSlash(file), "./")
+	best, bestLine := "", -1
+	for _, n := range g.Nodes {
+		if n.Kind == "query" || n.File != file {
+			continue
+		}
+		// la función que empieza más cerca por encima de la línea del hallazgo
+		if n.Line <= line && n.Line > bestLine {
+			best, bestLine = n.ID, n.Line
+		}
+	}
+	return best
 }
 
 var sqlVerb = regexp.MustCompile(`(?is)\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE|ALTER\s+TABLE)\b`)

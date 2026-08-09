@@ -10,9 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,6 +19,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
+	"codeguard/internal/codegraph"
 	"codeguard/internal/config"
 	"codeguard/internal/daemon"
 	"codeguard/internal/finding"
@@ -312,43 +311,50 @@ func main() {
 		}
 	})
 
-	// Botón 🕸: genera el grafo de dependencias del repo del último análisis
-	// y lo abre (Obsidian si el repo tiene vault; app por defecto si no).
+	// Botón 🕸: el explorador de código en su PROPIA ventana del agente
+	// (nada de navegador) con el análisis proyectado encima.
+	var explorer *application.WebviewWindow
 	app.Event.On("open-graph", func(*application.CustomEvent) {
 		if lastPayload == nil {
 			return
 		}
 		repoRoot := filepath.FromSlash(lastPayload.RepoRoot)
+		payload := lastPayload
 		go func() {
-			exe, err := os.Executable()
-			if err != nil {
+			cg, err := codegraph.BuildGo(repoRoot)
+			if err != nil || len(cg.Nodes) == 0 {
+				log.Println("grafo no disponible para este repo:", err)
 				return
 			}
-			cli := filepath.Join(filepath.Dir(exe), "codeguard.exe")
-			// Explorador interactivo si el repo es Go; el Mermaid es el respaldo.
-			args := []string{"graph"}
-			if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err == nil {
-				args = append(args, "--deep") // el propio comando abre la página
-			}
-			cmd := exec.Command(cli, args...)
-			cmd.Dir = repoRoot
-			out, err := cmd.CombinedOutput()
+			cg.Overlay = buildOverlay(cg, payload)
+			html, err := codegraph.RenderHTML(cg)
 			if err != nil {
-				log.Println("graph falló:", err, string(out))
+				log.Println("render del grafo:", err)
 				return
 			}
-			if len(args) > 1 {
-				return // --deep ya abrió el explorador
-			}
-			target := filepath.Join(repoRoot, "docs", "obsidian", "Grafo de dependencias.md")
-			if _, err := os.Stat(target); err != nil {
-				target = filepath.Join(repoRoot, "docs", "grafo-dependencias.md")
-			}
-			if strings.Contains(target, "obsidian") {
-				exec.Command("cmd", "/c", "start", "", "obsidian://open?path="+url.QueryEscape(target)).Start()
-			} else {
-				exec.Command("cmd", "/c", "start", "", target).Start()
-			}
+			application.InvokeAsync(func() {
+				if explorer != nil {
+					explorer.Close()
+				}
+				w, h := 1280, 820
+				if screen := app.Screen.GetPrimary(); screen != nil {
+					if screen.WorkArea.Width < w+80 {
+						w = screen.WorkArea.Width - 80
+					}
+					if screen.WorkArea.Height < h+80 {
+						h = screen.WorkArea.Height - 80
+					}
+				}
+				explorer = app.Window.NewWithOptions(application.WebviewWindowOptions{
+					Title:            "CodeGuard — explorador de código",
+					Width:            w,
+					Height:           h,
+					HTML:             html,
+					BackgroundColour: application.RGBA{Red: 11, Green: 14, Blue: 17, Alpha: 255},
+				})
+				explorer.Center()
+				explorer.Show()
+			})
 		}()
 	})
 
