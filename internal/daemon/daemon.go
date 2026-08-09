@@ -57,6 +57,13 @@ func Engines(cfg *config.Config, inCI bool) []engines.Engine {
 	}
 }
 
+func short(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
+}
+
 // RulepackDir resuelve el rulepack pinneado: primero vendoreado en el repo,
 // después junto al binario.
 func RulepackDir(repoRoot, version string) string {
@@ -141,9 +148,20 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		resp.Degraded = append(resp.Degraded, "config:unreadable")
 		return resp
 	}
-	// ci_parity §8: rulepack y config del daemon deben coincidir con los del hook.
+	// ci_parity §8: rulepack y config del daemon deben coincidir con los del
+	// hook. Si el archivo cambió ENTRE la lectura del hook y la nuestra (p.ej.
+	// un `codeguard init` corriendo a la par), se relee una vez antes de
+	// declarar rota la paridad — así no se asusta al dev por una carrera.
 	if cfg.Hash != req.ConfigHash || cfg.Rulepack != req.RulepackVersion {
-		resp.CIParity = false
+		if again, err2 := config.Load(req.RepoRoot); err2 == nil && again != nil &&
+			again.Hash == req.ConfigHash && again.Rulepack == req.RulepackVersion {
+			cfg = again
+		} else {
+			resp.CIParity = false
+			log.Printf("paridad rota en %s: config %s≠%s, rulepack %s≠%s",
+				filepath.Base(req.RepoRoot), short(cfg.Hash), short(req.ConfigHash),
+				cfg.Rulepack, req.RulepackVersion)
+		}
 	}
 	rulepack := RulepackDir(req.RepoRoot, cfg.Rulepack)
 	if _, err := os.Stat(rulepack); err != nil {

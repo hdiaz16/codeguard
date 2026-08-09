@@ -34,7 +34,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.AddCommand(ciCmd(), versionCmd(), hookCmd(), installCmd(), repairCmd(), daemonCmd(),
-		baselineCmd(), statsCmd(), rulesCmd(), initCmd(), graphCmd(), reportCmd())
+		baselineCmd(), statsCmd(), rulesCmd(), initCmd(), graphCmd(), reportCmd(), statusCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "codeguard:", err)
 		os.Exit(2)
