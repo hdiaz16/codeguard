@@ -45,6 +45,55 @@ rules:
     patterns:
       - pattern: '$DB.Query("..." + $X, ...)'
 
+  # La de arriba sólo ve la forma de libro de texto —todo en una línea—, y en
+  # código real la consulta se arma en una variable a lo largo de varias.
+  # Se descubrió justo así: un exportador con cuatro filtros concatenados pasó
+  # el análisis sin una sola queja. Esta usa seguimiento de flujo: marca la
+  # concatenación de algo que no es literal y la sigue hasta la base de datos.
+  - id: go-sql-concat-en-variable
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: "Consulta SQL armada por concatenación en una variable — inyección SQL"
+    metadata:
+      pillar: security
+      why: >-
+        Da igual que la concatenación esté a veinte líneas del Query: lo que
+        llega a la base de datos es la cadena ya montada, y quien controle
+        cualquiera de esos trozos controla la consulta entera.
+      fix_hint: >-
+        Deja los huecos como placeholders y pasa los valores aparte:
+        db.Query("... WHERE repo_id = ? AND created_at >= ?", repo, desde).
+        La cláusula sigue siendo condicional; lo que se mueve son los valores.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $Q + $X
+              - pattern: $Q += $X
+          # Pegar texto fijo no es peligroso: " ORDER BY fecha DESC".
+          - pattern-not: $Q + "..."
+          - pattern-not: $Q += "..."
+          # Un entero formateado tampoco puede inyectar nada. Va excluido aquí
+          # y no como sanitizer: cuando la concatenación ES el origen, sanear
+          # una parte no le quita el marcado al conjunto.
+          - pattern-not: $Q + strconv.Itoa(...)
+          - pattern-not: $Q += strconv.Itoa(...)
+          - pattern-not: $Q + strconv.FormatInt(...)
+          - pattern-not: $Q += strconv.FormatInt(...)
+          - pattern-not: $Q + strconv.Quote(...)
+          - pattern-not: $Q += strconv.Quote(...)
+          - pattern-not: $Q + fmt.Sprintf("%d", ...)
+          - pattern-not: $Q += fmt.Sprintf("%d", ...)
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $DB.Query($SQL, ...)
+          - pattern: $DB.QueryRow($SQL, ...)
+          - pattern: $DB.QueryContext($CTX, $SQL, ...)
+          - pattern: $DB.QueryRowContext($CTX, $SQL, ...)
+          - pattern: $DB.Exec($SQL, ...)
+          - pattern: $DB.ExecContext($CTX, $SQL, ...)
+          - pattern: $DB.Prepare($SQL)
+
   - id: csharp-binaryformatter
     languages: [csharp]
     severity: ERROR

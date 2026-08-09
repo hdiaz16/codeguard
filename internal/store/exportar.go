@@ -21,25 +21,34 @@ type FiltroExport struct {
 }
 
 func (s *Store) ExportarRuns(destino string, f FiltroExport) (int, error) {
-	consulta := "SELECT id, repo_id, branch, verdict, blocking_findings, advisory_findings, created_at FROM runs WHERE 1=1"
+	// La cláusula sigue siendo condicional; lo que nunca se concatena son los
+	// VALORES. Van como parámetros, así que da igual lo que traigan.
+	consulta := "SELECT id, repo_id, branch, verdict, blocking_findings, advisory_findings, created_at" +
+		" FROM runs WHERE 1=1"
+	var args []any
 	if f.Repo != "" {
-		consulta += " AND repo_id = '" + f.Repo + "'"
+		consulta += " AND repo_id = ?"
+		args = append(args, f.Repo)
 	}
 	if f.Desde != "" {
-		consulta += " AND created_at >= '" + f.Desde + "'"
+		consulta += " AND created_at >= ?"
+		args = append(args, f.Desde)
 	}
 	if f.Hasta != "" {
-		consulta += " AND created_at <= '" + f.Hasta + "'"
+		consulta += " AND created_at <= ?"
+		args = append(args, f.Hasta)
 	}
 	if f.Solo != "" {
-		consulta += " AND verdict = '" + f.Solo + "'"
+		consulta += " AND verdict = ?"
+		args = append(args, f.Solo)
 	}
 	consulta += " ORDER BY created_at DESC"
 	if f.Limite > 0 {
-		consulta += " LIMIT " + strconv.Itoa(f.Limite)
+		consulta += " LIMIT ?"
+		args = append(args, f.Limite)
 	}
 
-	filas, err := s.db.Query(consulta)
+	filas, err := s.db.Query(consulta, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -49,20 +58,43 @@ func (s *Store) ExportarRuns(destino string, f FiltroExport) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer out.Close()
 
 	w := csv.NewWriter(out)
-	w.Write([]string{"id", "repo", "rama", "veredicto", "bloqueantes", "avisos", "fecha"})
+	if err := w.Write([]string{"id", "repo", "rama", "veredicto", "bloqueantes", "avisos", "fecha"}); err != nil {
+		out.Close()
+		return 0, err
+	}
 
 	n := 0
 	for filas.Next() {
 		var id, repo, rama, veredicto, fecha string
 		var bloq, avisos int
-		filas.Scan(&id, &repo, &rama, &veredicto, &bloq, &avisos, &fecha)
-		w.Write([]string{id, repo, rama, veredicto, strconv.Itoa(bloq), strconv.Itoa(avisos), fecha})
+		// Una fila ilegible es un dato corrupto, no un CSV a medias sin avisar.
+		if err := filas.Scan(&id, &repo, &rama, &veredicto, &bloq, &avisos, &fecha); err != nil {
+			out.Close()
+			return n, fmt.Errorf("fila %d ilegible: %w", n+1, err)
+		}
+		if err := w.Write([]string{id, repo, rama, veredicto,
+			strconv.Itoa(bloq), strconv.Itoa(avisos), fecha}); err != nil {
+			out.Close()
+			return n, err
+		}
 		n++
 	}
+	if err := filas.Err(); err != nil {
+		out.Close()
+		return n, err
+	}
 	w.Flush()
+	if err := w.Error(); err != nil {
+		out.Close()
+		return n, err
+	}
+	// Cerrar es donde afloran los errores de escritura diferidos: un CSV
+	// truncado que se anuncia como completo es peor que no tenerlo.
+	if err := out.Close(); err != nil {
+		return n, fmt.Errorf("el CSV quedó incompleto: %w", err)
+	}
 	return n, nil
 }
 
