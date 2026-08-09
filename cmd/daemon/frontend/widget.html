@@ -245,12 +245,14 @@
   let current = "idle";
   let detalle = "";          // lo que manda el daemon: "repo · rama · N problemas"
   let sobreElOrbe = false;   // el mouse está encima ahora mismo
+  let panelAbierto = false;  // el panel lateral está visible: taparía la burbuja
   let burbujaTimer = null;
 
-  // El susurro efímero: aparece al cambiar de estado y se va solo. Si el mouse
-  // está encima, no lo pisa — ahí manda el tooltip.
+  // El susurro efímero: aparece al cambiar de estado y se va solo. No se
+  // muestra si el mouse está encima (ahí manda el tooltip) ni si el panel
+  // está abierto (lo taparía, y ya muestra el veredicto con detalle).
   function susurrar(texto) {
-    if (sobreElOrbe) return;
+    if (sobreElOrbe || panelAbierto) return;
     burbuja.classList.remove("tip");
     burbujaTexto.textContent = texto;
     burbuja.classList.add("on");
@@ -296,10 +298,19 @@
 
   // gesto al abrir/cerrar el panel: el orbe se estira y vuelve
   Events.On("panel-show", () => {
+    panelAbierto = true;
+    // El panel emerge justo encima del orbe y taparía la burbuja; además el
+    // susurro sería redundante. Se retira (salvo que el mouse esté encima:
+    // ahí manda el tooltip).
+    if (!sobreElOrbe) {
+      clearTimeout(burbujaTimer);
+      burbuja.classList.remove("on");
+    }
     orb.classList.add("gesto");
     setTimeout(() => orb.classList.remove("gesto"), 320);
   });
   Events.On("panel-hide", () => {
+    panelAbierto = false;
     orb.classList.add("gesto");
     setTimeout(() => orb.classList.remove("gesto"), 320);
   });
