@@ -9,3 +9,8 @@ import "os/exec"
 // que aquí no contenemos nada: exec.CommandContext mata al hijo directo y
 // los nietos quedan a cargo del sistema.
 func contener(*exec.Cmd) (func(), error) { return func() {}, nil }
+
+func prepararSandbox(*exec.Cmd) {}
+
+// SandboxActivo: fuera de Windows no hay token restringido que aplicar.
+func SandboxActivo() (bool, error) { return false, nil }

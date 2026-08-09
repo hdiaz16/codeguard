@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"codeguard/internal/engines/identidad"
+	"codeguard/internal/engines/proc"
 )
 
 // DirMotores es donde el instalador deja los binarios descargables.
@@ -50,6 +51,19 @@ func enginesCmd() *cobra.Command {
 					}
 				}
 			}
+
+			fmt.Println()
+			fmt.Println("Contención con la que corren:")
+			if activo, err := proc.SandboxActivo(); activo {
+				fmt.Println("  ✓ token restringido    sin privilegios salvo recorrer directorios")
+			} else {
+				fmt.Printf("  ✗ token restringido    NO disponible: %v\n", err)
+				fmt.Println("      los motores corren con los privilegios completos de tu sesión")
+			}
+			fmt.Printf("  ✓ entorno acotado      %d variables retenidas (la API key del modelo no viaja)\n", proc.Filtradas())
+			fmt.Println("  ✓ job object           mueren con el plazo, con sus hijos; tope de memoria y de procesos")
+			fmt.Println("  ✓ sin interfaz         sin portapapeles, escritorio ni ventanas de otros")
+			fmt.Println("  · sistema de archivos  sin restringir: un motor tiene que leer el repo")
 
 			if problemas == 0 {
 				fmt.Println("\ntodos los motores instalados son los publicados por sus autores")

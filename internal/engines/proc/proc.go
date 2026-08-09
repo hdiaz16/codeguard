@@ -60,6 +60,9 @@ func Correr(ctx context.Context, c *exec.Cmd, tope int64) (Salida, error) {
 	if c.WaitDelay == 0 {
 		c.WaitDelay = 3 * time.Second
 	}
+	// El token restringido hay que ponerlo antes de arrancar: después ya no
+	// se puede cambiar el que tiene el proceso.
+	prepararSandbox(c)
 
 	if err := c.Start(); err != nil {
 		return Salida{}, err
