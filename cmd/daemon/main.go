@@ -299,8 +299,10 @@ func main() {
 
 	// Burbuja de estado: widget flotante abajo a la izquierda (§12.1),
 	// transparente, siempre visible, con ondas animadas por estado.
-	// Más ancho que alto: deja espacio para el "susurro" de estado.
-	const widgetW, widgetH = 210, 150
+	// El orbe (128 px) se ancla abajo-derecha; el resto de la ventana es aire
+	// transparente para que la burbuja de estado quepa arriba y a la izquierda
+	// sin recortarse. Agrandarla no mueve el orbe: sigue en la misma esquina.
+	const widgetW, widgetH = 320, 210
 	widget := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "CodeGuard estado",
 		Frameless:        true,

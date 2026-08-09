@@ -124,19 +124,61 @@
     100% { transform: scale(1.1)  rotate(-15deg); }
   }
 
-  /* susurro de estado: arriba del orbe, efímero */
-  .whisper {
-    position: absolute; right: 14px; bottom: 128px;
-    margin: 0; font-size: 12px; font-weight: 300;
-    color: var(--plasma-spark-mid);
-    text-shadow: 0 1px 4px rgba(0,0,0,.6);
-    opacity: 0; transition: opacity .6s ease;
+  /* ── Burbuja de estado: emerge del orbe, no es texto suelto ──
+     Antes el mensaje era texto plano con sombra; se perdía contra cualquier
+     fondo del escritorio. Ahora es una cápsula con su propio cuerpo:
+     translúcida, con desenfoque detrás, un punto del color del estado y una
+     colita que la ancla al orbe. Emerge y se va como algo vivo, no aparece
+     y desaparece. */
+  .burbuja {
+    position: absolute; right: 20px; bottom: 116px;
+    max-width: 230px;
+    display: flex; align-items: center; gap: 9px;
+    margin: 0; padding: 9px 14px;
+    font-size: 12.5px; font-weight: 400; line-height: 1.35;
+    color: #eef2f5;
+    background: rgba(22, 27, 32, 0.82);
+    backdrop-filter: blur(14px) saturate(1.1);
+    -webkit-backdrop-filter: blur(14px) saturate(1.1);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 14px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42), 0 0 0 0.5px rgba(0,0,0,.3);
     white-space: nowrap;
+    pointer-events: none;
+    transform-origin: 88% 130%;
+    opacity: 0; transform: translateY(8px) scale(.9);
+    transition: opacity .32s ease, transform .42s cubic-bezier(.22, 1.15, .36, 1);
   }
-  .whisper.on { opacity: .9; }
+  .burbuja.on { opacity: 1; transform: translateY(0) scale(1); }
+  /* la colita: un cuadradito girado que apunta al orbe, alineado con el
+     centro del orbe (que queda ~46px desde el borde derecho de la ventana) */
+  .burbuja::after {
+    content: ""; position: absolute; right: 26px; bottom: -5px;
+    width: 11px; height: 11px;
+    background: rgba(22, 27, 32, 0.82);
+    border-right: 1px solid rgba(255, 255, 255, 0.09);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+    transform: rotate(45deg);
+    border-bottom-right-radius: 3px;
+  }
+  .burbuja .punto {
+    width: 8px; height: 8px; border-radius: 50%; flex: none;
+    background: var(--plasma-hot-a);
+    box-shadow: 0 0 8px var(--plasma-glow);
+  }
+  .burbuja .texto { position: relative; z-index: 1; }
+  /* La cápsula del tooltip (hover) es la misma burbuja, pero permanente
+     mientras el mouse esté encima y con sitio para dos líneas. */
+  .burbuja.tip { white-space: normal; max-width: 260px; }
+  .burbuja.tip .sub {
+    display: block; margin-top: 3px;
+    color: #9aa6b0; font-size: 11px; font-weight: 400;
+  }
 
   @media (prefers-reduced-motion: reduce) {
     .orb-layer { animation-duration: 20s !important; }
+    .burbuja { transition: opacity .2s ease; transform: none; }
+    .burbuja.on { transform: none; }
   }
 </style>
 </head>
@@ -157,8 +199,10 @@
   </svg>
 
   <main class="stage orb-idle" id="stage">
-    <p class="whisper" id="whisper"></p>
-    <div class="container" id="orb" title="CodeGuard — sin análisis todavía">
+    <div class="burbuja" id="burbuja" role="status" aria-live="polite">
+      <span class="punto"></span><span class="texto" id="burbuja-texto"></span>
+    </div>
+    <div class="container" id="orb">
       <div class="orb-layer layer-base"></div>
       <div class="orb-layer layer-core"></div>
       <div class="orb-layer layer-spark"></div>
@@ -170,7 +214,8 @@
 
   const stage = document.getElementById("stage");
   const orb = document.getElementById("orb");
-  const whisperEl = document.getElementById("whisper");
+  const burbuja = document.getElementById("burbuja");
+  const burbujaTexto = document.getElementById("burbuja-texto");
 
   // Lo que susurra el orbe al cambiar de estado. "en reposo" y "todo bien"
   // eran correctos y no decían nada: cualquier programa podría decirlos.
@@ -196,25 +241,51 @@
     offline:  "Sin conexión al modelo — las reglas deterministas siguen aplicándose",
   };
 
-  let whisperTimer = null;
-  function say(text) {
-    whisperEl.textContent = text;
-    whisperEl.classList.add("on");
-    clearTimeout(whisperTimer);
-    whisperTimer = setTimeout(() => whisperEl.classList.remove("on"), 3200);
+  // Estado vigente, para poder reconstruir el tooltip al hacer hover.
+  let current = "idle";
+  let detalle = "";          // lo que manda el daemon: "repo · rama · N problemas"
+  let sobreElOrbe = false;   // el mouse está encima ahora mismo
+  let burbujaTimer = null;
+
+  // El susurro efímero: aparece al cambiar de estado y se va solo. Si el mouse
+  // está encima, no lo pisa — ahí manda el tooltip.
+  function susurrar(texto) {
+    if (sobreElOrbe) return;
+    burbuja.classList.remove("tip");
+    burbujaTexto.textContent = texto;
+    burbuja.classList.add("on");
+    clearTimeout(burbujaTimer);
+    burbujaTimer = setTimeout(() => {
+      if (!sobreElOrbe) burbuja.classList.remove("on");
+    }, 3400);
   }
 
-  let current = "idle";
-  function setState(s, tooltip) {
+  // El tooltip: la misma burbuja, pero con dos líneas y permanente mientras
+  // el mouse esté encima. Reemplaza al title nativo (amarillo, lento, feo).
+  function mostrarTooltip() {
+    sobreElOrbe = true;
+    clearTimeout(burbujaTimer);
+    burbuja.classList.add("tip");
+    const sub = detalle
+      ? `<span class="sub">${detalle}</span>`
+      : `<span class="sub">clic para el panel · clic derecho para el menú</span>`;
+    burbujaTexto.innerHTML = `${TITULOS[current] || ""}${sub}`;
+    burbuja.classList.add("on");
+  }
+  function ocultarTooltip() {
+    sobreElOrbe = false;
+    burbuja.classList.remove("tip");
+    burbuja.classList.remove("on");
+  }
+
+  function setState(s, tip) {
     if (!VALID.has(s)) s = "idle";
     const changed = s !== current;
     current = s;
+    detalle = tip || "";
     stage.className = "stage orb-" + s;
-    // El detalle va en su propia línea: un tooltip de una sola línea larga se
-    // corta y deja lo importante fuera.
-    orb.title = TITULOS[s] + (tooltip ? "\n" + tooltip : "") +
-      "\n\nClic para abrir el panel · clic derecho para el menú";
-    if (changed) say(WHISPERS[s]);
+    if (sobreElOrbe) mostrarTooltip();       // el tooltip abierto se refresca
+    else if (changed) susurrar(WHISPERS[s]); // si no, susurro al cambiar
   }
 
   Events.On("state", (e) => {
@@ -232,6 +303,9 @@
     orb.classList.add("gesto");
     setTimeout(() => orb.classList.remove("gesto"), 320);
   });
+
+  orb.addEventListener("mouseenter", mostrarTooltip);
+  orb.addEventListener("mouseleave", ocultarTooltip);
 
   orb.addEventListener("click", () => {
     try { Events.Emit("widget-click", null); }

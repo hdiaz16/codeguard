@@ -48,15 +48,19 @@ rules:
     languages: [go]
     severity: ERROR
     message: >-
-      Error ignorado. Tu regla go-ignored-error caza "_ = err"; esto caza
-      también la llamada cuyo error no se asigna en absoluto.
+      Capturaste un valor en una variable y lo tiras a "_". Si es un error, o
+      lo manejas o explicas por qué no importa; si no lo era, es código muerto.
     metadata: { pilar: calidad, owasp: "A09:2021" }
-    pattern-either:
-      - pattern: _ = $F(...)
-      - pattern: |
-          _, _ = $F(...)
-      # NOTA curación: se quitó "defer $F.Close()" ($V,_ := también) — son Go
-      # idiomático; bloquearlos sería una fábrica de falsos positivos.
+    # Caza SÓLO "_ = variable" (tirar algo ya capturado). NO caza "_ = fn()":
+    # descartar el retorno de una llamada a propósito es el silenciador
+    # idiomático de Go —lo que errcheck recomienda— y penalizarlo enfrentaba
+    # esta regla con golangci-lint, que el propio proyecto ahora usa. Las
+    # llamadas cuyo error se ignora las cubre errcheck, que conoce los tipos.
+    patterns:
+      - pattern: _ = $VAR
+      - pattern-not: _ = $F(...)      # llamada simple:  _ = fn()
+      - pattern-not: _ = $X.$M(...)   # llamada con selector: _ = os.MkdirAll()
+      - pattern-not: _ = <... $F(...) ...>  # la llamada envuelta en algo más
 
   - id: ts-promesa-sin-await
     languages: [javascript, typescript]
