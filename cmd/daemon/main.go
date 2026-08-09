@@ -238,10 +238,29 @@ func main() {
 	})
 	// Abajo a la DERECHA: el panel lateral emerge visualmente del indicador.
 	dockWidget := func() {
-		if screen := app.Screen.GetPrimary(); screen != nil {
-			w := screen.WorkArea
-			widget.SetPosition(w.X+w.Width-widgetW-2, w.Y+w.Height-widgetH-2)
+		screen := app.Screen.GetPrimary()
+		if screen == nil {
+			return
 		}
+		w := screen.WorkArea
+		x, y := w.X+w.Width-widgetW-2, w.Y+w.Height-widgetH-2
+		widget.SetPosition(x, y)
+		// Verificar de verdad: si la ventana aún no estaba realizada, el
+		// SetPosition se pierde en silencio y el orbe queda centrado.
+		if gx, gy := widget.Position(); gx != x || gy != y {
+			log.Printf("orbe: reposicionando (%d,%d)→(%d,%d)", gx, gy, x, y)
+			widget.SetPosition(x, y)
+		}
+	}
+	// El evento ApplicationStarted llega antes de que la ventana exista:
+	// se reintenta hasta que el orbe quede en su esquina.
+	dockWidgetSeguro := func() {
+		go func() {
+			for _, d := range []time.Duration{0, 300 * time.Millisecond, 1 * time.Second, 3 * time.Second} {
+				time.Sleep(d)
+				application.InvokeAsync(dockWidget)
+			}
+		}()
 	}
 
 	tray := app.SystemTray.New()
@@ -536,7 +555,16 @@ func main() {
 
 	srv := &daemon.Server{
 		Shadow: shadowRunner,
+		// La CLI pide acciones de UI: el explorador abre en la ventana del
+		// agente, nunca en un navegador.
+		OnCommand: func(cmd, root string) {
+			if cmd == "open-graph" {
+				openGraph(filepath.ToSlash(root))
+			}
+		},
 		OnRequest: func(req *ipc.Request) {
+			// Re-anclar por si cambió la resolución o se movió la barra.
+			application.InvokeAsync(dockWidget)
 			repo := filepath.Base(req.RepoRoot)
 			ts.set("working", "analizando "+repo+"@"+req.Branch+"…")
 			app.Event.Emit("working", map[string]string{"repo": repo, "branch": req.Branch})
@@ -614,9 +642,9 @@ func main() {
 		},
 	}
 
-	// Anclar la burbuja abajo a la izquierda al arrancar.
+	// Anclar el orbe en su esquina al arrancar (con reintentos).
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-		dockWidget()
+		dockWidgetSeguro()
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())

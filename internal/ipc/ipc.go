@@ -20,7 +20,10 @@ import (
 const ProtocolVersion = 1
 
 type Request struct {
-	ProtocolVersion int                   `json:"protocol_version"`
+	ProtocolVersion int `json:"protocol_version"`
+	// Command vacío = analizar (el caso normal). "open-graph" pide al daemon
+	// que abra el explorador en SU ventana — nada de navegador.
+	Command         string                `json:"command,omitempty"`
 	RunID           string                `json:"run_id"`
 	RepoRoot        string                `json:"repo_root"`
 	RepoID          string                `json:"repo_id"`

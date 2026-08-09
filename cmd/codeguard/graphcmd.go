@@ -9,11 +9,13 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"codeguard/internal/codegraph"
 	"codeguard/internal/gitdiff"
+	"codeguard/internal/ipc"
 )
 
 // codeguard graph: el grafo de dependencias REAL del repo, extraído del
@@ -22,7 +24,7 @@ import (
 
 func graphCmd() *cobra.Command {
 	var out string
-	var deep bool
+	var deep, abrir bool
 	cmd := &cobra.Command{
 		Use:   "graph",
 		Short: "Grafo del repo: --deep abre el explorador interactivo a nivel de función",
@@ -37,7 +39,16 @@ func graphCmd() *cobra.Command {
 				if !fileExistsIn(repoRoot, "go.mod") {
 					return fmt.Errorf("el modo --deep hoy soporta Go (busqué go.mod); TS/Python vienen después")
 				}
-				fmt.Println("analizando el AST del repo…")
+				// Primero se le pide al agente que lo abra en SU ventana:
+				// el explorador vive en el escritorio, no en un navegador.
+				if _, err := ipc.Call(&ipc.Request{
+					Command: "open-graph", RepoRoot: repoRoot, DeadlineMs: 3000,
+				}, 4*time.Second); err == nil {
+					fmt.Println("explorador abierto en la ventana del agente")
+					return nil
+				}
+				// Sin daemon: se deja la carpeta autocontenida y se avisa.
+				fmt.Println("el agente no está corriendo — genero la versión de archivo")
 				cg, err := codegraph.BuildGo(repoRoot)
 				if err != nil {
 					return err
@@ -49,7 +60,11 @@ func graphCmd() *cobra.Command {
 				}
 				fmt.Printf("explorador generado: %d funciones, %d relaciones\n", len(cg.Nodes), len(cg.Edges))
 				fmt.Printf("  %s\n", page)
-				exec.Command("cmd", "/c", "start", "", page).Start()
+				if abrir {
+					exec.Command("cmd", "/c", "start", "", page).Start()
+				} else {
+					fmt.Println("  (arranca el agente para verlo en su ventana, o usa --abrir)")
+				}
 				return nil
 			}
 
@@ -122,6 +137,7 @@ func graphCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&out, "out", "", "ruta de salida (default: docs/obsidian/ o docs/)")
 	cmd.Flags().BoolVar(&deep, "deep", false, "explorador interactivo a nivel de función (WebGL)")
+	cmd.Flags().BoolVar(&abrir, "abrir", false, "sin agente corriendo, abrir la copia de archivo en el navegador")
 	return cmd
 }
 

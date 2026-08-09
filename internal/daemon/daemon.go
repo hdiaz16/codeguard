@@ -32,6 +32,8 @@ type OnResult func(req *ipc.Request, resp *ipc.Response)
 type Server struct {
 	// OnRequest se dispara al entrar una petición (estado working en la UI).
 	OnRequest func(req *ipc.Request)
+	// OnCommand atiende peticiones de la CLI hacia la UI (p.ej. abrir el grafo).
+	OnCommand func(cmd, repoRoot string)
 	OnResult  OnResult
 	// Shadow, si no es nil, corre las etapas 3-6 (LLM en sombra) DESPUÉS de
 	// responder al hook — nunca en el camino del commit.
@@ -111,6 +113,14 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	req, err := ipc.ReadRequest(conn)
 	if err != nil {
 		log.Println("petición inválida:", err)
+		return
+	}
+	// Comandos que no son análisis (los manda la CLI para que la UI actúe).
+	if req.Command != "" {
+		if s.OnCommand != nil {
+			s.OnCommand(req.Command, req.RepoRoot)
+		}
+		ipc.WriteResponse(conn, &ipc.Response{RunID: req.RunID, Verdict: "ok"})
 		return
 	}
 	if s.OnRequest != nil {
