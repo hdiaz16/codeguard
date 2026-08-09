@@ -52,6 +52,7 @@
   .projs .p.blk { color:var(--hot); }
   .stats { color:var(--ink-3); font-size:11px; margin-top:11px; line-height:1.55; }
   .stats b { color:var(--ink); font-variant-numeric:tabular-nums; }
+  .stats .nota { display:block; margin-top:6px; color:var(--ink-3); opacity:.85; }
   .btn {
     background:var(--d3); border:none; color:var(--ink-2); border-radius:8px;
     padding:6px 11px; font-size:11px; cursor:pointer; font-family:inherit; transition:.15s;
@@ -98,6 +99,29 @@
   .radar li .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   ::-webkit-scrollbar { width:7px; } ::-webkit-scrollbar-thumb { background:var(--d3); border-radius:4px; }
 </style>
+<script>
+// Una ventana muda es el peor error posible: si algo revienta, que se vea.
+(function () {
+  function pintar(titulo, detalle) {
+    var g = document.getElementById("graph");
+    if (!g) { return; }
+    g.innerHTML =
+      '<div style="display:grid;place-items:center;height:100%;text-align:center;' +
+      'font:14px \'Segoe UI\';color:#a3aeb7;padding:40px"><div>' +
+      '<b style="color:#e8edf1;font-size:16px">' + titulo + '</b><br><br>' +
+      '<span style="color:#6f7b85;font-size:12px;font-family:Consolas,monospace">' +
+      String(detalle).replace(/</g, "&lt;") + '</span><br><br>' +
+      '<span style="color:#6f7b85;font-size:12px">Reporta esto con: codeguard graph --deep</span>' +
+      '</div></div>';
+  }
+  window.addEventListener("error", function (e) {
+    pintar("El explorador no pudo iniciar", (e.message || e.error) + "\n" + (e.filename || "") + ":" + (e.lineno || ""));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    pintar("El explorador no pudo iniciar", e.reason && e.reason.message ? e.reason.message : e.reason);
+  });
+})();
+</script>
 </head>
 <body>
 <div id="graph"></div>
@@ -161,18 +185,30 @@
 
 <script src="/3d-force-graph.js"></script>
 <script type="module">
-import { Events } from "/wails/runtime.js";
+// El runtime de Wails solo hace falta para cambiar de repo desde aquí.
+// Si no carga, el grafo debe dibujarse igual: import tolerante, no fatal.
+let Events = null;
+try { ({ Events } = await import("/wails/runtime.js")); }
+catch (e) { console.warn("runtime de Wails no disponible:", e); }
 
-// Los datos llegan por evento (mismo mecanismo probado del panel), no inline:
-// una página de 1.2 MB en el atributo HTML de la ventana no cargaba.
-const DATA = await new Promise(resolve => {
-  Events.On("graph-data", e => {
-    const d = Array.isArray(e.data) ? e.data[0] : e.data;
-    if (d && d.nodes) resolve(d);
-  });
-  try { Events.Emit("explorer-ready", null); }
-  catch { Events.Emit({ name: "explorer-ready", data: null }); }
-});
+// Los datos llegan por HTTP interno: cientos de KB por el bus de eventos
+// llegaban vacíos. Si algo falla, se dice en pantalla — nunca ventana muda.
+let DATA;
+try {
+  const r = await fetch("/graph.json?t=" + Date.now());
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  DATA = await r.json();
+  if (!DATA.nodes || !DATA.nodes.length) throw new Error("el grafo llegó vacío");
+} catch (err) {
+  document.body.innerHTML =
+    `<div style="display:grid;place-items:center;height:100%;text-align:center;
+       font:14px 'Segoe UI';color:#a3aeb7;padding:40px">
+       <div><b style="color:#e8edf1;font-size:16px">No se pudo cargar el grafo</b><br><br>
+       ${String(err.message || err)}<br><br>
+       <span style="color:#6f7b85;font-size:12px">Revisa
+       %LOCALAPPDATA%\\codeguard\\daemon.log</span></div></div>`;
+  throw err;
+}
 
 const COLORS = { func:"#7fd4a8", method:"#e0c579", query:"#e08a72" };
 const DIM = "#2b343c";
@@ -195,14 +231,15 @@ const gData = {
     .map(e => ({ source: e.from, target: e.to, kind: e.kind })),
 };
 
+const byId = new Map(gData.nodes.map(n => [n.id, n]));
 const state = { kinds:new Set(["func","method","query"]), minDeg:0, query:"", selected:null, onlyIssues:false };
 
 // ── overlay del análisis: hallazgos y zona tocada sobre el grafo ────────────
 const OV = DATA.overlay || null;
 const issueOf = new Map();   // nodeId -> hallazgo más grave
-const touched = new Set(OV ? OV.touched : []);
+const touched = new Set((OV && OV.touched) || []);
 if (OV) {
-  for (const f of OV.findings) {
+  for (const f of (OV.findings || [])) {
     const prev = issueOf.get(f.node_id);
     if (!prev || (f.blocking && !prev.blocking)) issueOf.set(f.node_id, f);
   }
@@ -223,6 +260,16 @@ function related(id) {
 }
 
 const el = document.getElementById("graph");
+// Sin la librería no hay grafo: decirlo en pantalla, no morir en silencio.
+if (typeof ForceGraph3D !== "function") {
+  el.innerHTML = `<div style="display:grid;place-items:center;height:100%;text-align:center;
+    font:14px 'Segoe UI';color:#a3aeb7;padding:40px">
+    <div><b style="color:#e8edf1;font-size:16px">No se pudo iniciar el motor 3D</b><br><br>
+    La librería de render no cargó (3d-force-graph.js).<br>
+    <span style="color:#6f7b85;font-size:12px">Datos del grafo: ${DATA.nodes.length} funciones,
+    ${DATA.edges.length} relaciones — el análisis sí funcionó.</span></div></div>`;
+  throw new Error("ForceGraph3D no disponible");
+}
 const Graph = ForceGraph3D()(el)
   .backgroundColor("#0b0e11")
   .graphData(gData)
@@ -253,14 +300,21 @@ const Graph = ForceGraph3D()(el)
   })
   .nodeOpacity(0.92)
   .nodeResolution(12)
+  // Un filtro debe filtrar: antes sólo atenuaba y la vista seguía igual de sucia.
+  .nodeVisibility(visible)
+  .linkVisibility(l => {
+    const s = l.source.id ?? l.source, t = l.target.id ?? l.target;
+    const ns = byId.get(s), nt = byId.get(t);
+    return !!(ns && nt && visible(ns) && visible(nt));
+  })
   .linkColor(l => {
     const s = l.source.id ?? l.source, t = l.target.id ?? l.target;
     if (state.selected) return related(s) && related(t) ? "#ff5f4d" : "#1a2026";
-    return l.kind === "query" ? "rgba(224,138,114,.55)" : "rgba(120,150,175,.28)";
+    return l.kind === "query" ? "rgba(224,138,114,.7)" : "rgba(130,160,185,.42)";
   })
   .linkWidth(l => {
     const s = l.source.id ?? l.source, t = l.target.id ?? l.target;
-    return (state.selected && related(s) && related(t)) ? 1.4 : (l.kind === "query" ? .7 : .35);
+    return (state.selected && related(s) && related(t)) ? 1.8 : (l.kind === "query" ? 1 : .6);
   })
   .linkDirectionalArrowLength(3.2)
   .linkDirectionalArrowRelPos(1)
@@ -273,7 +327,9 @@ const Graph = ForceGraph3D()(el)
   .cooldownTicks(220);
 
 // separación entre nodos
-Graph.d3Force("charge").strength(-90);
+// distanceMax: sin él la repulsión actúa a distancia infinita y las funciones
+// sin aristas salen disparadas al borde, dejando el grafo del tamaño de un punto.
+Graph.d3Force("charge").strength(-90).distanceMax(300);
 Graph.d3Force("link").distance(l => l.kind === "query" ? 55 : 38);
 
 // rotación automática suave, se detiene al interactuar
@@ -287,7 +343,8 @@ setInterval(() => {
 }, 30);
 el.addEventListener("pointerdown", () => { if (spin) { spin = false; document.getElementById("spin").checked = false; } });
 
-function repaint() { Graph.nodeColor(Graph.nodeColor()).linkColor(Graph.linkColor()).linkWidth(Graph.linkWidth())
+function repaint() { Graph.nodeVisibility(Graph.nodeVisibility()).linkVisibility(Graph.linkVisibility())
+  .nodeColor(Graph.nodeColor()).linkColor(Graph.linkColor()).linkWidth(Graph.linkWidth())
   .linkDirectionalParticles(Graph.linkDirectionalParticles()); updateStats(); }
 
 function focusOn(n) {
@@ -315,11 +372,32 @@ function select(id) {
   repaint();
 }
 
+const sueltas = gData.nodes.filter(n => !n.deg).length;
+
 function updateStats() {
   const vis = gData.nodes.filter(visible).length;
-  document.getElementById("stats").innerHTML =
+  let html =
     `<b>${gData.nodes.length}</b> funciones · <b>${gData.links.length}</b> relaciones<br>` +
     `<b>${vis}</b> visibles con los filtros`;
+  // Decir por qué faltan nodos en pantalla, en vez de que el dev lo adivine.
+  if (sueltas && state.minDeg > 0) {
+    html += `<br><span class="nota"><b>${sueltas}</b> funciones sin relaciones detectadas están ` +
+            `ocultas — baja «mínimo de conexiones» a 0 para verlas.</span>`;
+  } else if (sueltas) {
+    html += `<br><span class="nota"><b>${sueltas}</b> de ellas no tienen relaciones detectadas ` +
+            `(nadie las llama dentro del repo, o son puntos de entrada).</span>`;
+  }
+  document.getElementById("stats").innerHTML = html;
+}
+
+// Cuando la mayoría flota suelta, el grafo se lee como polvo. Arrancar
+// filtrado y decirlo, que es distinto de esconderlo.
+if (gData.nodes.length && sueltas / gData.nodes.length > 0.35) {
+  state.minDeg = 1;
+  const sl = document.getElementById("mindeg");
+  sl.value = 1;
+  document.getElementById("mindeg-v").textContent = "1";
+  repaint();
 }
 
 document.getElementById("repo-name").textContent =
@@ -335,6 +413,7 @@ if (DATA.proyectos && DATA.proyectos.length > 1) {
   document.getElementById("projs").addEventListener("click", e => {
     const t = e.target.closest(".p[data-root]");
     if (!t || t.classList.contains("activo")) return;
+    if (!Events) { location.reload(); return; }
     try { Events.Emit("graph-switch", [t.dataset.root]); }
     catch { Events.Emit({ name:"graph-switch", data:[t.dataset.root] }); }
   });
@@ -360,7 +439,7 @@ document.getElementById("spread").addEventListener("input", e => {
   Graph.d3ReheatSimulation();
 });
 document.getElementById("spin").addEventListener("change", e => { spin = e.target.checked; });
-document.getElementById("btn-fit").addEventListener("click", () => Graph.zoomToFit(700, 60));
+document.getElementById("btn-fit").addEventListener("click", () => { yaEncuadro = false; encuadrarUnaVez(); });
 document.getElementById("btn-reheat").addEventListener("click", () => Graph.d3ReheatSimulation());
 document.getElementById("detail").addEventListener("click", e => {
   const li = e.target.closest("li[data-id]"); if (!li) return;
@@ -402,7 +481,17 @@ if (OV && (OV.findings.length || OV.touched.length)) {
   }, 2200);
 }
 
-setTimeout(() => Graph.zoomToFit(800, 70), 1800);
+// Encuadrar sólo sobre los nodos conectados: las funciones sueltas salen
+// disparadas por la repulsión y arrastraban la cámara hasta dejar el grafo
+// del tamaño de un grano de arena.
+let yaEncuadro = false;
+function encuadrarUnaVez() {
+  if (yaEncuadro) return;
+  yaEncuadro = true;
+  Graph.zoomToFit(900, 60, n => visible(n) && n.deg > 0);
+}
+Graph.onEngineStop(encuadrarUnaVez);
+setTimeout(encuadrarUnaVez, 4000); // red por si la física nunca se enfría
 updateStats();
 </script>
 </body>

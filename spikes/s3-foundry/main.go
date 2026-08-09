@@ -1,10 +1,11 @@
 // Spike S3 — latencia de Microsoft Foundry desde la red corporativa.
 // Criterio: p95 < 8 s en 50 llamadas con un diff realista.
 // Uso:
-//   set FOUNDRY_ENDPOINT=https://...   (endpoint compatible con la API de OpenAI, con /chat/completions)
-//   set FOUNDRY_API_KEY=...
-//   set FOUNDRY_MODEL=...              (nombre del deployment/modelo)
-//   go run .
+//
+//	set FOUNDRY_ENDPOINT=https://...   (endpoint compatible con la API de OpenAI, con /chat/completions)
+//	set FOUNDRY_API_KEY=...
+//	set FOUNDRY_MODEL=...              (nombre del deployment/modelo)
+//	go run .
 package main
 
 import (

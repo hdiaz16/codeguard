@@ -11,11 +11,15 @@ import (
 // ancla a la función que lo contiene, y los archivos del diff marcan la zona
 // tocada. El grafo deja de ser un mapa y se vuelve el radar del agente.
 func buildOverlay(g *codegraph.Graph, p *panelPayload) *codegraph.Overlay {
+	// Los slices arrancan vacíos, no nil: un nil se serializa como `null` y el
+	// explorador reventaba al iterarlo.
 	ov := &codegraph.Overlay{
-		Repo:    p.Repo,
-		Branch:  p.Branch,
-		At:      p.At,
-		Verdict: p.Verdict,
+		Repo:     p.Repo,
+		Branch:   p.Branch,
+		At:       p.At,
+		Verdict:  p.Verdict,
+		Findings: []codegraph.OverlayFinding{},
+		Touched:  []string{},
 	}
 	touched := map[string]bool{}
 	for _, f := range p.Findings {

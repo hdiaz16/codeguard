@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -156,12 +158,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// El grafo puede pesar cientos de KB: viaja por HTTP interno, no por el
+	// bus de eventos (ahí llegaba vacío). El explorador hace fetch("/graph.json").
+	var graphJSON atomic.Value // []byte
+	graphJSON.Store([]byte(`{"nodes":[],"edges":[]}`))
+
+	assetsFS := application.BundledAssetFileServer(frontend)
+	handler := http.NewServeMux()
+	handler.HandleFunc("/graph.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(graphJSON.Load().([]byte))
+	})
+	handler.Handle("/", assetsFS)
+
 	app := application.New(application.Options{
 		Name: "CodeGuard",
 		Assets: application.AssetOptions{
 			// BundledAssetFileServer sirve también /wails/runtime.js,
 			// que el panel importa para los eventos.
-			Handler: application.BundledAssetFileServer(frontend),
+			Handler: handler,
 		},
 	})
 
@@ -472,8 +488,14 @@ func main() {
 			}
 			cg.Overlay = buildOverlay(cg, payload)
 			cg.Proyectos = proyectos
-			log.Printf("grafo de %s: %d nodos, %d aristas", payload.Repo, len(cg.Nodes), len(cg.Edges))
-			pendingGraph = cg
+			data, err := json.Marshal(cg)
+			if err != nil {
+				log.Println("grafo: no se pudo serializar:", err)
+				return
+			}
+			graphJSON.Store(data)
+			log.Printf("grafo de %s: %d nodos, %d aristas (%d KB servidos en /graph.json)",
+				payload.Repo, len(cg.Nodes), len(cg.Edges), len(data)/1024)
 			application.InvokeAsync(func() {
 				if explorer != nil {
 					explorer.Close()
