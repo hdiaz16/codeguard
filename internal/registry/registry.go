@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -83,4 +84,41 @@ func Add(root, nombre, lenguaje string) {
 	if data, err := json.MarshalIndent(repos, "", "  "); err == nil {
 		os.WriteFile(path(), data, 0o644)
 	}
+}
+
+// Remove saca un proyecto del registro. Devuelve si estaba.
+//
+// Load ya olvida los repos que desaparecieron del disco, así que esto sólo
+// hace falta cuando el repo sigue ahí y lo que se quiere es dejar de
+// vigilarlo. Vive aquí, en Go, porque el formato es nuestro: manipular este
+// archivo desde PowerShell salió mal —ConvertTo-Json desenvuelve los arreglos
+// de un elemento y el registro dejaba de ser una lista.
+func Remove(root string) bool {
+	root = strings.TrimRight(filepath.ToSlash(root), "/")
+	mu.Lock()
+	defer mu.Unlock()
+	raw, err := os.ReadFile(path())
+	if err != nil {
+		return false
+	}
+	var repos []Repo
+	if json.Unmarshal(raw, &repos) != nil {
+		return false
+	}
+	quedan := make([]Repo, 0, len(repos))
+	quitado := false
+	for _, r := range repos {
+		if strings.EqualFold(strings.TrimRight(r.Root, "/"), root) {
+			quitado = true
+			continue
+		}
+		quedan = append(quedan, r)
+	}
+	if !quitado {
+		return false
+	}
+	if data, err := json.MarshalIndent(quedan, "", "  "); err == nil {
+		os.WriteFile(path(), data, 0o644)
+	}
+	return true
 }

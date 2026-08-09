@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	"codeguard/internal/engines/proc"
 	"path/filepath"
 	"strings"
 )
@@ -27,6 +29,7 @@ type Diff struct {
 
 func run(repoRoot string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
+	proc.SinVentana(cmd)
 	cmd.Dir = repoRoot
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out

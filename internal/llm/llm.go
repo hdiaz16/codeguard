@@ -1,5 +1,7 @@
-// Package foundry es el cliente del modelo advisory: endpoint compatible con
-// la API de OpenAI (Azure AI Foundry, Moonshot, vLLM...). Sin SDK: net/http.
+// Package llm es el cliente de la capa de consejo. Habla dos dialectos —el de
+// OpenAI, que copiaron casi todos, y el de Anthropic— y con eso alcanza para
+// los servicios que un equipo usa de verdad, incluido un modelo local.
+// Sin SDK: net/http.
 package llm
 
 import (
@@ -44,7 +46,7 @@ func New(cfg config.LLM) *Client {
 	}
 
 	dial := dialectoDe(cfg.Provider, cfg.Endpoint)
-	endpoint := strings.TrimRight(cfg.Endpoint, "/")
+	endpoint := normalizarEndpoint(cfg.Endpoint)
 	if dial == DialectoOpenAI && !strings.Contains(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
 	}
@@ -70,6 +72,52 @@ func requiereKey(cfg config.LLM, prov Proveedor) bool {
 // Dialecto dice con qué API se está hablando. Sirve para mostrarlo en la
 // pantalla de configuración.
 func (c *Client) Dialecto() Dialecto { return c.dialecto }
+
+// normalizarEndpoint completa las URLs de Azure a las que les falta la ruta.
+//
+// Azure expone dos superficies sobre el mismo host: la moderna, bajo
+// /openai/v1, que habla el dialecto de OpenAI tal cual; y la clásica, que
+// exige ?api-version= en cada llamada. Quien pega la URL del portal se lleva
+// el host pelado, y la respuesta —"Missing required query parameter:
+// api-version"— no da ninguna pista de que falta un trozo de ruta.
+func normalizarEndpoint(bruto string) string {
+	e := strings.TrimRight(strings.TrimSpace(bruto), "/")
+	if e == "" {
+		return e
+	}
+	bajo := strings.ToLower(e)
+	esAzure := strings.Contains(bajo, ".services.ai.azure.com") ||
+		strings.Contains(bajo, ".openai.azure.com") ||
+		strings.Contains(bajo, ".cognitiveservices.azure.com")
+	if !esAzure {
+		return e
+	}
+	// Ya trae ruta propia: no tocarla, puede ser un despliegue clásico
+	// deliberado con su api-version.
+	if strings.Contains(bajo, "/openai/") || strings.Contains(bajo, "?") {
+		return e
+	}
+	return e + "/openai/v1"
+}
+
+// pistaDeError traduce las respuestas del proveedor que, tal cual, no dicen
+// qué hacer. Un HTTP 400 crudo manda al desarrollador a adivinar.
+func pistaDeError(cuerpo string) string {
+	switch {
+	case strings.Contains(cuerpo, "api-version"):
+		return "\n\nEste endpoint de Azure es de la API clásica. Usa la moderna añadiendo " +
+			"/openai/v1 al final del host (por ejemplo https://TU-RECURSO.services.ai.azure.com/openai/v1), " +
+			"que es la que habla el dialecto de OpenAI sin api-version."
+	case strings.Contains(cuerpo, "DeploymentNotFound"):
+		return "\n\nEl modelo no existe en ese recurso: en Azure el nombre es el del DESPLIEGUE, " +
+			"no el del modelo base."
+	case strings.Contains(cuerpo, "401") || strings.Contains(cuerpo, "Unauthorized") ||
+		strings.Contains(cuerpo, "invalid_api_key"):
+		return "\n\nLa clave no es válida para este endpoint. Revisa que la variable de entorno " +
+			"tenga la clave de ESTE recurso."
+	}
+	return ""
+}
 
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
@@ -146,7 +194,7 @@ func (c *Client) Complete(ctx context.Context, model, system, user string, timeo
 		}
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return nil, fmt.Errorf("HTTP %d: %s%s", resp.StatusCode, truncate(string(raw), 300), pistaDeError(string(raw)))
 	}
 	var parsed struct {
 		Choices []struct {
@@ -223,7 +271,7 @@ func (c *Client) CompleteStream(ctx context.Context, model, system, user string,
 		raw, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if !strings.Contains(string(raw), "max_completion_tokens") {
-			return nil, fmt.Errorf("HTTP 400: %s", truncate(string(raw), 300))
+			return nil, fmt.Errorf("HTTP 400: %s%s", truncate(string(raw), 300), pistaDeError(string(raw)))
 		}
 		if resp, err = do(true); err != nil {
 			return nil, err
@@ -232,7 +280,7 @@ func (c *Client) CompleteStream(ctx context.Context, model, system, user string,
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		raw, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return nil, fmt.Errorf("HTTP %d: %s%s", resp.StatusCode, truncate(string(raw), 300), pistaDeError(string(raw)))
 	}
 
 	var content strings.Builder

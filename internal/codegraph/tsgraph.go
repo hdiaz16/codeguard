@@ -3,6 +3,8 @@ package codegraph
 import (
 	"os"
 	"os/exec"
+
+	"codeguard/internal/engines/proc"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -40,7 +42,9 @@ var noSonLlamadas = map[string]bool{
 
 // BuildTS arma el grafo función→función y función→consulta de un repo TS/JS.
 func BuildTS(root string) (*Graph, error) {
-	out, err := exec.Command("git", "-C", root, "ls-files", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs").Output()
+	cmd := exec.Command("git", "-C", root, "ls-files", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs")
+	proc.SinVentana(cmd) // el daemon no tiene consola: sin esto, git abre la suya
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}

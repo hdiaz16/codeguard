@@ -23,10 +23,52 @@ function Prueba($nombre, $esperado, $obtenido, $detalle = "") {
 }
 function Titulo($t) { Write-Host "`n=== $t ===" -ForegroundColor Cyan }
 
-# repos de prueba
-$KNOW = "C:\Users\Hector Diaz\repos\knowhub"
-$SAM  = "C:\Users\Hector Diaz\Documents\os-samantha"
-$CGR  = "C:\Users\Hector Diaz\codeguard"
+
+# ── repo de pruebas, creado por la propia suite ──────────────────────────────
+# Antes esto apuntaba a dos repos personales de la maquina del autor: la suite
+# no corria en ninguna otra parte, y desenrolar uno de ellos la rompia entera.
+# Ahora se fabrica un repo con las tres cosas que hacen falta -Go, TypeScript y
+# migraciones SQL- y se destruye al terminar.
+$CGR  = Split-Path $PSScriptRoot -Parent
+$Lab  = Join-Path $env:TEMP "codeguard-suite\repo"
+
+function CrearRepoDePrueba {
+    if (Test-Path $Lab) { Remove-Item -LiteralPath $Lab -Recurse -Force -ErrorAction SilentlyContinue }
+    New-Item -ItemType Directory -Force -Path (Join-Path $Lab "internal\domain") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $Lab "src\lib") | Out-Null
+    New-Item -ItemType Directory -Force -Path (Join-Path $Lab "supabase\migrations") | Out-Null
+
+    Set-Content (Join-Path $Lab "go.mod") "module laboratorio`n`ngo 1.26`n" -NoNewline
+    Set-Content (Join-Path $Lab "internal\domain\base.go") "package domain`n`nfunc Base() int { return 1 }`n" -NoNewline
+    Set-Content (Join-Path $Lab "internal\domain\otro.go") "package domain`n`nfunc Otro() int { return 2 }`n" -NoNewline
+    Set-Content (Join-Path $Lab "package.json") '{"name":"laboratorio","private":true}' -NoNewline
+    Set-Content (Join-Path $Lab "src\lib\base.ts") "export const base = 1;`n" -NoNewline
+    Set-Content (Join-Path $Lab "src\lib\otro.ts") "export const otro = 2;`n" -NoNewline
+    Set-Content (Join-Path $Lab "supabase\migrations\001_base.sql") "CREATE TABLE documents (id serial primary key);`n" -NoNewline
+
+    Push-Location $Lab
+    git init -q 2>$null
+    git config user.email "suite@codeguard.local"
+    git config user.name  "suite"
+    git config commit.gpgsign false
+    git add -A 2>$null | Out-Null
+    git commit -q -m "base del laboratorio" 2>$null
+    & $CG init 2>&1 | Out-Null
+    git add -A 2>$null | Out-Null
+    git commit -q -m "enrolado" 2>$null
+    Pop-Location
+}
+
+function DestruirRepoDePrueba {
+    $padre = Split-Path $Lab -Parent
+    if (Test-Path $padre) { Remove-Item -LiteralPath $padre -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+Write-Host "==> preparando el repo de pruebas en $Lab" -ForegroundColor Cyan
+CrearRepoDePrueba
+# Los dos escenarios (Go y TS/SQL) viven ahora en el mismo laboratorio.
+$KNOW = $Lab
+$SAM  = $Lab
 
 function LimpiarRepo($repo, $archivo) {
     Push-Location $repo
@@ -76,7 +118,9 @@ $st = & $CG status --todos 2>&1 | Out-String
 # Un HALLAZGOS.md con pendientes NO es un fallo de enrolamiento: es trabajo por hacer.
 $fallosEnrolamiento = ([regex]::Matches($st, "✗ (config|hooks|hooksPath|binpath|rulepack|baseline)")).Count
 Prueba "enrolamiento sin fallos" 0 $fallosEnrolamiento
-Prueba "3 proyectos registrados" 3 (([regex]::Matches($st, "──")).Count)
+# Al menos el laboratorio y este repo: fijar un numero exacto ataba la suite a
+# cuantos proyectos tuviera enrolados quien la corre.
+Prueba "el registro lista proyectos" $true ((([regex]::Matches($st, "──")).Count) -ge 2)
 
 # ── 1. Escenarios funcionales ────────────────────────────────────────────────
 Titulo "1. Escenarios end-to-end"
@@ -182,6 +226,28 @@ Prueba "graph --deep abre el explorador" $true ($out -match "ventana del agente"
 # Sin agente, el CLI dice como arrancarlo; ya no escribe una copia para el
 # navegador (esa copia se quedaba atras y arrastraba fallos ya corregidos).
 Prueba "  no usa el navegador" $true (-not ($out -match "explorador generado|\.html"))
+# La prueba abre una ventana de verdad; dejarla abierta ensucia el escritorio
+# del dev y suma un webview a la medicion de RAM de mas abajo.
+Start-Sleep -Milliseconds 800
+$cerrar = @'
+Add-Type @"
+using System; using System.Runtime.InteropServices; using System.Text;
+public class CierraExp {
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr l);
+  public delegate bool EnumWindowsProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  public static void Cierra() {
+    EnumWindows((h,l) => { if (IsWindowVisible(h)) { var sb = new StringBuilder(300); GetWindowText(h, sb, 300);
+      if (sb.ToString().Contains("explorador de")) PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero); } return true; }, IntPtr.Zero);
+  }
+}
+"@
+[CierraExp]::Cierra()
+'@
+Invoke-Expression $cerrar
+Start-Sleep -Milliseconds 500
 $out = & $CG stats 2>&1 | Out-String
 Prueba "stats responde" $true ($out.Length -gt 0)
 $out = & $CG engines 2>&1 | Out-String
@@ -229,3 +295,9 @@ if ($script:fallos -eq 0) {
 }
 $script:pasos | Export-Csv -NoTypeInformation -Path (Join-Path $PSScriptRoot "ultimo-resultado.csv") -Encoding UTF8
 Write-Host "detalle: tests\ultimo-resultado.csv"
+
+# El laboratorio no sobrevive a la suite: ni ensucia el disco ni queda enrolado
+# en el registro del agente.
+DestruirRepoDePrueba
+# No hace falta tocar repos.json: al desaparecer la carpeta, el agente olvida
+# el laboratorio solo la proxima vez que lea el registro.

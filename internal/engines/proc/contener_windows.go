@@ -68,16 +68,38 @@ var (
 	tokenErr    error
 )
 
+// creationNoWindow (CREATE_NO_WINDOW) impide que un proceso de consola abra
+// su propia ventana. El daemon se compila con -H windowsgui, así que no tiene
+// consola que heredar y Windows le daba una nueva a CADA motor: gitleaks,
+// semgrep, python, go, tsc… Con nueve motores por commit, el escritorio se
+// llenaba de ventanas negras que aparecían y desaparecían.
+const creationNoWindow = 0x08000000
+
+// SinVentana evita la ventana de consola en los procesos que NO pasan por
+// Correr: el precalentamiento, git, y las utilidades del daemon. Se exporta
+// aparte porque esos no necesitan sandbox, sólo no parpadear en la cara del
+// desarrollador.
+func SinVentana(c *exec.Cmd) {
+	if c.SysProcAttr == nil {
+		c.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	c.SysProcAttr.HideWindow = true
+	c.SysProcAttr.CreationFlags |= creationNoWindow
+}
+
 // prepararSandbox ajusta el comando ANTES de arrancarlo. Se llama siempre;
 // si el token restringido no se puede crear, el motor corre igual y quien
 // llama se entera por SandboxActivo().
 func prepararSandbox(c *exec.Cmd) {
+	if c.SysProcAttr == nil {
+		c.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	c.SysProcAttr.HideWindow = true
+	c.SysProcAttr.CreationFlags |= creationNoWindow
+
 	tok, err := tokenRestringido()
 	if err != nil {
 		return
-	}
-	if c.SysProcAttr == nil {
-		c.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	c.SysProcAttr.Token = syscall.Token(tok)
 }

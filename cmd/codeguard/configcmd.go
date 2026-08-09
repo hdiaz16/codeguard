@@ -97,12 +97,21 @@ func mostrarConfigLLM() error {
 	fmt.Printf("  modelo     %s\n", nonEmptyOr(cfg.LLM.Model, "(sin configurar)"))
 	fmt.Printf("  rápido     %s\n", nonEmptyOr(cfg.LLM.ModelFast, cfg.LLM.Model))
 
-	if cfg.LLM.APIKeyEnv == "" {
+	switch {
+	case cfg.LLM.APIKeyEnv == "":
 		fmt.Println("  clave      no hace falta")
-	} else if os.Getenv(cfg.LLM.APIKeyEnv) != "" {
+	case os.Getenv(cfg.LLM.APIKeyEnv) != "":
 		fmt.Printf("  clave      %s ✓ configurada\n", cfg.LLM.APIKeyEnv)
-	} else {
-		fmt.Printf("  clave      %s ✗ VACÍA — la capa de consejo no correrá\n", cfg.LLM.APIKeyEnv)
+	case definidaEnElUsuario(cfg.LLM.APIKeyEnv):
+		// Windows sólo entrega las variables de usuario a los procesos que
+		// arrancan DESPUÉS de definirlas. Decir "vacía" aquí manda al dev a
+		// buscar una clave que ya tiene, y a redefinirla encima.
+		fmt.Printf("  clave      %s ✓ definida en tu usuario, pero esta terminal es anterior\n",
+			cfg.LLM.APIKeyEnv)
+		fmt.Println("             abre una terminal nueva (el agente sí la ve si arrancó después)")
+	default:
+		fmt.Printf("  clave      %s ✗ sin definir — la capa de consejo no correrá\n", cfg.LLM.APIKeyEnv)
+		fmt.Println("             defínela desde `codeguard config` o como variable de entorno")
 	}
 	return nil
 }

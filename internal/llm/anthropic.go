@@ -81,7 +81,7 @@ func (c *Client) completarAnthropic(ctx context.Context, model, system, user str
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return nil, fmt.Errorf("HTTP %d: %s%s", resp.StatusCode, truncate(string(raw), 300), pistaDeError(string(raw)))
 	}
 
 	var parsed struct {
@@ -138,7 +138,7 @@ func (c *Client) streamAnthropic(ctx context.Context, model, system, user string
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		raw, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(raw), 300))
+		return nil, fmt.Errorf("HTTP %d: %s%s", resp.StatusCode, truncate(string(raw), 300), pistaDeError(string(raw)))
 	}
 
 	var texto strings.Builder

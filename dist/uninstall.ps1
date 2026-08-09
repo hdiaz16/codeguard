@@ -6,7 +6,8 @@
 # =============================================================================
 param(
     [switch]$Datos,          # borra tambien la BD, el log y el registro de proyectos
-    [string[]]$Repos = @()   # repos a desenrolar (quita hooks y config local de git)
+    [string[]]$Repos = @(),  # repos a desenrolar (quita hooks y config local de git)
+    [switch]$SoloRepos       # desenrolar esos repos SIN desinstalar el agente
 )
 $ErrorActionPreference = "Continue"
 function Step($m) { Write-Host "==> $m" -ForegroundColor Cyan }
@@ -14,6 +15,36 @@ function Ok($m)   { Write-Host "    $m" -ForegroundColor Green }
 
 $Root = Join-Path $env:LOCALAPPDATA "CodeGuard"
 $Data = Join-Path $env:LOCALAPPDATA "codeguard"
+
+# Desenrolar un repo y desinstalar el agente son cosas distintas. Antes -Repos
+# hacia las dos, asi que quien solo queria sacar un proyecto de la lista se
+# quedaba sin agente en toda la maquina.
+if ($SoloRepos) {
+    if (-not $Repos) { Write-Host "-SoloRepos necesita -Repos con al menos una ruta" -ForegroundColor Red; exit 1 }
+    foreach ($r in $Repos) {
+        Step "Desenrolando $r"
+        if (-not (Test-Path $r)) { Write-Host "    no existe" -ForegroundColor Yellow; continue }
+        git -C $r config --unset core.hooksPath 2>$null
+        git -C $r config --unset codeguard.binpath 2>$null
+        foreach ($d in @(".githooks", ".codeguard")) {
+            $p = Join-Path $r $d
+            if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+        }
+        Ok "hooks y config removidos (lo versionado vuelve con git checkout)"
+    }
+    # Quitarlos del registro con el propio agente. Editar repos.json desde
+    # PowerShell salio mal: ConvertTo-Json desenvuelve los arreglos de un solo
+    # elemento y el registro dejaba de ser una lista, asi que el panel se
+    # quedaba sin ningun proyecto. El formato es del lado Go y ahi se maneja.
+    $cg = Join-Path $Root "bin\codeguard.exe"
+    if (Test-Path $cg) {
+        foreach ($r in $Repos) { & $cg forget $r 2>&1 | Out-Null }
+        Ok "quitados de la lista del agente"
+    }
+    Write-Host ""
+    Write-Host "Repos desenrolados. El agente sigue instalado." -ForegroundColor Green
+    exit 0
+}
 
 Step "Deteniendo el daemon"
 Get-Process codeguard-daemon -ErrorAction SilentlyContinue | Stop-Process -Force -Confirm:$false
@@ -35,18 +66,35 @@ if ($userPath) {
     Ok "entradas de CodeGuard removidas"
 }
 
+# CUIDADO: en Windows los nombres de carpeta no distinguen mayusculas, asi que
+# %LOCALAPPDATA%\CodeGuard (binarios) y %LOCALAPPDATA%\codeguard (datos) son EL
+# MISMO directorio. Borrar el arbol entero se llevaba por delante la BD, el
+# registro de proyectos y la configuracion personal del modelo, aunque el
+# script dijera que los conservaba. Por eso aqui se borra lo instalado pieza a
+# pieza y nunca la carpeta completa.
 Step "Borrando binarios y motores"
-if (Test-Path $Root) { Remove-Item -Recurse -Force $Root -ErrorAction SilentlyContinue }
-Ok $Root
+foreach ($sub in @("bin", "engines", "rulepacks")) {
+    $p = Join-Path $Root $sub
+    if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+}
+Ok "$Root\{bin, engines, rulepacks}"
 
 if ($Datos) {
-    Step "Borrando datos locales (BD, log, registro de proyectos)"
-    if (Test-Path $Data) { Remove-Item -Recurse -Force $Data -ErrorAction SilentlyContinue }
+    Step "Borrando datos locales (BD, log, registro de proyectos, config del modelo)"
+    foreach ($f in @("codeguard.db", "codeguard.db-shm", "codeguard.db-wal",
+                     "daemon.log", "repos.json", "warm-repos.txt", "llm-local.yaml")) {
+        $p = Join-Path $Data $f
+        if (Test-Path $p) { Remove-Item -Force $p -ErrorAction SilentlyContinue }
+    }
     $wv = Join-Path $env:APPDATA "codeguard-daemon.exe"
     if (Test-Path $wv) { Remove-Item -Recurse -Force $wv -ErrorAction SilentlyContinue }
-    Ok "telemetria y cache eliminadas"
+    Ok "telemetria, registro y cache eliminados"
+    # Ya vacia, la carpeta se va; si quedo algo del usuario, se respeta.
+    if ((Test-Path $Root) -and -not (Get-ChildItem $Root -Force)) {
+        Remove-Item -Force $Root -ErrorAction SilentlyContinue
+    }
 } else {
-    Write-Host "    (la BD y el registro se conservan; usa -Datos para borrarlos)" -ForegroundColor Yellow
+    Write-Host "    (la BD, el registro y tu config del modelo se conservan; usa -Datos para borrarlos)" -ForegroundColor Yellow
 }
 
 foreach ($r in $Repos) {

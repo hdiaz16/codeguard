@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
+
+	"codeguard/internal/engines/proc"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -73,6 +75,7 @@ func WarmTrivyDB(ctx context.Context) {
 	c, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(c, "trivy", "image", "--download-db-only")
+	proc.SinVentana(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("trivy: no se pudo refrescar la DB: %v (%s)", err, firstLine(string(out)))
 		return
@@ -119,6 +122,7 @@ func WarmAll(ctx context.Context) {
 			bin, args = local, []string{"--noEmit", "--incremental", "--pretty", "false"}
 		}
 		cmd := exec.CommandContext(wctx, bin, args...)
+		proc.SinVentana(cmd)
 		cmd.Dir = repo
 		cmd.Run() // el exit code no importa: solo queremos el caché caliente
 		cancel()

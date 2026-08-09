@@ -12,5 +12,8 @@ func contener(*exec.Cmd) (func(), error) { return func() {}, nil }
 
 func prepararSandbox(*exec.Cmd) {}
 
+// SinVentana: fuera de Windows no hay ventanas de consola que ocultar.
+func SinVentana(*exec.Cmd) {}
+
 // SandboxActivo: fuera de Windows no hay token restringido que aplicar.
 func SandboxActivo() (bool, error) { return false, nil }
