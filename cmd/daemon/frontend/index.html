@@ -245,6 +245,7 @@
     <div class="winbtns">
       <button id="btn-help" title="Guía de uso paso a paso">?</button>
       <button id="btn-graph" title="Abrir el explorador de código 3D de este proyecto">🕸</button>
+      <button id="btn-config" title="Configurar el modelo que aconseja (proveedor, endpoint, clave)">⚙</button>
       <button id="btn-min" title="Contraer al último veredicto">–</button>
       <button id="btn-close" class="close" title="Ocultar panel — CodeGuard sigue vigilando desde el orbe">✕</button>
     </div>
@@ -474,6 +475,7 @@
   });
 
   $("btn-help").addEventListener("click", () => emit("open-guide", null));
+  $("btn-config").addEventListener("click", () => emit("open-config", null));
 
   $("btn-graph").addEventListener("click", () => {
     emit("open-graph", rootActual ? [rootActual] : null);

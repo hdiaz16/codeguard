@@ -185,6 +185,10 @@ Prueba "stats responde" $true ($out.Length -gt 0)
 $out = & $CG engines 2>&1 | Out-String
 Prueba "engines verifica los binarios" $true ($out -match "publicados por sus autores")
 Prueba "  gitleaks marcado como critico" $true ($out -match "gitleaks \(cr")
+Prueba "  reporta la contencion" $true ($out -match "token restringido" -and $out -match "entorno acotado")
+$out = & $CG config --ver 2>&1 | Out-String
+Prueba "config lista proveedores" $true ($out -match "anthropic" -and $out -match "ollama")
+Prueba "  no revela la clave" $true (-not ($out -match $env:FOUNDRY_API_KEY))
 Pop-Location
 
 Titulo "6. Integridad de los scripts de instalacion"

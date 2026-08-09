@@ -48,7 +48,12 @@ type UI struct {
 // versionado en el repo: el dev no configura nada. La API key NUNCA va en
 // este archivo — solo el nombre de la variable de entorno que la contiene.
 type LLM struct {
-	Endpoint  string `koanf:"endpoint"`    // compatible con la API de OpenAI
+	// Provider es el id de un preajuste (ver internal/llm/proveedores.go):
+	// azure-foundry, openai, anthropic, ollama... Vacío = se deduce del
+	// endpoint, para que las configuraciones anteriores a este campo sigan
+	// funcionando sin tocarlas.
+	Provider  string `koanf:"provider"`
+	Endpoint  string `koanf:"endpoint"`
 	APIKeyEnv string `koanf:"api_key_env"` // nombre de la env var con la key
 	// Model es el default para los tres pilares; los overrides son opcionales.
 	Model         string `koanf:"model"`
@@ -124,6 +129,10 @@ type Config struct {
 	Hash string `koanf:"-"`
 	// RepoRoot es la raíz del repo donde se encontró la config.
 	RepoRoot string `koanf:"-"`
+	// LLMLocal indica que el bloque llm viene del archivo personal del
+	// desarrollador y no del que versiona el equipo. La UI tiene que decirlo:
+	// si no, alguien puede creer que usa el modelo de la casa cuando no.
+	LLMLocal bool `koanf:"-"`
 }
 
 const RelPath = ".codeguard/config.yaml"
@@ -161,5 +170,38 @@ func Load(repoRoot string) (*Config, error) {
 	if cfg.Rulepack == "" {
 		return nil, fmt.Errorf("config.yaml sin 'rulepack': la paridad exige pinnearlo")
 	}
+	// La anulación local se aplica DESPUÉS del hash: el hash es el contrato de
+	// paridad con el CI y sólo cubre lo que está versionado en el repo. Cambiar
+	// de modelo no altera qué bloquea —el modelo nunca bloquea (P2)—, así que
+	// no puede romper esa paridad.
+	aplicarLLMLocal(cfg)
 	return cfg, nil
+}
+
+// RutaLLMLocal es donde vive la elección de modelo de ESTE desarrollador.
+// Fuera del repo a propósito: es suya, no del equipo, y no debe viajar en un
+// commit ni cambiar el hash de la configuración.
+func RutaLLMLocal() string {
+	return filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard", "llm-local.yaml")
+}
+
+// aplicarLLMLocal sustituye el bloque llm por el del archivo local, si existe.
+// Un archivo ilegible se ignora en silencio a propósito: la capa de consejo
+// nunca es requisito, y dejar sin commitear a alguien por un YAML mal escrito
+// sería exactamente lo contrario de lo que hace este agente.
+func aplicarLLMLocal(cfg *Config) {
+	raw, err := os.ReadFile(RutaLLMLocal())
+	if err != nil {
+		return
+	}
+	k := koanf.New(".")
+	if err := k.Load(rawbytes.Provider(raw), yaml.Parser()); err != nil {
+		return
+	}
+	local := cfg.LLM // parte de lo que ya había: el archivo sólo cambia lo que nombra
+	if err := k.Unmarshal("llm", &local); err != nil {
+		return
+	}
+	cfg.LLM = local
+	cfg.LLMLocal = true
 }

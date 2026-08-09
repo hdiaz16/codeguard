@@ -194,6 +194,7 @@ max_diff_lines: 2000
 }
 
 const defaultLLMBlock = `llm:
+  provider: "azure-foundry"
   endpoint: "https://TU-RECURSO.services.ai.azure.com/openai/v1"
   api_key_env: "FOUNDRY_API_KEY"
   model: "FW-Kimi-K3"

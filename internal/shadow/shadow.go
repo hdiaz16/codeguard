@@ -23,8 +23,8 @@ import (
 
 	"codeguard/internal/config"
 	"codeguard/internal/finding"
-	"codeguard/internal/foundry"
 	"codeguard/internal/ipc"
+	"codeguard/internal/llm"
 	"codeguard/internal/store"
 )
 
@@ -139,7 +139,7 @@ type Runner struct {
 
 // Run ejecuta la sombra completa para una petición ya respondida al hook.
 func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, deterministic []finding.Finding) {
-	client := foundry.New(cfg.LLM)
+	client := llm.New(cfg.LLM)
 	risk := RiskScore(cfg, req)
 
 	// ── Etapa 4: decisión de presupuesto ──

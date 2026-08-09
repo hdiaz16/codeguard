@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"codeguard/internal/config"
-	"codeguard/internal/foundry"
 	"codeguard/internal/gitdiff"
+	"codeguard/internal/llm"
 )
 
 // Diferenciador: las convenciones escritas del equipo (CLAUDE.md, etc.) se
@@ -61,7 +61,7 @@ func rulesCmd() *cobra.Command {
 			if err != nil || cfg == nil {
 				return fmt.Errorf("el repo no está enrolado (falta %s)", config.RelPath)
 			}
-			client := foundry.New(cfg.LLM)
+			client := llm.New(cfg.LLM)
 			if client == nil {
 				return fmt.Errorf("sin endpoint/API key del modelo (%s no definida)", cfg.LLM.APIKeyEnv)
 			}

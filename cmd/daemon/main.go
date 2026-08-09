@@ -192,6 +192,22 @@ func main() {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write(graphJSON.Load().([]byte))
 	})
+	// Igual que el grafo: la configuración se sirve por HTTP y no por eventos.
+	// Raíz desde la que se lee la configuración del modelo. Se actualiza con
+	// cada análisis; sin ninguno todavía, sirve cualquier repo enrolado —la
+	// configuración del modelo suele ser la misma para todos.
+	var raizConfig atomic.Value // string
+	handler.HandleFunc("/config-llm.json", func(w http.ResponseWriter, r *http.Request) {
+		raiz, _ := raizConfig.Load().(string)
+		if raiz == "" {
+			if repos := registry.Load(); len(repos) > 0 {
+				raiz = repos[0].Root
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(leerConfigLLM(filepath.FromSlash(raiz)))
+	})
 	handler.Handle("/", assetsFS)
 
 	app := application.New(application.Options{
@@ -473,6 +489,7 @@ func main() {
 		}
 		p.OtrosRepos = listaProyectos(p.RepoRoot)
 		lastPayload = p // el contexto activo pasa a ser el elegido
+		raizConfig.Store(p.RepoRoot)
 		app.Event.Emit("analysis", p)
 		ts.set(orbStateFor(p), fmt.Sprintf("%s@%s: %d bloqueantes, %d avisos (%s)",
 			p.Repo, p.Branch, p.Blocking, p.Advisory, p.At))
@@ -566,6 +583,63 @@ func main() {
 		}()
 	}
 
+	// ── Configuración del modelo, en su propia ventana ──
+	var ventanaConfig *application.WebviewWindow
+	app.Event.On("open-config", func(*application.CustomEvent) {
+		application.InvokeAsync(func() {
+			if ventanaConfig != nil {
+				ventanaConfig.Close()
+			}
+			ventanaConfig = app.Window.NewWithOptions(application.WebviewWindowOptions{
+				Title:            "CodeGuard — configuración del modelo",
+				Width:            860,
+				Height:           820,
+				URL:              "/config.html",
+				BackgroundColour: application.RGBA{Red: 14, Green: 17, Blue: 20, Alpha: 255},
+			})
+			ventanaConfig.Center()
+			ventanaConfig.Show()
+		})
+	})
+	responderConfig := func(bien bool, mensaje string, recargar bool) {
+		app.Event.Emit("llm-resultado", map[string]any{
+			"bien": bien, "mensaje": mensaje, "recargar": recargar,
+		})
+	}
+	app.Event.On("llm-probar", func(e *application.CustomEvent) {
+		g, err := decodificarConfigLLM(e)
+		if err != nil {
+			responderConfig(false, "no entendí el formulario: "+err.Error(), false)
+			return
+		}
+		go func() {
+			detalle, err := probarConfigLLM(g)
+			if err != nil {
+				responderConfig(false, "<b>No respondió.</b><br><code>"+escaparHTML(err.Error())+"</code>", false)
+				return
+			}
+			responderConfig(true, "<b>Conexión correcta.</b> "+escaparHTML(detalle), false)
+		}()
+	})
+	app.Event.On("llm-guardar", func(e *application.CustomEvent) {
+		g, err := decodificarConfigLLM(e)
+		if err != nil {
+			responderConfig(false, "no entendí el formulario: "+err.Error(), false)
+			return
+		}
+		if err := guardarLLMLocal(g); err != nil {
+			responderConfig(false, "<b>No se pudo guardar.</b><br><code>"+escaparHTML(err.Error())+"</code>", false)
+			return
+		}
+		if g.Restaurar {
+			log.Println("configuración del modelo: se restauró la del equipo")
+			responderConfig(true, "<b>Listo.</b> Vuelves a usar la configuración del equipo.", true)
+			return
+		}
+		log.Printf("configuración del modelo: %s · %s (local)", g.Provider, g.Model)
+		responderConfig(true, "<b>Guardado.</b> Se aplica desde el próximo commit.", true)
+	})
+
 	app.Event.On("open-graph", func(e *application.CustomEvent) {
 		// El panel manda la raíz del proyecto que se está viendo. Sin ella
 		// —p.ej. desde el menú de la bandeja— se cae al último analizado.
@@ -652,8 +726,16 @@ func main() {
 		// La CLI pide acciones de UI: el explorador abre en la ventana del
 		// agente, nunca en un navegador.
 		OnCommand: func(cmd, root string) {
-			if cmd == "open-graph" {
+			switch cmd {
+			case "open-graph":
 				openGraph(filepath.ToSlash(root))
+			case "open-config":
+				if root != "" {
+					raizConfig.Store(filepath.ToSlash(root))
+				}
+				app.Event.Emit("open-config", nil)
+			default:
+				log.Println("comando desconocido desde la CLI:", cmd)
 			}
 		},
 		OnRequest: func(req *ipc.Request) {
@@ -703,6 +785,7 @@ func main() {
 			stateMu.Unlock()
 			payload.OtrosRepos = listaProyectos(payload.RepoRoot)
 			lastPayload = payload
+			raizConfig.Store(payload.RepoRoot)
 
 			tooltip := fmt.Sprintf("%s@%s: %d bloqueantes, %d avisos (%s)",
 				payload.Repo, payload.Branch, payload.Blocking, payload.Advisory, payload.At)

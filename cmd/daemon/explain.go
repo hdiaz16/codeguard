@@ -12,8 +12,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"codeguard/internal/config"
-	"codeguard/internal/foundry"
 	"codeguard/internal/ipc"
+	"codeguard/internal/llm"
 	"codeguard/internal/shadow"
 )
 
@@ -39,7 +39,7 @@ type explanation struct {
 }
 
 func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request, resp *ipc.Response) {
-	client := foundry.New(cfg.LLM)
+	client := llm.New(cfg.LLM)
 	if client == nil {
 		return
 	}

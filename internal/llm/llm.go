@@ -1,6 +1,6 @@
 // Package foundry es el cliente del modelo advisory: endpoint compatible con
 // la API de OpenAI (Azure AI Foundry, Moonshot, vLLM...). Sin SDK: net/http.
-package foundry
+package llm
 
 import (
 	"bufio"
@@ -20,30 +20,56 @@ import (
 type Client struct {
 	endpoint string
 	apiKey   string
+	dialecto Dialecto
 	http     *http.Client
 }
 
-// New devuelve nil (sin error) si no hay endpoint o API key: la capa LLM
-// simplemente no corre — nunca es requisito (P2).
+// New devuelve nil (sin error) cuando la capa no se puede usar: sin endpoint,
+// o con un proveedor que exige key y no la encuentra. Nunca es un requisito
+// para commitear (P2), así que su ausencia degrada y no rompe.
+//
+// Un modelo local (Ollama, LM Studio) no lleva key: exigirla dejaría fuera
+// justo la opción en la que el código no sale de la máquina.
 func New(cfg config.LLM) *Client {
-	if cfg.Endpoint == "" || cfg.APIKeyEnv == "" {
+	if cfg.Endpoint == "" {
 		return nil
 	}
-	key := os.Getenv(cfg.APIKeyEnv)
-	if key == "" {
+	prov, _ := BuscarProveedor(cfg.Provider)
+	key := ""
+	if cfg.APIKeyEnv != "" {
+		key = os.Getenv(cfg.APIKeyEnv)
+	}
+	if key == "" && requiereKey(cfg, prov) {
 		return nil
 	}
+
+	dial := dialectoDe(cfg.Provider, cfg.Endpoint)
 	endpoint := strings.TrimRight(cfg.Endpoint, "/")
-	if !strings.Contains(endpoint, "/chat/completions") {
+	if dial == DialectoOpenAI && !strings.Contains(endpoint, "/chat/completions") {
 		endpoint += "/chat/completions"
 	}
 	return &Client{
 		endpoint: endpoint,
 		apiKey:   key,
+		dialecto: dial,
 		// El límite real lo pone el context de cada llamada; este es el techo.
 		http: &http.Client{Timeout: 3 * time.Minute},
 	}
 }
+
+// requiereKey: los preajustes lo declaran; para un endpoint escrito a mano se
+// deduce de si apunta a la propia máquina.
+func requiereKey(cfg config.LLM, prov Proveedor) bool {
+	if cfg.Provider != "" {
+		return prov.NecesitaKey
+	}
+	e := strings.ToLower(cfg.Endpoint)
+	return !strings.Contains(e, "localhost") && !strings.Contains(e, "127.0.0.1")
+}
+
+// Dialecto dice con qué API se está hablando. Sirve para mostrarlo en la
+// pantalla de configuración.
+func (c *Client) Dialecto() Dialecto { return c.dialecto }
 
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
@@ -60,6 +86,9 @@ type Result struct {
 // maxTokens: 0 = default (4000). Los razonadores (Kimi K3) gastan presupuesto
 // en pensar ANTES de responder — tareas grandes necesitan techos grandes.
 func (c *Client) Complete(ctx context.Context, model, system, user string, timeout time.Duration, maxTokens int) (*Result, error) {
+	if c.dialecto == DialectoAnthropic {
+		return c.completarAnthropic(ctx, model, system, user, timeout, maxTokens)
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -148,6 +177,9 @@ func (c *Client) Complete(ctx context.Context, model, system, user string, timeo
 // deltas de razonamiento y contenido vía onDelta (kind: "reasoning"|"content").
 // Permite mostrar en la UI lo que el modelo va pensando mientras analiza.
 func (c *Client) CompleteStream(ctx context.Context, model, system, user string, timeout time.Duration, maxTokens int, onDelta func(kind, text string)) (*Result, error) {
+	if c.dialecto == DialectoAnthropic {
+		return c.streamAnthropic(ctx, model, system, user, timeout, maxTokens, onDelta)
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if maxTokens <= 0 {

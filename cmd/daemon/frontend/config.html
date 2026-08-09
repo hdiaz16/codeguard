@@ -1,0 +1,249 @@
+<meta charset="utf-8">
+<title>CodeGuard — configuración del modelo</title>
+<style>
+  :root {
+    --d0:#0e1114; --d1:#151a1f; --d2:#1c232a; --d3:#26303a;
+    --ink:#e8edf1; --ink-2:#a8b4be; --ink-3:#6f7b85;
+    --acento:#8fd4ac; --alerta:#e0705a; --aviso:#e5b54a;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--d0); color:var(--ink);
+    font:14px/1.55 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .marco { max-width:760px; margin:0 auto; padding:26px 40px 34px; }
+  h1 { font-size:20px; font-weight:600; margin:0 0 4px; letter-spacing:-.01em; }
+  .sub { color:var(--ink-3); font-size:12.5px; margin:0 0 18px; }
+
+  .aviso {
+    background:var(--d1); border-left:3px solid var(--aviso);
+    padding:13px 16px; border-radius:0 8px 8px 0; margin-bottom:24px;
+    font-size:13px; color:var(--ink-2);
+  }
+  .aviso b { color:var(--ink); }
+  .aviso.ok { border-left-color:var(--acento); }
+
+  .campo { margin-bottom:15px; }
+  label { display:block; font-size:12px; color:var(--ink-2); margin-bottom:6px; font-weight:500; }
+  .pista { font-size:11.5px; color:var(--ink-3); margin-top:5px; line-height:1.5; }
+  input, select {
+    width:100%; background:var(--d1); border:1px solid var(--d3); color:var(--ink);
+    padding:10px 12px; border-radius:8px; font:13px "Segoe UI",system-ui,sans-serif;
+    outline:none; transition:border-color .15s;
+  }
+  input:focus, select:focus { border-color:var(--acento); }
+  input::placeholder { color:#4d5760; }
+  select { cursor:pointer; }
+
+  .rejilla { display:grid; grid-template-columns:1fr 1fr; gap:0 16px; }
+
+  .llave { display:flex; gap:9px; align-items:flex-start; }
+  .llave input { flex:1; }
+  .estado-llave { font-size:11.5px; padding:10px 0 0; white-space:nowrap; }
+  .si { color:var(--acento); } .no { color:var(--aviso); }
+
+  .acciones { display:flex; gap:10px; align-items:center; margin-top:20px; flex-wrap:wrap; }
+  button {
+    background:var(--d2); border:1px solid var(--d3); color:var(--ink);
+    padding:10px 18px; border-radius:8px; cursor:pointer; font:13px "Segoe UI",system-ui,sans-serif;
+    transition:background .15s;
+  }
+  button:hover:not(:disabled) { background:var(--d3); }
+  button:disabled { opacity:.5; cursor:default; }
+  button.principal { background:var(--acento); border-color:var(--acento); color:#0e1114; font-weight:600; }
+  button.principal:hover:not(:disabled) { background:#a5e0bd; }
+  button.texto { background:none; border:none; color:var(--ink-3); padding:10px 4px; }
+  button.texto:hover { color:var(--ink-2); background:none; }
+
+  .resultado { margin-top:18px; padding:13px 16px; border-radius:8px; font-size:13px; display:none; }
+  .resultado.visible { display:block; }
+  .resultado.bien { background:#14251c; color:#a9e3c2; }
+  .resultado.mal  { background:#2a1714; color:#f0b5a4; }
+  .resultado code { font-family:Consolas,monospace; font-size:12px; word-break:break-all; }
+
+  .nota-final { margin-top:24px; padding-top:16px; border-top:1px solid var(--d2);
+    font-size:12px; color:var(--ink-3); line-height:1.65;
+  }
+  .nota-final b { color:var(--ink-2); }
+</style>
+
+<div class="marco">
+  <h1>Configuración del modelo</h1>
+  <p class="sub">El modelo <b>aconseja</b>; nunca bloquea un commit. Cambiarlo no
+     altera qué reglas se aplican ni la paridad con el CI.</p>
+
+  <div id="origen" class="aviso"></div>
+
+  <div class="campo">
+    <label for="prov">Proveedor</label>
+    <select id="prov"></select>
+    <div class="pista" id="prov-nota"></div>
+  </div>
+
+  <div class="campo">
+    <label for="endpoint">Endpoint</label>
+    <input id="endpoint" placeholder="https://...">
+    <div class="pista">La dirección base de la API. CodeGuard le añade la ruta que corresponda.</div>
+  </div>
+
+  <div class="rejilla">
+    <div class="campo">
+      <label for="model">Modelo</label>
+      <input id="model" list="modelos" placeholder="nombre del modelo">
+      <datalist id="modelos"></datalist>
+    </div>
+    <div class="campo">
+      <label for="model-fast">Modelo rápido <span style="color:var(--ink-3)">(opcional)</span></label>
+      <input id="model-fast" list="modelos" placeholder="igual que el anterior si lo dejas vacío">
+    </div>
+  </div>
+  <div class="pista" style="margin:-12px 0 19px">
+    El rápido se usa para tareas mecánicas —explicar un hallazgo, proponer una regla—
+    donde razonar es peso muerto.
+  </div>
+
+  <div class="campo">
+    <label for="var">Variable de entorno con la clave</label>
+    <input id="var" placeholder="FOUNDRY_API_KEY">
+    <div class="pista">CodeGuard guarda el <b>nombre</b> de la variable, nunca la clave.</div>
+  </div>
+
+  <div class="campo" id="campo-key">
+    <label for="key">Clave de API</label>
+    <div class="llave">
+      <input id="key" type="password" placeholder="pégala aquí sólo si aún no la tienes configurada">
+      <span class="estado-llave" id="estado-llave"></span>
+    </div>
+    <div class="pista">Se guarda como variable de entorno de tu usuario de Windows.
+      <b>No se escribe en ningún archivo de CodeGuard</b> ni viaja a ningún repositorio.</div>
+  </div>
+
+  <div class="acciones">
+    <button id="probar">Probar conexión</button>
+    <button id="guardar" class="principal">Guardar</button>
+    <button id="restaurar" class="texto">Volver a la del equipo</button>
+  </div>
+
+  <div class="resultado" id="resultado"></div>
+
+  <div class="nota-final">
+    <b>Dónde queda guardado:</b> <span id="ruta"></span><br>
+    Es tuyo y de esta máquina: no viaja en ningún commit ni cambia la
+    configuración que comparte el equipo.
+  </div>
+</div>
+
+<script type="module">
+let Events = null;
+try { ({ Events } = await import("/wails/runtime.js")); }
+catch (e) { console.warn("runtime de Wails no disponible:", e); }
+
+const $ = id => document.getElementById(id);
+const res = $("resultado");
+
+function mostrar(texto, bien) {
+  res.className = "resultado visible " + (bien ? "bien" : "mal");
+  res.innerHTML = texto;
+}
+
+let ESTADO;
+try {
+  const r = await fetch("/config-llm.json?t=" + Date.now());
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  ESTADO = await r.json();
+} catch (err) {
+  document.body.innerHTML = `<div style="padding:40px;font:14px 'Segoe UI';color:#a3aeb7">
+    <b style="color:#e8edf1">No se pudo leer la configuración</b><br><br>${err.message || err}</div>`;
+  throw err;
+}
+
+// ── proveedores ──
+const provs = ESTADO.proveedores || [];
+$("prov").innerHTML = provs.map(p => `<option value="${p.id}">${p.nombre}</option>`).join("")
+  + `<option value="">— configuración manual —</option>`;
+
+function aplicarProveedor(id, conservar) {
+  const p = provs.find(x => x.id === id);
+  $("prov-nota").textContent = p
+    ? (p.comentario || `Habla el dialecto de ${p.dialecto === "anthropic" ? "Anthropic" : "OpenAI"}.`)
+    : "Escribe el endpoint y el modelo a mano.";
+  $("modelos").innerHTML = (p && p.modelos || []).map(m => `<option value="${m}">`).join("");
+  $("campo-key").style.display = (p && !p.necesita_key) ? "none" : "";
+  if (conservar || !p) return;
+  if (p.endpoint) $("endpoint").value = p.endpoint;
+  if (p.var_entorno) $("var").value = p.var_entorno;
+  if (p.modelos && p.modelos.length) $("model").value = p.modelos[0];
+  if (p.modelos && p.modelos.length > 1) $("model-fast").value = p.modelos[1];
+}
+
+$("prov").value = ESTADO.provider || "";
+$("endpoint").value = ESTADO.endpoint || "";
+$("model").value = ESTADO.model || "";
+$("model-fast").value = ESTADO.model_fast || "";
+$("var").value = ESTADO.api_key_env || "";
+$("ruta").textContent = ESTADO.ruta_local || "";
+aplicarProveedor($("prov").value, true);
+
+$("estado-llave").className = "estado-llave " + (ESTADO.hay_key ? "si" : "no");
+$("estado-llave").textContent = ESTADO.hay_key ? "✓ ya configurada" : "sin configurar";
+
+// Decir SIEMPRE de dónde sale lo que se está usando.
+const origen = $("origen");
+if (ESTADO.es_local) {
+  origen.className = "aviso";
+  origen.innerHTML = `<b>Estás usando tu configuración personal</b>, no la del equipo.` +
+    (ESTADO.del_equipo ? `<br>El repositorio propone: <code>${ESTADO.del_equipo}</code>` : "");
+} else {
+  origen.className = "aviso ok";
+  origen.innerHTML = `<b>Estás usando la configuración del equipo</b>, la que viene versionada ` +
+    `en el repositorio. Lo que guardes aquí sólo aplica a esta máquina.`;
+}
+
+$("prov").addEventListener("change", e => aplicarProveedor(e.target.value, false));
+
+function formulario(extra) {
+  return Object.assign({
+    provider: $("prov").value,
+    endpoint: $("endpoint").value.trim(),
+    api_key_env: $("var").value.trim(),
+    model: $("model").value.trim(),
+    model_fast: $("model-fast").value.trim(),
+    api_key: $("key").value,
+    restaurar: false,
+  }, extra || {});
+}
+
+function emitir(nombre, datos) {
+  if (!Events) { mostrar("El puente con el agente no está disponible. Cierra y vuelve a abrir esta ventana.", false); return false; }
+  try { Events.Emit(nombre, [datos]); }
+  catch { Events.Emit({ name: nombre, data: [datos] }); }
+  return true;
+}
+
+$("probar").addEventListener("click", () => {
+  mostrar("Probando… (una llamada real al modelo, puede tardar unos segundos)", true);
+  $("probar").disabled = true;
+  emitir("llm-probar", formulario());
+});
+
+$("guardar").addEventListener("click", () => {
+  $("guardar").disabled = true;
+  emitir("llm-guardar", formulario());
+});
+
+$("restaurar").addEventListener("click", () => {
+  if (!confirm("Se borrará tu configuración personal y CodeGuard volverá a usar la del equipo.")) return;
+  emitir("llm-guardar", formulario({ restaurar: true }));
+});
+
+if (Events) {
+  Events.On("llm-resultado", e => {
+    const d = (e.data && e.data[0]) || e.data || {};
+    $("probar").disabled = false;
+    $("guardar").disabled = false;
+    mostrar(d.mensaje || "sin detalle", !!d.bien);
+    if (d.recargar) setTimeout(() => location.reload(), 900);
+  });
+}
+</script>
