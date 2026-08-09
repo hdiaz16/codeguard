@@ -144,6 +144,7 @@
   .repos .tab.blk  { color: var(--block); }
   .repos .tab.ok   { color: var(--ok); }
   .repos .tab.none { color: var(--ink-3); }
+  .repos .leyenda { flex-basis: 100%; color: var(--ink-3); font-size: 10px; padding: 3px 2px 0; }
   .degraded { color: var(--ink-3); font-size: 11px; padding: 8px 18px 14px; }
   .traynote { color: var(--ink-3); font-size: 10.5px; text-align: center; padding: 10px 16px 14px; }
   .empty { color: var(--ink-3); text-align: center; padding: 44px 20px; }
@@ -242,9 +243,10 @@
   <div class="shell" id="card">
   <header>
     <div class="winbtns">
-      <button id="btn-graph" title="Generar y abrir el grafo de dependencias del repo">🕸</button>
+      <button id="btn-help" title="Guía de uso paso a paso">?</button>
+      <button id="btn-graph" title="Abrir el explorador de código 3D de este proyecto">🕸</button>
       <button id="btn-min" title="Contraer al último veredicto">–</button>
-      <button id="btn-close" class="close" title="Ocultar panel — CodeGuard sigue en la bandeja">✕</button>
+      <button id="btn-close" class="close" title="Ocultar panel — CodeGuard sigue vigilando desde el orbe">✕</button>
     </div>
     <div class="brand">CodeGuard</div>
     <div class="verdict" id="verdict">esperando el primer análisis…</div>
@@ -332,12 +334,22 @@
     // Cambiar de pestaña cambia de contexto; ninguno afecta a los demás.
     const tabs = $("repos");
     if (p.otros_repos && p.otros_repos.length > 1) {
+      // Explícito: cada marca dice qué significa al pasar el mouse, y hay
+      // una leyenda debajo. Un "○" no debe leerse como "no está instalado".
+      const AYUDA = {
+        "⛔": "bloqueado: el último commit tiene problemas por resolver",
+        "✓": "limpio: el último commit pasó todas las compuertas",
+        "○": "enrolado, sin analizar todavía — haz un commit aquí y aparecerá su estado",
+      };
       tabs.innerHTML = p.otros_repos.map(s => {
         const [marca, nombre, root, activo] = s.split("|");
         const cls = marca === "⛔" ? "blk" : (marca === "✓" ? "ok" : "none");
         return `<span class="tab ${cls} ${activo === "1" ? "activo" : ""}"
-                  data-root="${esc(root)}" title="${esc(root)}">${marca} ${esc(nombre)}</span>`;
-      }).join("");
+                  data-root="${esc(root)}"
+                  title="${esc(nombre)} — ${esc(AYUDA[marca] || "")}&#10;${esc(root)}&#10;(clic para ver este proyecto)"
+                  >${marca} ${esc(nombre)}</span>`;
+      }).join("") +
+      `<span class="leyenda">✓ limpio · ⛔ bloqueado · ○ sin analizar aún — clic para cambiar de proyecto</span>`;
       tabs.hidden = false;
     } else {
       tabs.hidden = true;
@@ -368,7 +380,20 @@
     if (p.degraded && p.degraded.length) {
       html += `<div class="degraded">No se revisó: ${p.degraded.map(esc).join(", ")}</div>`;
     }
-    if (!html) html = `<div class="empty">Nada que señalar.</div>`;
+    // Estados vacíos EXPLÍCITOS: nunca dejar al dev adivinando qué pasó.
+    if (!html) {
+      if (p.verdict === "—") {
+        html = `<div class="empty"><b>Este proyecto está enrolado pero aún no se ha analizado.</b><br><br>
+          CodeGuard ya vigila sus commits: haz uno y aquí verás el resultado.<br>
+          Mientras tanto puedes abrir su explorador de código con 🕸.</div>`;
+      } else if (p.verdict === "skipped") {
+        html = `<div class="empty"><b>Análisis omitido.</b><br><br>
+          Fue un merge, un revert, o todos los archivos del cambio están excluidos en la config.</div>`;
+      } else {
+        html = `<div class="empty"><b>Sin observaciones.</b><br><br>
+          El cambio pasó las compuertas de secretos, formato, tipos, reglas y migraciones.</div>`;
+      }
+    }
     $("main").innerHTML = html;
 
     document.querySelectorAll(".fb button").forEach(btn => {
@@ -440,6 +465,8 @@
     if (!t || !t.dataset.root) return;
     emit("switch-repo", [t.dataset.root]);
   });
+
+  $("btn-help").addEventListener("click", () => emit("open-guide", null));
 
   $("btn-graph").addEventListener("click", () => {
     emit("open-graph", null);

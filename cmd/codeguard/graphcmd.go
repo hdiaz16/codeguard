@@ -36,8 +36,8 @@ func graphCmd() *cobra.Command {
 
 			// ── modo profundo: función→función, función→consulta, WebGL ──
 			if deep {
-				if !fileExistsIn(repoRoot, "go.mod") {
-					return fmt.Errorf("el modo --deep hoy soporta Go (busqué go.mod); TS/Python vienen después")
+				if !fileExistsIn(repoRoot, "go.mod") && !fileExistsIn(repoRoot, "package.json") {
+					return fmt.Errorf("el modo --deep soporta Go y TypeScript/JS (busqué go.mod o package.json)")
 				}
 				// Primero se le pide al agente que lo abra en SU ventana:
 				// el explorador vive en el escritorio, no en un navegador.
@@ -49,7 +49,7 @@ func graphCmd() *cobra.Command {
 				}
 				// Sin daemon: se deja la carpeta autocontenida y se avisa.
 				fmt.Println("el agente no está corriendo — genero la versión de archivo")
-				cg, err := codegraph.BuildGo(repoRoot)
+				cg, err := codegraph.Build(repoRoot)
 				if err != nil {
 					return err
 				}

@@ -299,6 +299,9 @@ func main() {
 	menu.Add("Explorador de código 3D").OnClick(func(*application.Context) {
 		app.Event.Emit("open-graph", nil)
 	})
+	menu.Add("Guía de uso").OnClick(func(*application.Context) {
+		app.Event.Emit("open-guide", nil)
+	})
 	menu.AddSeparator()
 	menu.Add("Demo de estados (12 s)").OnClick(func(*application.Context) {
 		go func() {
@@ -462,7 +465,7 @@ func main() {
 		}
 		repoRoot := filepath.FromSlash(root)
 		go func() {
-			cg, err := codegraph.BuildGo(repoRoot)
+			cg, err := codegraph.Build(repoRoot)
 			if err != nil || cg == nil || len(cg.Nodes) == 0 {
 				log.Printf("grafo no disponible para %s: %v", repoRoot, err)
 				return
@@ -500,10 +503,38 @@ func main() {
 
 	app.Event.On("open-graph", func(*application.CustomEvent) {
 		if lastPayload == nil {
-			log.Println("grafo: aún no hay análisis que proyectar")
+			log.Println("grafo: aún no hay proyecto activo")
 			return
 		}
 		openGraph(lastPayload.RepoRoot)
+	})
+
+	// Guía de uso paso a paso, en su propia ventana.
+	var guia *application.WebviewWindow
+	app.Event.On("open-guide", func(*application.CustomEvent) {
+		application.InvokeAsync(func() {
+			if guia != nil {
+				guia.Close()
+			}
+			w, h := 1020, 760
+			if screen := app.Screen.GetPrimary(); screen != nil {
+				if screen.WorkArea.Width < w+80 {
+					w = screen.WorkArea.Width - 80
+				}
+				if screen.WorkArea.Height < h+80 {
+					h = screen.WorkArea.Height - 80
+				}
+			}
+			guia = app.Window.NewWithOptions(application.WebviewWindowOptions{
+				Title:            "CodeGuard — guía de uso",
+				Width:            w,
+				Height:           h,
+				URL:              "/guia.html",
+				BackgroundColour: application.RGBA{Red: 18, Green: 20, Blue: 23, Alpha: 255},
+			})
+			guia.Center()
+			guia.Show()
+		})
 	})
 	// El explorador pide cambiar al grafo de otro proyecto.
 	app.Event.On("graph-switch", func(e *application.CustomEvent) {
