@@ -59,9 +59,14 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	// Sin comprobar el cierre, un PNG truncado se anunciaba como escrito.
 	if err := png.Encode(f, tira); err != nil {
+		f.Close()
 		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := f.Close(); err != nil {
+		fmt.Fprintln(os.Stderr, "el archivo quedó incompleto:", err)
 		os.Exit(1)
 	}
 	fmt.Println(rutaPrev, "—", len(estados), "estados a 128 px y 32 px")
