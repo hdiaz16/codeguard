@@ -7,6 +7,7 @@
 ## El mapa
 
 - [[Arquitectura]] — las piezas y cómo se hablan
+- [[Grafo de paquetes]] — el grafo REAL del código, extraído del compilador
 - [[Flujo del commit]] — qué pasa desde `git commit` hasta el verde
 - [[Pilares y reglas]] — seguridad · calidad · datos
 - [[El orbe]] — los estados y su significado
