@@ -17,15 +17,15 @@ jobs:
       # código, que correría con los secretos de este workflow. Es la regla
       # gha-action-sin-sha del propio rulepack, y bloqueó este commit hasta
       # cumplirla.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.26"
 
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
 
@@ -87,7 +87,7 @@ jobs:
       # Subir el SARIF exige code scanning habilitado; en un repo privado eso
       # requiere GitHub Advanced Security. Sin él, este paso falla y tiñe de
       # rojo un análisis que sí corrió: por eso no puede tumbar el job.
-      - uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
+      - uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
         if: always() && steps.sarif.outputs.existe == 'true'
         continue-on-error: true
         with:
