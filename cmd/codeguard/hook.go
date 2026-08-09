@@ -255,4 +255,3 @@ func persistBypass(repoRoot string, cfg *config.Config) error {
 	res := &pipeline.Result{Verdict: pipeline.Skipped, Degraded: []string{}, Findings: []finding.Finding{}}
 	return persistWith(repoRoot, cfg, res, 0, true)
 }
-

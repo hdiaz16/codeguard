@@ -1,12 +1,12 @@
 version: 1
 rulepack: "2026.08.1"
 
-languages: [go, typescript, python]
+languages: [go, javascript, python]
 
 paths:
-  exclude: ["**/node_modules/**", "spikes/**", "**/testrepo/**", "**/tsproject/**"]
+  exclude: ["**/*.db", "**/*.exe", "**/*.log", "bin/**"]
   migrations: ["migrations/*.sql"]
-  sensitive: []
+  sensitive: []          # marca aquí rutas de auth/pagos/PII: suben el riesgo
   generated: []
 
 gates:
@@ -37,12 +37,12 @@ ui:
   auto_open_panel: on_block
 
 llm:
-  # Modelo default del equipo — el dev no configura nada; cambiarlo aquí
-  # actualiza a todos con git pull. La key va SOLO en la variable de entorno.
+  # Plantilla de la ORGANIZACIÓN: codeguard init copia este bloque a cada
+  # repo nuevo. Cambiar el modelo aquí + reinstalar = todo el equipo actualizado.
   endpoint: "https://TU-RECURSO.services.ai.azure.com/openai/v1"
   api_key_env: "FOUNDRY_API_KEY"
   model: "FW-Kimi-K3"
-  model_fast: "gpt-5.6-sol"   # tareas mecanicas: explicar, generar reglas
+  model_fast: "gpt-5.6-sol"
   timeout_ms: 20000
   max_diff_tokens: 12000
   monthly_budget_usd: 0

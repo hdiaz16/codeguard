@@ -26,6 +26,7 @@ import (
 	"codeguard/internal/finding"
 	"codeguard/internal/ipc"
 	"codeguard/internal/pipeline"
+	"codeguard/internal/registry"
 	"codeguard/internal/shadow"
 	"codeguard/internal/store"
 )
@@ -55,8 +56,8 @@ type panelPayload struct {
 	Branch      string `json:"branch"`
 	AIGenerated bool   `json:"ai_generated"`
 	Suppressed  int    `json:"suppressed"`
-	// Otros proyectos con contexto vivo: "✓ repo|ruta" — para cambiar de
-	// contexto desde el panel. Informativo: no altera el estado de nadie.
+	// TODOS los proyectos enrolados con su estado: "marca|nombre|ruta|activo".
+	// Cambiar de contexto desde el panel no altera el estado de nadie.
 	OtrosRepos []string       `json:"otros_repos,omitempty"`
 	Verdict    string         `json:"verdict"`
 	Blocking   int            `json:"blocking"`
@@ -320,22 +321,38 @@ func main() {
 	repoState := map[string]*panelPayload{} // contexto de cada proyecto
 	var stateMu sync.Mutex
 
-	// otherRepos: resumen de los demás proyectos, informativo (no bloquea nada).
-	otherRepos := func(activeRoot string) []string {
+	// Proyectos enrolados en la máquina (desde `codeguard init`), aunque aún
+	// no hayan commiteado: aparecen en la lista desde el primer día.
+	for _, r := range registry.Load() {
+		repoState[filepath.ToSlash(r.Root)] = &panelPayload{
+			Repo: r.Nombre, RepoRoot: filepath.ToSlash(r.Root), Verdict: "—", At: "sin análisis",
+		}
+	}
+
+	// listaProyectos: TODOS los proyectos con su estado (incluido el activo),
+	// para que de un vistazo se vea cuál está en verde y cuál bloqueado.
+	listaProyectos := func(activeRoot string) []string {
 		stateMu.Lock()
 		defer stateMu.Unlock()
 		var out []string
 		for root, p := range repoState {
-			if root == activeRoot {
-				continue
-			}
-			mark := "✓"
-			if p.Verdict == "block" {
+			mark := "○" // sin análisis todavía
+			switch p.Verdict {
+			case "block":
 				mark = "⛔"
+			case "pass", "skipped":
+				mark = "✓"
 			}
-			out = append(out, fmt.Sprintf("%s %s|%s", mark, p.Repo, root))
+			activo := "0"
+			if root == activeRoot {
+				activo = "1"
+			}
+			// formato: marca|nombre|ruta|activo
+			out = append(out, fmt.Sprintf("%s|%s|%s|%s", mark, p.Repo, root, activo))
 		}
-		sort.Strings(out)
+		sort.Slice(out, func(i, j int) bool {
+			return strings.SplitN(out[i], "|", 3)[1] < strings.SplitN(out[j], "|", 3)[1]
+		})
 		return out
 	}
 
@@ -390,7 +407,7 @@ func main() {
 		if p == nil {
 			return
 		}
-		p.OtrosRepos = otherRepos(p.RepoRoot)
+		p.OtrosRepos = listaProyectos(p.RepoRoot)
 		lastPayload = p // el contexto activo pasa a ser el elegido
 		app.Event.Emit("analysis", p)
 		ts.set(orbStateFor(p), fmt.Sprintf("%s@%s: %d bloqueantes, %d avisos (%s)",
@@ -562,7 +579,7 @@ func main() {
 			stateMu.Lock()
 			repoState[payload.RepoRoot] = payload
 			stateMu.Unlock()
-			payload.OtrosRepos = otherRepos(payload.RepoRoot)
+			payload.OtrosRepos = listaProyectos(payload.RepoRoot)
 			lastPayload = payload
 
 			tooltip := fmt.Sprintf("%s@%s: %d bloqueantes, %d avisos (%s)",

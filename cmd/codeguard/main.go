@@ -33,7 +33,8 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(ciCmd(), versionCmd(), hookCmd(), installCmd(), repairCmd(), daemonCmd(), baselineCmd(), statsCmd(), rulesCmd(), initCmd(), graphCmd())
+	root.AddCommand(ciCmd(), versionCmd(), hookCmd(), installCmd(), repairCmd(), daemonCmd(),
+		baselineCmd(), statsCmd(), rulesCmd(), initCmd(), graphCmd(), reportCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "codeguard:", err)
 		os.Exit(2)

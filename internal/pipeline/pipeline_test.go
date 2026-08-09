@@ -12,8 +12,8 @@ import (
 
 type fakeEngine struct{ out []finding.Finding }
 
-func (fakeEngine) Name() string                { return "fake" }
-func (fakeEngine) Applies(engines.Input) bool  { return true }
+func (fakeEngine) Name() string               { return "fake" }
+func (fakeEngine) Applies(engines.Input) bool { return true }
 func (f fakeEngine) Run(context.Context, engines.Input) ([]finding.Finding, error) {
 	return f.out, nil
 }

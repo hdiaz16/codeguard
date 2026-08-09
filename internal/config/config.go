@@ -51,13 +51,13 @@ type LLM struct {
 	Endpoint  string `koanf:"endpoint"`    // compatible con la API de OpenAI
 	APIKeyEnv string `koanf:"api_key_env"` // nombre de la env var con la key
 	// Model es el default para los tres pilares; los overrides son opcionales.
-	Model            string  `koanf:"model"`
-	ModelQuality     string  `koanf:"model_quality"`
-	ModelSecurity    string  `koanf:"model_security"`
-	ModelData        string  `koanf:"model_data"`
+	Model         string `koanf:"model"`
+	ModelQuality  string `koanf:"model_quality"`
+	ModelSecurity string `koanf:"model_security"`
+	ModelData     string `koanf:"model_data"`
 	// ModelFast: modelo no-razonador para tareas mecánicas (explicar
 	// hallazgos, generar reglas). El razonamiento ahí es peso muerto.
-	ModelFast string `koanf:"model_fast"`
+	ModelFast        string  `koanf:"model_fast"`
 	TimeoutMs        int     `koanf:"timeout_ms"`
 	MaxDiffTokens    int     `koanf:"max_diff_tokens"`
 	MonthlyBudgetUSD float64 `koanf:"monthly_budget_usd"` // 0 = sin límite

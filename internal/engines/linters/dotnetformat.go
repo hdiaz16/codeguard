@@ -24,9 +24,9 @@ func (DotnetFormat) Applies(in engines.Input) bool {
 }
 
 type dnfReport []struct {
-	FilePath string `json:"FilePath"`
+	FilePath    string `json:"FilePath"`
 	FileChanges []struct {
-		LineNumber       int    `json:"LineNumber"`
+		LineNumber        int    `json:"LineNumber"`
 		FormatDescription string `json:"FormatDescription"`
 	} `json:"FileChanges"`
 }

@@ -13,6 +13,7 @@ import (
 
 	"codeguard/internal/config"
 	"codeguard/internal/gitdiff"
+	"codeguard/internal/registry"
 )
 
 // codeguard init: enrola un repo detectando lenguajes, migraciones y
@@ -165,6 +166,10 @@ max_diff_lines: 2000
 			if err := baselineCmd().RunE(cmd, nil); err != nil {
 				return err
 			}
+			// registrar el proyecto: aparece en el panel y el explorador desde
+			// el momento del init, sin esperar al primer commit.
+			registry.Add(repoRoot, filepath.Base(repoRoot), strings.Join(langs, ","))
+
 			fmt.Println("\nLISTO. Versiona .codeguard/ y .githooks/ para que el equipo quede enrolado con git pull.")
 			return nil
 		},

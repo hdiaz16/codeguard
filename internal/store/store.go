@@ -185,15 +185,15 @@ func b2i(b bool) int {
 }
 
 type LLMCall struct {
-	RunID             string
-	Pillar            string
-	Model             string
-	PromptTokens      int
-	CompletionTokens  int
-	LatencyMs         int64
-	Status            string // ok | timeout | error | skipped
-	FindingsReturned  int
-	FindingsRejected  int
+	RunID            string
+	Pillar           string
+	Model            string
+	PromptTokens     int
+	CompletionTokens int
+	LatencyMs        int64
+	Status           string // ok | timeout | error | skipped
+	FindingsReturned int
+	FindingsRejected int
 }
 
 // SaveLLMCall registra la telemetría de una llamada al modelo (fase 3 sombra).
