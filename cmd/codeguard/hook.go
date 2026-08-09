@@ -182,6 +182,16 @@ func runPreCommit() error {
 	}
 	if len(res.Degraded) > 0 {
 		progress("capas no revisadas: " + strings.Join(res.Degraded, ", "))
+		// Un rulepack ausente no es una capa más: significa que este commit NO
+		// se revisó con las reglas del CI y puede fallar allá aunque aquí pase.
+		for _, d := range res.Degraded {
+			if v, ok := strings.CutPrefix(d, "rulepack-ausente:"); ok {
+				fmt.Fprintf(os.Stderr,
+					"CodeGuard  ATENCIÓN: este repo apunta al rulepack %s y no está instalado.\n"+
+						"           Las reglas de la casa NO se aplicaron: el CI puede rechazar este commit.\n"+
+						"           Arréglalo con `codeguard repair` o vendorea el rulepack en el repo.\n", v)
+			}
+		}
 	}
 
 	if err := persistRun(repoRoot, cfg, res, len(diff.Files), false, runID); err != nil {

@@ -17,6 +17,7 @@ import (
 	"codeguard/internal/config"
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/gitleaks"
+	"codeguard/internal/engines/semgrep"
 	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
 )
@@ -139,13 +140,24 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 			// Un motor NO INSTALADO es un asunto de configuración, no una
 			// degradación del análisis: se informa distinto para que un trivy
 			// ausente no pinte de naranja cada commit del día.
-			if isMissingBinary(failures[i]) {
+			if errors.Is(failures[i], semgrep.ErrSinRulepack) {
+				// Sin rulepack no hay paridad con el CI, que es la promesa
+				// central: se nombra aparte para poder decirlo con claridad.
+				res.Degraded = append(res.Degraded, "rulepack-ausente:"+opt.Config.Rulepack)
+			} else if isMissingBinary(failures[i]) {
 				res.Degraded = append(res.Degraded, "falta:"+opt.Engines[i].Name())
 			} else {
 				res.Degraded = append(res.Degraded, opt.Engines[i].Name()+":error")
 			}
 		}
 	}
+
+	// ── Etapa 2b: reglas del playbook sobre el repo y el cambio ──────────
+	// No dependen de ningún motor externo ni de la red, así que corren
+	// siempre, incluso con el diff degradado a solo-secretos.
+	res.Findings = append(res.Findings, revisarLockfiles(opt.Config, files)...)
+	res.Findings = append(res.Findings, revisarTamano(opt.Diff, files)...)
+	res.Findings = append(res.Findings, revisarComplejidad(opt.Config, files)...)
 
 	// ── Auto-calibración: reglas con exceso de falsos positivos (según el
 	// feedback del equipo en ESTE repo) bajan a aviso. gitleaks jamás. ────

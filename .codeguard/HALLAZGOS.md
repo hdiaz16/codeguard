@@ -1,6 +1,6 @@
 # Hallazgos de CodeGuard
 
-> **Estado: 8 bloqueante(s) pendiente(s)** · generado el 2026-08-08 20:22 · rulepack `2026.08.1`
+> **Estado: 9 bloqueante(s) pendiente(s)** · generado el 2026-08-08 20:59 · rulepack `2026.08.2`
 
 ## Instrucciones para el agente de código
 
@@ -23,7 +23,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 ---
 
-## ⛔ Bloqueantes (8)
+## ⛔ Bloqueantes (9)
 
 ### 1. `require-concurrent-index-creation` — migrations/001_init.sql:43
 <!-- fp:61a17959f372de542b7691c36e9ab5b2806ce7309778858de09f0bcfcd13cd4c -->
@@ -103,7 +103,20 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `spikes/s1-semgrep/generate_testrepo.py` · **línea:** 1
 
-### 7. `ruff-format` — spikes/s5-tsc-incremental/generate_project.py:1
+### 7. `lockfile-ausente` — spikes/s3-foundry/go.mod:1
+<!-- fp:c21104a820e69d31e859cedc7e4a7beabdf4a35162c0e3ea58236ce8f23685db -->
+
+- [ ] **Pendiente** · pilar **seguridad** · motor `playbook` · severidad `error`
+
+**Qué detectó:** go.mod cambió y el proyecto no tiene lockfile
+
+**Por qué importa:** Sin lockfile cada instalación resuelve versiones por su cuenta: tu máquina, la de tu compañero y el CI pueden acabar con dependencias distintas, y una versión maliciosa recién publicada entra sola en el siguiente install.
+
+**Cómo resolverlo:** Ejecuta `go mod tidy` y versiona el lockfile que genere (go.sum).
+
+**Archivo:** `spikes/s3-foundry/go.mod` · **línea:** 1
+
+### 8. `ruff-format` — spikes/s5-tsc-incremental/generate_project.py:1
 <!-- fp:8c7f218e1413c26aaba732b09089df2cfd819b8fbfb7f9695c10018a5696ab6a -->
 
 - [ ] **Pendiente** · pilar **calidad** · motor `ruff` · severidad `error`
@@ -116,7 +129,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `spikes/s5-tsc-incremental/generate_project.py` · **línea:** 1
 
-### 8. `I001` — spikes/s5-tsc-incremental/generate_project.py:3
+### 9. `I001` — spikes/s5-tsc-incremental/generate_project.py:3
 <!-- fp:9802592b11420599450f45bb9115afb232f2fba99af80bf6aa295e746d3e245f -->
 
 - [ ] **Pendiente** · pilar **calidad** · motor `ruff` · severidad `error`

@@ -1,12 +1,13 @@
 package linters
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"codeguard/internal/engines/proc"
 )
 
 // runTool ejecuta una herramienta y devuelve stdout+stderr combinados.
@@ -18,15 +19,14 @@ func runTool(ctx context.Context, dir, bin string, args ...string) (string, erro
 	// Herramientas Python en Windows: sin esto leen/escriben en cp1252
 	// y rompen los acentos (mismo fix que en el adaptador de semgrep).
 	cmd.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	err := cmd.Run()
+	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
 	var exitErr *exec.ExitError
-	if err != nil && !errors.As(err, &exitErr) {
+	if err != nil && !errors.As(err, &exitErr) && !salida.Recortada {
 		return "", err // no arrancó (binario ausente, permisos...)
 	}
-	return buf.String(), nil
+	// Los linters se leen línea por línea: un texto recortado sigue siendo
+	// útil, a diferencia de un JSON a medias.
+	return string(salida.Combinada()), nil
 }
 
 func relTo(root, p string) string {

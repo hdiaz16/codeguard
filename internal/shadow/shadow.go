@@ -153,6 +153,27 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 		r.Store.UpdateRunLLM(req.RunID, risk, false)
 		return
 	}
+
+	// ── Tope de presupuesto mensual ──
+	// Apagar la capa LLM no afecta al veredicto (P2: el modelo nunca bloquea),
+	// así que quedarse sin presupuesto degrada el análisis, no lo detiene.
+	if cfg.LLM.MonthlyBudgetUSD > 0 {
+		gastado, err := r.Store.GastoDelMesUSD()
+		switch {
+		case err != nil:
+			log.Printf("sombra: no se pudo leer el gasto del mes (%v) — se continúa", err)
+		case gastado >= cfg.LLM.MonthlyBudgetUSD:
+			log.Printf("sombra: presupuesto del mes agotado (%.2f de %.2f USD) — capa LLM apagada hasta el día 1",
+				gastado, cfg.LLM.MonthlyBudgetUSD)
+			r.Store.SaveLLMCall(store.LLMCall{RunID: req.RunID, Pillar: "todos", Status: "skipped"})
+			r.Store.UpdateRunLLM(req.RunID, risk, false)
+			return
+		}
+		if _, hayTarifas := cfg.LLM.CostoMicros(1, 1); !hayTarifas {
+			log.Println("sombra: monthly_budget_usd configurado pero sin price_in_per_mtok/price_out_per_mtok: " +
+				"el gasto no se puede calcular y el tope no se aplicará")
+		}
+	}
 	diffSHA := sha256hex(req.DiffUnified)
 	if _, hit := r.Store.DiffCacheGet(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model); hit {
 		log.Println("sombra: diff en caché — sin llamadas")
@@ -208,6 +229,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 			call.PromptTokens = res.Usage.PromptTokens
 			call.CompletionTokens = res.Usage.CompletionTokens
 			call.LatencyMs = res.LatencyMs
+			call.CostMicros, _ = cfg.LLM.CostoMicros(res.Usage.PromptTokens, res.Usage.CompletionTokens)
 
 			// ── Etapa 6: verificación determinista de cada hallazgo ──
 			ok, rejected := verify(req, pillar, res.Content, deterministic)

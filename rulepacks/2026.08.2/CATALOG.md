@@ -45,6 +45,27 @@ Los hallazgos del LLM (sombra) jamás bloquean — principio P2.
 | sql-select-star | SELECT * | ⚠️ |
 | sql-like-comodin-inicial | LIKE '%…' | ⚠️ |
 
+## 📕 PLAYBOOK (2026.08.2)
+
+Reglas del playbook de seguridad de la casa. Las cuatro últimas no son de
+Semgrep: miran el repositorio y el cambio, no el contenido de un archivo, así
+que viven en `internal/pipeline`.
+
+| Regla | Detecta | Gate |
+|---|---|---|
+| gha-action-sin-sha | Acción de GitHub anclada por etiqueta movible | ⛔ |
+| orm-raw-interpolado (py/ts/c#) | raw() del ORM con interpolación — reabre la inyección | ⛔ |
+| cookie-sin-httponly (ts/c#/py) | Cookie de sesión legible desde JavaScript | ⛔ |
+| cookie-sin-secure | Cookie que viaja también por HTTP plano | ⚠️ |
+| lockfile-ausente | Manifiesto cambiado sin lockfile en el repo | ⛔ |
+| lockfile-desincronizado | Manifiesto cambiado, lockfile sin tocar | ⚠️ |
+| complejidad-excesiva | Función por encima de `max_complexity` (15) | ⚠️ |
+| cambio-demasiado-grande | Más de 400 líneas: la revisión deja de encontrar defectos | ⚠️ |
+
+Por qué esas cuatro sólo avisan: partir un cambio, simplificar una función o
+aceptar un lockfile desfasado son decisiones del autor. Bloquear ahí sería que
+el agente secuestre el trabajo (P4).
+
 ## Notas de gobierno
 
 - Solo lo determinista bloquea. El LLM aconseja (P2, no negociable).

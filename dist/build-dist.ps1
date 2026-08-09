@@ -9,6 +9,9 @@ go build -trimpath -ldflags "-s -w" -o dist\codeguard.exe .\cmd\codeguard
 go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\codeguard-daemon.exe .\cmd\daemon
 
 Write-Host "==> copiando rulepack" -ForegroundColor Cyan
+# Borrar antes de copiar: Copy-Item -Force fusiona en vez de reemplazar, asi
+# que un rulepack retirado seguiria viajando en el instalador para siempre.
+if (Test-Path dist\rulepacks) { Remove-Item dist\rulepacks -Recurse -Force }
 Copy-Item rulepacks dist\ -Recurse -Force
 
 $size = (Get-ChildItem dist -Recurse -File | Measure-Object Length -Sum).Sum / 1MB

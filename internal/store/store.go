@@ -194,6 +194,22 @@ type LLMCall struct {
 	Status           string // ok | timeout | error | skipped
 	FindingsReturned int
 	FindingsRejected int
+	CostMicros       int64 // millonésimas de dólar; 0 si no hay tarifas configuradas
+}
+
+// GastoDelMesUSD suma lo gastado en llamadas al modelo desde el día 1 del mes
+// en curso. Es la base del tope de presupuesto: sin esto, monthly_budget_usd
+// era un campo de configuración que nadie leía.
+func (s *Store) GastoDelMesUSD() (float64, error) {
+	inicio := time.Now().UTC().Format("2006-01") + "-01T00:00:00Z"
+	var micros sql.NullInt64
+	err := s.db.QueryRow(
+		`SELECT SUM(cost_micros) FROM llm_calls WHERE created_at >= ?`, inicio,
+	).Scan(&micros)
+	if err != nil {
+		return 0, err
+	}
+	return float64(micros.Int64) / 1e6, nil
 }
 
 // SaveLLMCall registra la telemetría de una llamada al modelo (fase 3 sombra).
@@ -201,9 +217,9 @@ func (s *Store) SaveLLMCall(c LLMCall) error {
 	_, err := s.db.Exec(`INSERT INTO llm_calls
 		(id, run_id, pillar, model, prompt_tokens, completion_tokens, cost_micros,
 		 latency_ms, status, findings_returned, findings_rejected, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		NewULID(), c.RunID, c.Pillar, c.Model, c.PromptTokens, c.CompletionTokens,
-		c.LatencyMs, c.Status, c.FindingsReturned, c.FindingsRejected, nowISO())
+		c.CostMicros, c.LatencyMs, c.Status, c.FindingsReturned, c.FindingsRejected, nowISO())
 	return err
 }
 

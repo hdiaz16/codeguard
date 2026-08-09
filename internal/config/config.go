@@ -61,6 +61,22 @@ type LLM struct {
 	TimeoutMs        int     `koanf:"timeout_ms"`
 	MaxDiffTokens    int     `koanf:"max_diff_tokens"`
 	MonthlyBudgetUSD float64 `koanf:"monthly_budget_usd"` // 0 = sin límite
+	// Precios por millón de tokens, para convertir el consumo en dinero. Sin
+	// ellos MonthlyBudgetUSD no se puede evaluar y el tope queda inactivo:
+	// preferimos decirlo a inventar una tarifa.
+	PriceInPerMTok  float64 `koanf:"price_in_per_mtok"`
+	PriceOutPerMTok float64 `koanf:"price_out_per_mtok"`
+}
+
+// CostoMicros convierte un consumo de tokens a millonésimas de dólar.
+// Devuelve 0 y false cuando no hay tarifas configuradas.
+func (l LLM) CostoMicros(promptTokens, completionTokens int) (int64, bool) {
+	if l.PriceInPerMTok <= 0 && l.PriceOutPerMTok <= 0 {
+		return 0, false
+	}
+	usd := float64(promptTokens)/1e6*l.PriceInPerMTok +
+		float64(completionTokens)/1e6*l.PriceOutPerMTok
+	return int64(usd * 1e6), true
 }
 
 // ModelFor devuelve el modelo del pilar: override si existe, default si no.
@@ -100,6 +116,9 @@ type Config struct {
 	UI           UI       `koanf:"ui"`
 	LLM          LLM      `koanf:"llm"`
 	MaxDiffLines int      `koanf:"max_diff_lines"`
+	// MaxComplexity: complejidad ciclomática por función a partir de la cual
+	// se avisa (nunca bloquea). 0 = usar el valor por defecto.
+	MaxComplexity int `koanf:"max_complexity"`
 
 	// Hash sha256 del archivo normalizado a LF. Parte del contrato (ci_parity).
 	Hash string `koanf:"-"`

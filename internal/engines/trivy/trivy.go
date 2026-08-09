@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"codeguard/internal/engines"
+	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 )
 
@@ -78,9 +79,13 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = in.RepoRoot
-	out, runErr := cmd.Output()
+	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
+	out := salida.Stdout
 	if runErr != nil && len(out) == 0 {
 		return nil, fmt.Errorf("trivy no corrió: %v", runErr)
+	}
+	if salida.Recortada {
+		return nil, fmt.Errorf("trivy devolvió más de %d MB de salida", proc.MaxSalida>>20)
 	}
 	var report trivyReport
 	if err := json.Unmarshal(out, &report); err != nil {

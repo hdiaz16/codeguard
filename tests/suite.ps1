@@ -30,12 +30,21 @@ $CGR  = "C:\Users\Hector Diaz\codeguard"
 
 function LimpiarRepo($repo, $archivo) {
     Push-Location $repo
+    # Si la prueba esperaba un bloqueo y el commit paso igual, el commit queda
+    # en el historial y las corridas siguientes ya no cambian nada: git dice
+    # "nothing to commit" y la prueba pasa por el motivo equivocado. Deshacerlo
+    # es obligatorio, no cosmetico.
+    if ($script:HeadAntes -and (git rev-parse HEAD 2>$null) -ne $script:HeadAntes) {
+        Write-Host "    (deshaciendo commit que no debio pasar)" -ForegroundColor DarkYellow
+        git reset --hard -q $script:HeadAntes 2>$null
+    }
     git reset -q 2>$null
     if (Test-Path $archivo) { Remove-Item $archivo -Force }
     Pop-Location
 }
 function CommitProbar($repo, $archivo, $contenido, $mensaje) {
     Push-Location $repo
+    $script:HeadAntes = (git rev-parse HEAD 2>$null)
     [IO.File]::WriteAllText((Join-Path $repo $archivo), $contenido)
     git add $archivo 2>$null | Out-Null
     $sw = [Diagnostics.Stopwatch]::StartNew()

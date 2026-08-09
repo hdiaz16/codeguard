@@ -4,6 +4,7 @@ package semgrep
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,12 +12,19 @@ import (
 	"strings"
 
 	"codeguard/internal/engines"
+	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 )
 
 type Engine struct {
 	Binary string // vacío = buscar en PATH
 }
+
+// ErrSinRulepack: el repo apunta a una versión de rulepack que no está
+// instalada. Merece su propio error porque no es "semgrep falló": es la
+// promesa de paridad con el CI rota, y el desarrollador necesita saberlo
+// con esas palabras.
+var ErrSinRulepack = errors.New("no encuentro el rulepack al que apunta este repo")
 
 func (e *Engine) Name() string { return "semgrep" }
 
@@ -62,7 +70,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	}
 	rules := filepath.Join(in.RulepackDir, "semgrep")
 	if _, err := os.Stat(rules); err != nil {
-		return nil, fmt.Errorf("rulepack sin reglas semgrep en %s: %w", rules, err)
+		return nil, fmt.Errorf("%w: %s", ErrSinRulepack, rules)
 	}
 
 	// Solo archivos tocados (sección 5, etapa 2): targets explícitos.
@@ -84,10 +92,15 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	// Sin esto, el CLI de Python lee las reglas YAML con la codificación
 	// regional de Windows (cp1252) y los mensajes con acentos salen rotos.
 	cmd.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
-	out, runErr := cmd.Output()
+	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
+	out := salida.Stdout
 	// Semgrep sale con 1 cuando hay hallazgos bloqueantes; el JSON sigue siendo válido.
 	if runErr != nil && len(out) == 0 {
 		return nil, fmt.Errorf("semgrep no corrió: %v", runErr)
+	}
+	// Un JSON recortado no se puede parsear; decirlo es mejor que un error de sintaxis.
+	if salida.Recortada {
+		return nil, fmt.Errorf("semgrep devolvió más de %d MB de salida; revisa el alcance de las reglas", proc.MaxSalida>>20)
 	}
 
 	var res sgResult

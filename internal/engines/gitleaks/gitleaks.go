@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"codeguard/internal/engines"
+	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 )
 
@@ -70,7 +71,8 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = in.RepoRoot
-	out, runErr := cmd.CombinedOutput()
+	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
+	out := salida.Combinada()
 
 	var exitErr *exec.ExitError
 	switch {

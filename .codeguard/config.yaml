@@ -1,5 +1,5 @@
 version: 1
-rulepack: "2026.08.1"
+rulepack: "2026.08.2"
 
 languages: [go, javascript, python]
 

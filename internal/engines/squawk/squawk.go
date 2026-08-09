@@ -12,6 +12,7 @@ import (
 	"github.com/gobwas/glob"
 
 	"codeguard/internal/engines"
+	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 )
 
@@ -83,10 +84,14 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	args := append([]string{"--reporter", "json"}, files...)
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = in.RepoRoot
-	out, runErr := cmd.Output()
+	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
+	out := salida.Stdout
 	// squawk sale con código != 0 cuando hay violaciones; el JSON sigue siendo válido.
 	if runErr != nil && len(out) == 0 {
 		return nil, fmt.Errorf("squawk no corrió: %v", runErr)
+	}
+	if salida.Recortada {
+		return nil, fmt.Errorf("squawk devolvió más de %d MB de salida", proc.MaxSalida>>20)
 	}
 	var violations []violation
 	if err := json.Unmarshal(out, &violations); err != nil {

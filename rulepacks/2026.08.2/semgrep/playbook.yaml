@@ -1,0 +1,141 @@
+# Reglas derivadas del playbook de seguridad de la casa.
+# Las tres de este archivo son detectables con patrones; las otras cuatro del
+# playbook (lockfile, complejidad, presupuesto del LLM, tamaño del cambio) son
+# propiedades del repo o del diff, no del código, y viven en internal/pipeline.
+rules:
+  # ── 1. Acciones de GitHub ancladas por SHA ─────────────────────────────────
+  - id: gha-action-sin-sha
+    languages: [yaml]
+    severity: ERROR
+    message: "Acción de GitHub anclada por etiqueta, no por SHA"
+    metadata:
+      pillar: security
+      why: >-
+        Una etiqueta como @v4 es un puntero movible: quien controle el repo de
+        la acción puede reapuntarla a otro código y ese código corre con los
+        secretos de tu workflow. Es la vía del compromiso de tj-actions/changed-files
+        en 2025, que expuso secretos de miles de repositorios.
+      fix_hint: >-
+        Ancla al SHA completo de 40 caracteres y deja la versión en un comentario:
+        uses: actions/checkout@8f4b7f8... # v4.2.2
+    paths:
+      include:
+        - ".github/workflows/*.yml"
+        - ".github/workflows/*.yaml"
+    patterns:
+      - pattern-regex: '(?m)^\s*-?\s*uses:\s*[\w.-]+/[\w.-]+@(?!([0-9a-f]{40}))\S+'
+      # Las acciones del propio GitHub bajo docker:// o rutas locales no aplican.
+      - pattern-not-regex: '(?m)^\s*-?\s*uses:\s*\.'
+      - pattern-not-regex: '(?m)^\s*-?\s*uses:\s*docker://'
+
+  # ── 2. Escapes del ORM ─────────────────────────────────────────────────────
+  # El ORM parametriza por defecto; estas puertas traseras vuelven a poner al
+  # desarrollador a construir SQL a mano, que es donde nace la inyección.
+  - id: orm-raw-interpolado
+    languages: [python]
+    severity: ERROR
+    message: "SQL crudo del ORM con interpolación de cadena"
+    metadata:
+      pillar: security
+      why: >-
+        raw() y extra() del ORM no parametrizan lo que les llega ya interpolado.
+        Un f-string o un % dentro convierte la consulta en concatenación y
+        reabre la inyección que el ORM existía para cerrar.
+      fix_hint: "Pasa los valores como parámetros: raw('... WHERE id = %s', [id])."
+    pattern-either:
+      - pattern: $M.raw(f"...", ...)
+      - pattern: $M.raw("..." % ...)
+      - pattern: $M.raw("..." + ...)
+      - pattern: $M.extra(where=[f"..."])
+      - pattern: $M.extra(where=["..." % ...])
+
+  - id: orm-raw-interpolado-ts
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Consulta cruda del ORM armada con plantilla interpolada"
+    metadata:
+      pillar: security
+      why: >-
+        $queryRawUnsafe y $executeRawUnsafe de Prisma reciben la cadena ya
+        construida: el nombre lleva "Unsafe" precisamente porque no parametrizan.
+        Con una plantilla interpolada el valor del usuario entra directo al SQL.
+      fix_hint: >-
+        Usa $queryRaw con plantilla etiquetada (Prisma parametriza) o pasa los
+        valores como argumentos a $queryRawUnsafe.
+    pattern-either:
+      - pattern: $P.$queryRawUnsafe(`...${...}...`, ...)
+      - pattern: $P.$executeRawUnsafe(`...${...}...`, ...)
+      - pattern: $P.$queryRawUnsafe("..." + ..., ...)
+      - pattern: $P.$executeRawUnsafe("..." + ..., ...)
+
+  - id: orm-raw-interpolado-csharp
+    languages: [csharp]
+    severity: ERROR
+    message: "FromSqlRaw con cadena interpolada"
+    metadata:
+      pillar: security
+      why: >-
+        FromSqlRaw y ExecuteSqlRaw reciben la cadena ya armada. Con $"..." el
+        valor se pega al SQL antes de llegar a EF Core y no hay parametrización.
+      fix_hint: >-
+        Usa FromSqlInterpolated / ExecuteSqlInterpolated: reciben la misma
+        sintaxis $"..." pero convierten cada hueco en un parámetro.
+    pattern-either:
+      - pattern: $C.FromSqlRaw($"...", ...)
+      - pattern: $C.ExecuteSqlRaw($"...", ...)
+      - pattern: $C.FromSqlRaw($A + $B, ...)
+
+  # ── 3. Banderas de cookies ─────────────────────────────────────────────────
+  - id: cookie-sin-httponly
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Cookie de sesión sin httpOnly"
+    metadata:
+      pillar: security
+      why: >-
+        Sin httpOnly la cookie es legible desde JavaScript, así que cualquier
+        XSS —propio o de una dependencia— se lleva la sesión. Es la diferencia
+        entre un XSS molesto y una toma de cuenta.
+      fix_hint: "res.cookie(nombre, valor, { httpOnly: true, secure: true, sameSite: 'lax' })"
+    pattern-either:
+      - pattern: $R.cookie($N, $V)
+      - pattern: '$R.cookie($N, $V, { ..., httpOnly: false, ... })'
+
+  - id: cookie-sin-secure
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: "Cookie sin la bandera secure"
+    metadata:
+      pillar: security
+      why: >-
+        Sin secure el navegador manda la cookie también por HTTP plano, donde
+        cualquiera en la red la lee. Aviso y no bloqueo porque en desarrollo
+        local sobre HTTP es legítimo.
+      fix_hint: "Añade secure: true y deja el HTTP plano sólo para el entorno local."
+    patterns:
+      - pattern: $R.cookie($N, $V, {...})
+      - pattern-not: '$R.cookie($N, $V, { ..., secure: true, ... })'
+
+  - id: cookie-sin-httponly-csharp
+    languages: [csharp]
+    severity: ERROR
+    message: "CookieOptions sin HttpOnly"
+    metadata:
+      pillar: security
+      why: "Sin HttpOnly la cookie queda expuesta a cualquier XSS de la página."
+      fix_hint: "new CookieOptions { HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax }"
+    patterns:
+      - pattern: new CookieOptions { ... }
+      - pattern-not: new CookieOptions { ..., HttpOnly = true, ... }
+
+  - id: cookie-sin-httponly-python
+    languages: [python]
+    severity: ERROR
+    message: "set_cookie sin httponly"
+    metadata:
+      pillar: security
+      why: "Sin httponly la cookie es legible desde JavaScript y un XSS se lleva la sesión."
+      fix_hint: "resp.set_cookie(nombre, valor, httponly=True, secure=True, samesite='Lax')"
+    patterns:
+      - pattern: $R.set_cookie(...)
+      - pattern-not: $R.set_cookie(..., httponly=True, ...)

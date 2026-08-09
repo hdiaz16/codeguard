@@ -173,7 +173,11 @@ func main() {
 	handler.Handle("/", assetsFS)
 
 	app := application.New(application.Options{
-		Name: "CodeGuard",
+		Name:        "CodeGuard",
+		Description: "Agente de análisis pre-commit con paridad hacia CI",
+		// La identidad del agente es el mismo orbe que el desarrollador ve en
+		// la esquina de su pantalla, no un ícono genérico.
+		Icon: iconoOficial(),
 		Assets: application.AssetOptions{
 			// BundledAssetFileServer sirve también /wails/runtime.js,
 			// que el panel importa para los eventos.

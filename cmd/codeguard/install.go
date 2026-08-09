@@ -5,10 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"codeguard/internal/config"
+	"codeguard/internal/daemon"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/registry"
 )
@@ -84,6 +87,48 @@ func installCmd() *cobra.Command {
 	}
 }
 
+// repararRulepack mueve el pin del repo a una versión instalada cuando la que
+// tiene desapareció. Sin esto, retirar una versión dejaba repos analizando con
+// cero reglas de la casa, y el único aviso era una línea de "capas no
+// revisadas" que nadie lee.
+func repararRulepack() error {
+	raiz, err := gitdiff.RepoRoot(".")
+	if err != nil {
+		return nil // fuera de un repo no hay nada que reparar
+	}
+	cfg, err := config.Load(raiz)
+	if err != nil || cfg == nil {
+		return nil // repo no enrolado: es asunto de `codeguard init`
+	}
+	if _, err := os.Stat(daemon.RulepackDir(raiz, cfg.Rulepack)); err == nil {
+		fmt.Printf("  ok    rulepack %s\n", cfg.Rulepack)
+		return nil
+	}
+
+	disponibles := daemon.RulepacksInstalados(raiz)
+	if len(disponibles) == 0 {
+		return fmt.Errorf("FALTA rulepack %s y no hay ninguno instalado → reinstala CodeGuard", cfg.Rulepack)
+	}
+	nueva := disponibles[0]
+
+	ruta := filepath.Join(raiz, ".codeguard", "config.yaml")
+	raw, err := os.ReadFile(ruta)
+	if err != nil {
+		return fmt.Errorf("FALTA rulepack %s y no pude leer %s: %v", cfg.Rulepack, ruta, err)
+	}
+	re := regexp.MustCompile(`(?m)^rulepack:.*$`)
+	if !re.Match(raw) {
+		return fmt.Errorf("FALTA rulepack %s; añade a mano `rulepack: \"%s\"` en %s", cfg.Rulepack, nueva, ruta)
+	}
+	actualizado := re.ReplaceAll(raw, []byte(fmt.Sprintf(`rulepack: "%s"`, nueva)))
+	if err := os.WriteFile(ruta, actualizado, 0o644); err != nil {
+		return fmt.Errorf("no pude escribir %s: %v", ruta, err)
+	}
+	fmt.Printf("  ok    rulepack %s → %s (el %s ya no está instalado)\n", cfg.Rulepack, nueva, cfg.Rulepack)
+	fmt.Println("        revisa la baseline: las reglas nuevas pueden marcar código preexistente")
+	return nil
+}
+
 func repairCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "repair",
@@ -102,6 +147,10 @@ func repairCmd() *cobra.Command {
 				} else {
 					fmt.Printf("  ok    %s\n", tool.bin)
 				}
+			}
+			if err := repararRulepack(); err != nil {
+				ok = false
+				fmt.Println("  " + err.Error())
 			}
 			if !ok {
 				fmt.Println("\nsin gitleaks la compuerta de secretos es fail-closed y bloquea los commits")

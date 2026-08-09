@@ -74,9 +74,20 @@ func initCmd() *cobra.Command {
 					langs = append(langs, l)
 				}
 			}
+			// Pero si NINGUNO llega a dos, el repo es nuevo o pequeño, no
+			// ambiguo: enrolarlo con lo que haya es mejor que negarse. Antes
+			// esto dejaba fuera a cualquier proyecto recién empezado, con un
+			// mensaje que además culpaba al lenguaje y no al conteo.
+			if len(langs) == 0 {
+				for l := range langCount {
+					langs = append(langs, l)
+				}
+			}
 			sort.Strings(langs)
 			if len(langs) == 0 {
-				return fmt.Errorf("no detecté lenguajes soportados en los archivos rastreados")
+				return fmt.Errorf("no encontré ningún archivo de un lenguaje soportado " +
+					"(go, python, typescript/javascript, c#, java, sql) entre los archivos rastreados por git.\n" +
+					"Si el repo aún no tiene código, haz un primer commit y vuelve a ejecutar `codeguard init`")
 			}
 			var migrations []string
 			for d := range migrationDirs {
@@ -103,7 +114,7 @@ func initCmd() *cobra.Command {
 			}
 
 			yaml := fmt.Sprintf(`version: 1
-rulepack: "2026.08.1"
+rulepack: "2026.08.2"
 
 languages: [%s]
 
@@ -112,6 +123,10 @@ paths:
   migrations: [%s]
   sensitive: []          # marca aquí rutas de auth/pagos/PII: suben el riesgo
   generated: []
+
+# Complejidad ciclomática por función a partir de la cual se avisa.
+# Nunca bloquea: partir una función es decisión de quien la escribe.
+max_complexity: 15
 
 gates:
   secrets: block
@@ -185,7 +200,11 @@ const defaultLLMBlock = `llm:
   model_fast: "gpt-5.6-sol"
   timeout_ms: 20000
   max_diff_tokens: 12000
-  monthly_budget_usd: 0`
+  # 0 = sin límite. Con un tope, hacen falta las tarifas de abajo para poder
+  # convertir tokens en dinero; sin ellas el tope no se puede aplicar.
+  monthly_budget_usd: 0
+  price_in_per_mtok: 0
+  price_out_per_mtok: 0`
 
 func quoteList(items []string) string {
 	quoted := make([]string, len(items))

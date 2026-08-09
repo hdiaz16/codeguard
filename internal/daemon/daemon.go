@@ -10,6 +10,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"codeguard/internal/baseline"
@@ -80,6 +83,51 @@ func RulepackDir(repoRoot, version string) string {
 		}
 	}
 	return local
+}
+
+// RulepacksInstalados lista las versiones disponibles junto al binario y
+// vendoreadas en el repo, ordenadas de más nueva a más vieja. Los nombres son
+// fechas (2026.08.2), así que el orden lexicográfico inverso basta salvo por
+// el número final: se compara por partes para que .10 no quede antes que .9.
+func RulepacksInstalados(repoRoot string) []string {
+	vistos := map[string]bool{}
+	var out []string
+	dirs := []string{filepath.Join(repoRoot, "rulepacks")}
+	if exe, err := os.Executable(); err == nil {
+		dirs = append(dirs, filepath.Join(filepath.Dir(exe), "rulepacks"))
+	}
+	for _, d := range dirs {
+		entradas, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+		for _, e := range entradas {
+			if e.IsDir() && !vistos[e.Name()] {
+				vistos[e.Name()] = true
+				out = append(out, e.Name())
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return masNuevo(out[i], out[j]) })
+	return out
+}
+
+func masNuevo(a, b string) bool {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		na, ea := strconv.Atoi(pa[i])
+		nb, eb := strconv.Atoi(pb[i])
+		if ea == nil && eb == nil {
+			if na != nb {
+				return na > nb
+			}
+			continue
+		}
+		if pa[i] != pb[i] {
+			return pa[i] > pb[i]
+		}
+	}
+	return len(pa) > len(pb)
 }
 
 func (s *Server) Serve(ctx context.Context) error {
