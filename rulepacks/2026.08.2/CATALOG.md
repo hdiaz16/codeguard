@@ -11,7 +11,8 @@ Los hallazgos del LLM (sombra) jamás bloquean — principio P2.
 | python-eval / ts-eval | eval() — inyección de código | ⛔ |
 | python-subprocess-shell | shell=True — inyección de comandos | ⛔ |
 | python-yaml-unsafe-load | yaml.load sin Loader seguro | ⛔ |
-| go-sql-concat | SQL por concatenación | ⛔ |
+| go-sql-concat | SQL por concatenación en una línea | ⛔ |
+| go-sql-concat-en-variable | SQL armado en una variable y pasado a Query (flujo de datos) | ⛔ |
 | csharp-binaryformatter | Deserialización insegura .NET | ⛔ |
 | ts-jwt-decode-no-verify | JWT sin verificar firma | ⛔ |
 | hardcoded-connstring | Connection string con password | ⛔ |
@@ -30,6 +31,7 @@ Los hallazgos del LLM (sombra) jamás bloquean — principio P2.
 | tsc | Errores de tipos/compilación TS | ⛔ |
 | ts-explicit-any | any explícito | ⛔ |
 | go-ignored-error | _ = err | ⛔ |
+| go-close-sin-comprobar-en-escritura | Cerrar un archivo de escritura sin mirar el error | ⚠️ |
 | catch-vacio-ts / csharp-empty-catch / java-empty-catch / python-except-pass | Excepción tragada (OWASP A10) | ⛔ |
 | todo-sin-ticket | TODO sin ticket | ⚠️ |
 

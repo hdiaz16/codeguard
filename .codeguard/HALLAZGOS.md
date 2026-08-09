@@ -1,6 +1,6 @@
 # Hallazgos de CodeGuard
 
-> **Estado: 9 bloqueante(s) pendiente(s)** · generado el 2026-08-09 00:03 · rulepack `2026.08.2`
+> **Estado: 10 bloqueante(s) pendiente(s)** · generado el 2026-08-09 00:18 · rulepack `2026.08.2`
 
 ## Instrucciones para el agente de código
 
@@ -23,9 +23,22 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 ---
 
-## ⛔ Bloqueantes (9)
+## ⛔ Bloqueantes (10)
 
-### 1. `require-concurrent-index-creation` — migrations/001_init.sql:43
+### 1. `gofmt` — internal/store/exportar.go:1
+<!-- fp:7cb8b80f379673c0bb72d72e3415a43a06f14d1667f57217d1b7fa5b266f6e18 -->
+
+- [ ] **Pendiente** · pilar **calidad** · motor `gofmt` · severidad `error`
+
+**Qué detectó:** Archivo sin formatear (gofmt)
+
+**Por qué importa:** El formato inconsistente genera diffs ruidosos y discusiones sin valor.
+
+**Cómo resolverlo:** Ejecuta `gofmt -w internal/store/exportar.go` (es auto-corregible).
+
+**Archivo:** `internal/store/exportar.go` · **línea:** 1
+
+### 2. `require-concurrent-index-creation` — migrations/001_init.sql:43
 <!-- fp:61a17959f372de542b7691c36e9ab5b2806ce7309778858de09f0bcfcd13cd4c -->
 
 - [ ] **Pendiente** · pilar **datos** · motor `squawk` · severidad `error`
@@ -38,7 +51,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `migrations/001_init.sql` · **línea:** 43
 
-### 2. `require-concurrent-index-creation` — migrations/001_init.sql:66
+### 3. `require-concurrent-index-creation` — migrations/001_init.sql:66
 <!-- fp:61a17959f372de542b7691c36e9ab5b2806ce7309778858de09f0bcfcd13cd4c -->
 
 - [ ] **Pendiente** · pilar **datos** · motor `squawk` · severidad `error`
@@ -51,7 +64,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `migrations/001_init.sql` · **línea:** 66
 
-### 3. `require-concurrent-index-creation` — migrations/001_init.sql:67
+### 4. `require-concurrent-index-creation` — migrations/001_init.sql:67
 <!-- fp:61a17959f372de542b7691c36e9ab5b2806ce7309778858de09f0bcfcd13cd4c -->
 
 - [ ] **Pendiente** · pilar **datos** · motor `squawk` · severidad `error`
@@ -64,7 +77,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `migrations/001_init.sql` · **línea:** 67
 
-### 4. `require-concurrent-index-creation` — migrations/001_init.sql:76
+### 5. `require-concurrent-index-creation` — migrations/001_init.sql:76
 <!-- fp:61a17959f372de542b7691c36e9ab5b2806ce7309778858de09f0bcfcd13cd4c -->
 
 - [ ] **Pendiente** · pilar **datos** · motor `squawk` · severidad `error`
@@ -77,7 +90,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `migrations/001_init.sql` · **línea:** 76
 
-### 5. `require-concurrent-index-creation` — migrations/001_init.sql:128
+### 6. `require-concurrent-index-creation` — migrations/001_init.sql:128
 <!-- fp:61a17959f372de542b7691c36e9ab5b2806ce7309778858de09f0bcfcd13cd4c -->
 
 - [ ] **Pendiente** · pilar **datos** · motor `squawk` · severidad `error`
@@ -90,7 +103,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `migrations/001_init.sql` · **línea:** 128
 
-### 6. `ruff-format` — spikes/s1-semgrep/generate_testrepo.py:1
+### 7. `ruff-format` — spikes/s1-semgrep/generate_testrepo.py:1
 <!-- fp:e3386511ff42e250ae91e2129854b7be692721d54088025c54352245fc7e2187 -->
 
 - [ ] **Pendiente** · pilar **calidad** · motor `ruff` · severidad `error`
@@ -103,7 +116,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `spikes/s1-semgrep/generate_testrepo.py` · **línea:** 1
 
-### 7. `lockfile-ausente` — spikes/s3-foundry/go.mod:1
+### 8. `lockfile-ausente` — spikes/s3-foundry/go.mod:1
 <!-- fp:c21104a820e69d31e859cedc7e4a7beabdf4a35162c0e3ea58236ce8f23685db -->
 
 - [ ] **Pendiente** · pilar **seguridad** · motor `playbook` · severidad `error`
@@ -116,7 +129,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `spikes/s3-foundry/go.mod` · **línea:** 1
 
-### 8. `ruff-format` — spikes/s5-tsc-incremental/generate_project.py:1
+### 9. `ruff-format` — spikes/s5-tsc-incremental/generate_project.py:1
 <!-- fp:8c7f218e1413c26aaba732b09089df2cfd819b8fbfb7f9695c10018a5696ab6a -->
 
 - [ ] **Pendiente** · pilar **calidad** · motor `ruff` · severidad `error`
@@ -129,7 +142,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 **Archivo:** `spikes/s5-tsc-incremental/generate_project.py` · **línea:** 1
 
-### 9. `I001` — spikes/s5-tsc-incremental/generate_project.py:3
+### 10. `I001` — spikes/s5-tsc-incremental/generate_project.py:3
 <!-- fp:9802592b11420599450f45bb9115afb232f2fba99af80bf6aa295e746d3e245f -->
 
 - [ ] **Pendiente** · pilar **calidad** · motor `ruff` · severidad `error`
