@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/exec"
@@ -47,8 +48,12 @@ func RememberRepo(repoRoot string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	f.WriteString(repoRoot + "\n")
+	// Cerrar sin mirar puede tragarse un error de escritura diferido. Aquí sólo
+	// significa un repo menos precalentado mañana, así que se anota y se sigue.
+	_, werr := f.WriteString(repoRoot + "\n")
+	if cerr := f.Close(); werr != nil || cerr != nil {
+		log.Printf("no se pudo recordar %s para precalentar: %v", repoRoot, errors.Join(werr, cerr))
+	}
 }
 
 // WarmTrivyDB descarga/refresca la base de vulnerabilidades fuera del camino

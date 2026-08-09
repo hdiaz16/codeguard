@@ -264,7 +264,6 @@ if (OV) {
     if (!prev || (f.blocking && !prev.blocking)) issueOf.set(f.node_id, f);
   }
 }
-const PILLAR_COLOR = { security:"#e0705a", quality:"#7fa8d4", data:"#7fd4a8" };
 
 function visible(n) {
   if (state.onlyIssues && !issueOf.has(n.id) && !touched.has(n.id)) return false;

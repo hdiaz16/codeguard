@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -55,8 +56,15 @@ func installCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(f, "%s\n", gaRule)
-				f.Close()
+				// Los errores de escritura y de cierre se comprueban: si esta
+				// regla no llega al .gitattributes, los shims se checan con
+				// CRLF en otra máquina y git falla con "bad interpreter".
+				// Perderla en silencio rompe el enrolamiento de quien clone.
+				_, werr := fmt.Fprintf(f, "%s\n", gaRule)
+				if cerr := f.Close(); werr != nil || cerr != nil {
+					return fmt.Errorf("no se pudo escribir la regla de fin de línea en %s: %w",
+						gaPath, errors.Join(werr, cerr))
+				}
 			}
 
 			exe, err := os.Executable()

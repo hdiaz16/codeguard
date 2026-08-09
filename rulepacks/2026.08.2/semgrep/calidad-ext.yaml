@@ -4,6 +4,42 @@
 # nativas). Aquí van las que ninguna herramienta estándar cubre.
 # =============================================================================
 rules:
+  # Idea tomada de CodeQL (go/unhandled-writable-file-close), que la encontró
+  # en este mismo proyecto y nosotros no teníamos.
+  - id: go-close-sin-comprobar-en-escritura
+    languages: [go]
+    severity: WARNING
+    message: "Se cierra un archivo abierto para escritura sin comprobar el error"
+    metadata:
+      pillar: quality
+      why: >-
+        Close es donde afloran los errores de escritura diferidos: disco lleno,
+        unidad de red caída, cuota agotada. Ignorarlo convierte una escritura
+        perdida en un silencio, y el archivo queda a medias sin que nadie se
+        entere hasta que algo falla mucho después por otra razón.
+      fix_hint: >-
+        Comprueba el error: `if cerr := f.Close(); cerr != nil { ... }`. Si de
+        verdad no importa, dilo con un comentario que explique por qué.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $F, $ERR = os.OpenFile($P, $FLAGS, $M)
+              ...
+              defer $F.Close()
+          - pattern: |
+              $F, $ERR := os.OpenFile($P, $FLAGS, $M)
+              ...
+              defer $F.Close()
+          - pattern: |
+              $F, $ERR := os.Create($P)
+              ...
+              defer $F.Close()
+      # Abrir en solo lectura no arriesga nada al cerrar.
+      - pattern-not: |
+          $F, $ERR := os.OpenFile($P, os.O_RDONLY, $M)
+          ...
+          defer $F.Close()
+
 
 # ---------------------------------------------------------------------------
 # ERRORES TRAGADOS — extensión de tus reglas de catch vacío
