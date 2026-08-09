@@ -126,6 +126,30 @@ func snippet(repoRoot, rel string, line int) []snippetLine {
 	return out
 }
 
+// resumenHallazgos describe el resultado en una frase, con los plurales bien.
+// Un "0 bloqueantes, 1 avisos" obliga a descifrar dos números y encima está
+// mal escrito; esto se entiende sin pensarlo.
+func resumenHallazgos(bloqueantes, avisos int) string {
+	switch {
+	case bloqueantes == 0 && avisos == 0:
+		return "sin observaciones"
+	case bloqueantes == 0:
+		return plural(avisos, "1 sugerencia", "%d sugerencias")
+	case avisos == 0:
+		return plural(bloqueantes, "1 problema por resolver", "%d problemas por resolver")
+	}
+	return fmt.Sprintf("%s y %s",
+		plural(bloqueantes, "1 problema por resolver", "%d problemas por resolver"),
+		plural(avisos, "1 sugerencia", "%d sugerencias"))
+}
+
+func plural(n int, uno, varios string) string {
+	if n == 1 {
+		return uno
+	}
+	return fmt.Sprintf(varios, n)
+}
+
 // orbStateFor traduce el veredicto de UN proyecto al clima del orbe.
 func orbStateFor(p *panelPayload) string {
 	switch {
@@ -147,7 +171,7 @@ type trayState struct {
 func (t *trayState) set(state, tooltip string) {
 	t.tray.SetIcon(trayIcon(state))
 	t.tray.SetLabel("CodeGuard: " + state)
-	t.tray.SetTooltip("CodeGuard [" + state + "] — " + tooltip)
+	t.tray.SetTooltip("CodeGuard — " + tooltip)
 	// La burbuja flotante escucha el mismo estado.
 	if t.emit != nil {
 		t.emit(state, tooltip)
@@ -325,7 +349,7 @@ func main() {
 	ts := &trayState{tray: tray, emit: func(state, tooltip string) {
 		app.Event.Emit("state", map[string]string{"state": state, "tooltip": tooltip})
 	}}
-	ts.set("idle", "sin análisis todavía")
+	ts.set("idle", "aún no has commiteado en un proyecto vigilado")
 
 	// Clic en la burbuja: alterna el panel (cierre con animación de plegado).
 	app.Event.On("widget-click", func(*application.CustomEvent) {
@@ -416,6 +440,15 @@ func main() {
 		defer stateMu.Unlock()
 		var out []string
 		for root, p := range repoState {
+			// Un proyecto cuya carpeta ya no existe no es un proyecto. El
+			// daemon añade a repoState cada repo que analiza y antes no lo
+			// quitaba nunca: un repo borrado seguía en el panel hasta
+			// reiniciar el agente. Se olvida aquí y también del registro.
+			if _, err := os.Stat(filepath.FromSlash(root)); err != nil {
+				delete(repoState, root)
+				go registry.Remove(root)
+				continue
+			}
 			mark := "○" // sin análisis todavía
 			switch p.Verdict {
 			case "block":
@@ -491,8 +524,8 @@ func main() {
 		lastPayload = p // el contexto activo pasa a ser el elegido
 		raizConfig.Store(p.RepoRoot)
 		app.Event.Emit("analysis", p)
-		ts.set(orbStateFor(p), fmt.Sprintf("%s@%s: %d bloqueantes, %d avisos (%s)",
-			p.Repo, p.Branch, p.Blocking, p.Advisory, p.At))
+		ts.set(orbStateFor(p), fmt.Sprintf("%s · rama %s · %s",
+			p.Repo, p.Branch, resumenHallazgos(p.Blocking, p.Advisory)))
 	})
 
 	// Botón 🕸: el explorador de código en su PROPIA ventana del agente
@@ -742,7 +775,7 @@ func main() {
 			// Re-anclar por si cambió la resolución o se movió la barra.
 			application.InvokeAsync(dockWidget)
 			repo := filepath.Base(req.RepoRoot)
-			ts.set("working", "analizando "+repo+"@"+req.Branch+"…")
+			ts.set("working", "revisando "+repo+" · rama "+req.Branch)
 			app.Event.Emit("working", map[string]string{"repo": repo, "branch": req.Branch})
 		},
 		OnResult: func(req *ipc.Request, resp *ipc.Response) {
@@ -787,8 +820,10 @@ func main() {
 			lastPayload = payload
 			raizConfig.Store(payload.RepoRoot)
 
-			tooltip := fmt.Sprintf("%s@%s: %d bloqueantes, %d avisos (%s)",
-				payload.Repo, payload.Branch, payload.Blocking, payload.Advisory, payload.At)
+			// "3 bloqueantes, 1 avisos" es un contador, no una frase. Esto se
+			// lee de un vistazo y en singular cuando toca.
+			tooltip := fmt.Sprintf("%s · rama %s · %s", payload.Repo, payload.Branch,
+				resumenHallazgos(payload.Blocking, payload.Advisory))
 			// motores ausentes = asunto de configuración, no degradación real:
 			// un trivy no instalado no debe pintar de naranja cada commit.
 			realDegraded := len(resp.Degraded) > 0 && !pipeline.SoloFaltantes(resp.Degraded)

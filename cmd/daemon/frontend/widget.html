@@ -172,11 +172,29 @@
   const orb = document.getElementById("orb");
   const whisperEl = document.getElementById("whisper");
 
+  // Lo que susurra el orbe al cambiar de estado. "en reposo" y "todo bien"
+  // eran correctos y no decían nada: cualquier programa podría decirlos.
+  // Estos hablan de lo que este agente hace — vigilar commits — y en el tono
+  // de un compañero, no de una barra de estado.
   const WHISPERS = {
-    idle: "en reposo", working: "analizando…", pass: "todo bien",
-    blocked: "commit bloqueado", degraded: "revisión parcial", offline: "sin conexión",
+    idle:     "de guardia",
+    working:  "revisando tu cambio",
+    pass:     "puedes seguir",
+    blocked:  "espera, hay algo",
+    degraded: "revisé sólo una parte",
+    offline:  "sin modelo, reglas al día",
   };
   const VALID = new Set(Object.keys(WHISPERS));
+
+  // Lo que se lee al dejar el mouse encima. Explica el estado, no lo repite.
+  const TITULOS = {
+    idle:     "De guardia — cada commit pasa por aquí antes de entrar",
+    working:  "Revisando tu cambio",
+    pass:     "El commit pasó todas las compuertas",
+    blocked:  "Commit detenido — hay problemas que el CI también rechazaría",
+    degraded: "Revisión parcial — alguna capa no pudo correr",
+    offline:  "Sin conexión al modelo — las reglas deterministas siguen aplicándose",
+  };
 
   let whisperTimer = null;
   function say(text) {
@@ -192,7 +210,10 @@
     const changed = s !== current;
     current = s;
     stage.className = "stage orb-" + s;
-    orb.title = "CodeGuard [" + s + "]" + (tooltip ? " — " + tooltip : "");
+    // El detalle va en su propia línea: un tooltip de una sola línea larga se
+    // corta y deja lo importante fuera.
+    orb.title = TITULOS[s] + (tooltip ? "\n" + tooltip : "") +
+      "\n\nClic para abrir el panel · clic derecho para el menú";
     if (changed) say(WHISPERS[s]);
   }
 

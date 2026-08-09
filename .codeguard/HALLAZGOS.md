@@ -1,6 +1,6 @@
 # Hallazgos de CodeGuard
 
-> **Estado: 9 bloqueante(s) pendiente(s)** · generado el 2026-08-09 00:32 · rulepack `2026.08.2`
+> **Estado: 9 bloqueante(s) pendiente(s)** · generado el 2026-08-09 00:46 · rulepack `2026.08.2`
 
 ## Instrucciones para el agente de código
 

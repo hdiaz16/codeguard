@@ -43,12 +43,18 @@
     font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px;
     line-height: 1.45; user-select: none; overflow: hidden;
     height: 100vh; padding: 10px;
+    /* La tarjeta crece hacia arriba desde el orbe, que es de donde sale.
+       Antes ocupaba el alto completo de la ventana y un commit con un solo
+       hallazgo dejaba dos tercios de panel vacío. */
+    display: flex; flex-direction: column; justify-content: flex-end;
   }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   /* ── nivel d1: la tarjeta flotante (sin borde: solo sombra) ── */
   .shell {
-    height: 100%; display: flex; flex-direction: column;
+    /* Alto según el contenido, con tope: así una lista larga sigue
+       desplazándose dentro de la tarjeta en vez de desbordar la ventana. */
+    max-height: 100%; display: flex; flex-direction: column;
     background: var(--d1);
     border-radius: 22px;
     box-shadow: var(--float);
@@ -81,7 +87,9 @@
     from { transform: translateY(14px); opacity: 0; }
     to   { transform: translateY(0);    opacity: 1; }
   }
-  main { flex: 1; overflow-y: auto; overflow-x: hidden; padding-bottom: 6px; }
+  /* flex:1 estiraba el contenido a todo el alto disponible; con 0 1 auto la
+     tarjeta mide lo que mide su contenido y sólo se desplaza si no cabe. */
+  main { flex: 0 1 auto; overflow-y: auto; overflow-x: hidden; padding-bottom: 6px; }
   main::-webkit-scrollbar { width: 8px; }
   main::-webkit-scrollbar-thumb { background: var(--d3); border-radius: 4px; }
   @media (prefers-reduced-motion: reduce) {
@@ -103,11 +111,19 @@
   }
   .winbtns button {
     width: 28px; height: 26px; border: none; border-radius: 8px;
-    background: var(--d2); color: var(--ink-3); font-size: 13px;
-    cursor: pointer; line-height: 1; box-shadow: var(--raise);
+    background: var(--d2); color: var(--ink-3);
+    cursor: pointer; line-height: 0; box-shadow: var(--raise);
+    display: grid; place-items: center; padding: 0;
     transition: background .15s, color .15s, transform .1s;
   }
+  .winbtns button svg {
+    width: 15px; height: 15px;
+    fill: none; stroke: currentColor; stroke-width: 1.5;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .winbtns button svg .lleno { fill: currentColor; stroke: none; }
   .winbtns button:hover { background: var(--d3); color: var(--ink); transform: translateY(-1px); }
+  .winbtns button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
   .winbtns button.close:hover { background: var(--block); color: #fff; }
   header .verdict { font-size: 15.5px; font-weight: 650; margin-top: 6px; letter-spacing: -.01em; }
   header .meta { color: var(--ink-3); font-size: 11px; margin-top: 3px; }
@@ -133,18 +149,37 @@
     background: rgba(229,181,74,.12); color: var(--warn);
     padding: 9px 18px; font-size: 12px; font-weight: 500;
   }
-  /* cambio de contexto entre proyectos — cada uno con su estado */
-  .repos { display: flex; gap: 6px; padding: 8px 18px 2px; flex-wrap: wrap; }
+  /* Proyectos vigilados. Antes era una fila de nombres sueltos: quien llegaba
+     nuevo veía "repo" y no tenía forma de saber qué era esa lista. Ahora lleva
+     título, el estado va en un punto de color (no un emoji, que cambia de
+     forma según la fuente) y el proyecto activo dice su estado con palabras. */
+  .repos { padding: 10px 18px 4px; }
+  .repos .titulo {
+    color: var(--ink-3); font-size: 10px; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase; margin-bottom: 7px;
+  }
+  .repos .titulo b { color: var(--ink-2); font-weight: 600; }
+  .repos .fila { display: flex; gap: 6px; flex-wrap: wrap; }
   .repos .tab {
-    font-size: 11px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
-    background: var(--d2); color: var(--ink-3); transition: .15s; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 11.5px; padding: 5px 11px; border-radius: 999px; cursor: pointer;
+    background: var(--d2); color: var(--ink-2); transition: .15s; white-space: nowrap;
   }
   .repos .tab:hover { background: var(--d3); color: var(--ink); }
-  .repos .tab.activo { background: var(--d3); font-weight: 650; box-shadow: inset 0 0 0 1px rgba(255,255,255,.09); }
-  .repos .tab.blk  { color: var(--block); }
-  .repos .tab.ok   { color: var(--ok); }
-  .repos .tab.none { color: var(--ink-3); }
-  .repos .leyenda { flex-basis: 100%; color: var(--ink-3); font-size: 10px; padding: 3px 2px 0; }
+  .repos .tab .punto {
+    width: 7px; height: 7px; border-radius: 50%; flex: none;
+    background: var(--ink-3);
+  }
+  .repos .tab.blk  .punto { background: var(--block); }
+  .repos .tab.ok   .punto { background: var(--ok); }
+  .repos .tab.none .punto { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+  .repos .tab.activo {
+    background: var(--d3); color: var(--ink); font-weight: 600;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.09);
+  }
+  .repos .tab .estado { color: var(--ink-3); font-weight: 400; }
+  .repos .tab.activo.blk .estado { color: var(--block); }
+  .repos .tab.activo.ok  .estado { color: var(--ok); }
   .degraded { color: var(--ink-3); font-size: 11px; padding: 8px 18px 14px; }
   .traynote { color: var(--ink-3); font-size: 10.5px; text-align: center; padding: 10px 16px 14px; }
   .empty { color: var(--ink-3); text-align: center; padding: 44px 20px; }
@@ -242,12 +277,42 @@
 <body>
   <div class="shell" id="card">
   <header>
+    <!-- Íconos dibujados, no emojis: un emoji cambia de forma según la fuente
+         del sistema y ninguno decía con claridad qué hacía el botón. -->
     <div class="winbtns">
-      <button id="btn-help" title="Guía de uso paso a paso">?</button>
-      <button id="btn-graph" title="Abrir el explorador de código 3D de este proyecto">🕸</button>
-      <button id="btn-config" title="Configurar el modelo que aconseja (proveedor, endpoint, clave)">⚙</button>
-      <button id="btn-min" title="Contraer al último veredicto">–</button>
-      <button id="btn-close" class="close" title="Ocultar panel — CodeGuard sigue vigilando desde el orbe">✕</button>
+      <button id="btn-help" aria-label="Guía de uso"
+              title="Guía de uso — qué es cada cosa, paso a paso">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="7.5"/>
+          <path d="M7.8 7.6a2.2 2.2 0 1 1 2.9 2.1c-.5.2-.7.6-.7 1.1v.5"/>
+          <circle cx="10" cy="14.3" r=".9" class="lleno"/>
+        </svg>
+      </button>
+      <button id="btn-graph" aria-label="Mapa del código"
+              title="Mapa del código — quién llama a quién, en 3D">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <path d="M10 4.6v3.1M6.2 14.2l2.3-2.6M13.8 14.2l-2.3-2.6"/>
+          <circle cx="10" cy="3.4" r="1.9" class="lleno"/>
+          <circle cx="5.2" cy="15.4" r="1.9" class="lleno"/>
+          <circle cx="14.8" cy="15.4" r="1.9" class="lleno"/>
+          <circle cx="10" cy="9.7" r="2.1"/>
+        </svg>
+      </button>
+      <button id="btn-config" aria-label="Configurar el modelo"
+              title="Configurar el modelo que aconseja — proveedor, endpoint y clave">
+        <svg viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="2.6"/>
+          <path d="M10 3.1v1.8M10 15.1v1.8M16.9 10h-1.8M4.9 10H3.1M14.9 5.1l-1.3 1.3M6.4 13.6l-1.3 1.3M14.9 14.9l-1.3-1.3M6.4 6.4L5.1 5.1"/>
+        </svg>
+      </button>
+      <button id="btn-min" aria-label="Contraer"
+              title="Contraer — deja sólo el veredicto">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10h10"/></svg>
+      </button>
+      <button id="btn-close" class="close" aria-label="Ocultar panel"
+              title="Ocultar el panel — CodeGuard sigue vigilando desde el orbe">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8"/></svg>
+      </button>
     </div>
     <div class="brand">CodeGuard</div>
     <div class="verdict" id="verdict">esperando el primer análisis…</div>
@@ -342,22 +407,31 @@
     // Cambiar de pestaña cambia de contexto; ninguno afecta a los demás.
     const tabs = $("repos");
     if (p.otros_repos && p.otros_repos.length > 1) {
-      // Explícito: cada marca dice qué significa al pasar el mouse, y hay
-      // una leyenda debajo. Un "○" no debe leerse como "no está instalado".
-      const AYUDA = {
-        "⛔": "bloqueado: el último commit tiene problemas por resolver",
-        "✓": "limpio: el último commit pasó todas las compuertas",
-        "○": "enrolado, sin analizar todavía — haz un commit aquí y aparecerá su estado",
+      // Cada estado se nombra con palabras, no sólo con un color: quien llega
+      // nuevo no tiene por qué deducir qué significa un punto.
+      const ESTADO = {
+        "⛔": { clase: "blk",  corto: "bloqueado",
+                largo: "bloqueado — el último commit tiene problemas por resolver" },
+        "✓":  { clase: "ok",   corto: "limpio",
+                largo: "limpio — el último commit pasó todas las compuertas" },
+        "○":  { clase: "none", corto: "sin analizar",
+                largo: "enrolado pero sin analizar todavía — haz un commit aquí y verás su estado" },
       };
-      tabs.innerHTML = p.otros_repos.map(s => {
+      const chips = p.otros_repos.map(s => {
         const [marca, nombre, root, activo] = s.split("|");
-        const cls = marca === "⛔" ? "blk" : (marca === "✓" ? "ok" : "none");
-        return `<span class="tab ${cls} ${activo === "1" ? "activo" : ""}"
-                  data-root="${esc(root)}"
-                  title="${esc(nombre)} — ${esc(AYUDA[marca] || "")}&#10;${esc(root)}&#10;(clic para ver este proyecto)"
-                  >${marca} ${esc(nombre)}</span>`;
-      }).join("") +
-      `<span class="leyenda">✓ limpio · ⛔ bloqueado · ○ sin analizar aún — clic para cambiar de proyecto</span>`;
+        const e = ESTADO[marca] || ESTADO["○"];
+        const esActivo = activo === "1";
+        // El estado en texto sólo en el activo: en los demás sería ruido.
+        const etiqueta = esActivo ? `<span class="estado">· ${e.corto}</span>` : "";
+        return `<span class="tab ${e.clase} ${esActivo ? "activo" : ""}"
+                  data-root="${esc(root)}" role="button" tabindex="0"
+                  title="${esc(nombre)} — ${esc(e.largo)}&#10;${esc(root)}&#10;(clic para ver este proyecto)"
+                  ><span class="punto"></span>${esc(nombre)}${etiqueta}</span>`;
+      }).join("");
+      const n = p.otros_repos.length;
+      tabs.innerHTML =
+        `<div class="titulo">Proyectos que vigilo · <b>${n}</b> — clic para cambiar</div>` +
+        `<div class="fila">${chips}</div>`;
       tabs.hidden = false;
     } else {
       tabs.hidden = true;
@@ -468,10 +542,15 @@
 
   $("btn-close").addEventListener("click", closeOrganic);
   // cambio de contexto entre proyectos
-  $("repos").addEventListener("click", e => {
-    const t = e.target.closest(".tab[data-root]");
+  function cambiarProyecto(destino) {
+    const t = destino.closest(".tab[data-root]");
     if (!t || !t.dataset.root) return;
     emit("switch-repo", [t.dataset.root]);
+  }
+  $("repos").addEventListener("click", e => cambiarProyecto(e.target));
+  // Son botones de verdad (role="button"), así que también con teclado.
+  $("repos").addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); cambiarProyecto(e.target); }
   });
 
   $("btn-help").addEventListener("click", () => emit("open-guide", null));

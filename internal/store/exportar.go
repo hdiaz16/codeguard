@@ -152,5 +152,3 @@ func (s *Store) ResumenSemanal(repoID string) (string, error) {
 }
 
 // comentario nuevo
-
-// nota para ver el panel

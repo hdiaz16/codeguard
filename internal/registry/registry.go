@@ -46,10 +46,18 @@ func Load() []Repo {
 		return nil
 	}
 	// los que ya no existen en disco se olvidan solos
-	var alive []Repo
+	alive := make([]Repo, 0, len(repos))
 	for _, r := range repos {
 		if _, err := os.Stat(r.Root); err == nil {
 			alive = append(alive, r)
+		}
+	}
+	// Y se olvidan de verdad: antes se filtraban en cada lectura pero el
+	// archivo conservaba la entrada muerta para siempre, así que cualquier
+	// otro lector la seguía viendo.
+	if len(alive) != len(repos) {
+		if data, err := json.MarshalIndent(alive, "", "  "); err == nil {
+			os.WriteFile(path(), data, 0o644)
 		}
 	}
 	sort.Slice(alive, func(i, j int) bool { return alive[i].Nombre < alive[j].Nombre })
