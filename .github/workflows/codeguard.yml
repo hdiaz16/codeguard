@@ -12,15 +12,20 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      # Acciones ancladas por SHA, no por etiqueta: una etiqueta es un puntero
+      # movible y quien controle el repo de la acción puede reapuntarla a otro
+      # código, que correría con los secretos de este workflow. Es la regla
+      # gha-action-sin-sha del propio rulepack, y bloqueó este commit hasta
+      # cumplirla.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.26"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.13"
 
@@ -35,14 +40,65 @@ jobs:
           pip install semgrep
           echo "$(go env GOPATH)\bin" >> $env:GITHUB_PATH
 
-      - name: Analizar (modo sombra — nunca falla el job)
+      # El commit base no siempre existe: en el primer push de un repo
+      # github.event.before son ceros, y tras un push forzado apunta a un
+      # commit que ya no está. En ambos casos `git diff base..head` falla y se
+      # lleva por delante el análisis entero. Se comprueba antes de usarlo.
+      - name: Determinar el commit base
+        id: base
+        shell: pwsh
         run: |
           $base = "${{ github.event.pull_request.base.sha }}"
           if (-not $base) { $base = "${{ github.event.before }}" }
-          ./codeguard.exe ci --base $base --head ${{ github.sha }} --out results.sarif --shadow
-        # Sin credenciales de Foundry: el CI corre SOLO la capa determinista (spec §11)
+          $existe = $false
+          if ($base -and $base -notmatch '^0+$') {
+            git cat-file -e "$base^{commit}" 2>$null
+            $existe = ($LASTEXITCODE -eq 0)
+          }
+          if (-not $existe) {
+            # Sin base utilizable, se compara contra el padre del commit
+            # actual; si tampoco lo hay (primer commit del repo), contra el
+            # árbol vacío, que equivale a "revisa todo".
+            git cat-file -e "HEAD~1^{commit}" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              $base = git rev-parse HEAD~1
+            } else {
+              $base = git hash-object -t tree /dev/null
+            }
+            Write-Host "base no utilizable; se usa $base"
+          }
+          "sha=$base" >> $env:GITHUB_OUTPUT
 
-      - uses: github/codeql-action/upload-sarif@v3
+      - name: Analizar (modo sombra — nunca falla el job)
+        shell: pwsh
+        # Sin credenciales de Foundry: el CI corre SOLO la capa determinista (spec §11)
+        run: |
+          ./codeguard.exe ci --base ${{ steps.base.outputs.sha }} --head ${{ github.sha }} --out results.sarif --shadow
+
+      - name: ¿Se generó el SARIF?
+        id: sarif
         if: always()
+        shell: pwsh
+        run: |
+          $hay = Test-Path results.sarif
+          if (-not $hay) { Write-Host "no hay results.sarif: el análisis no llegó a producirlo" }
+          "existe=$($hay.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+      # Subir el SARIF exige code scanning habilitado; en un repo privado eso
+      # requiere GitHub Advanced Security. Sin él, este paso falla y tiñe de
+      # rojo un análisis que sí corrió: por eso no puede tumbar el job.
+      - uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
+        if: always() && steps.sarif.outputs.existe == 'true'
+        continue-on-error: true
         with:
           sarif_file: results.sarif
+
+      - name: Resumen
+        if: always()
+        shell: pwsh
+        run: |
+          if ("${{ steps.sarif.outputs.existe }}" -eq "true") {
+            Write-Host "análisis completado; SARIF en results.sarif"
+          } else {
+            Write-Host "el análisis no produjo SARIF — revisa el paso anterior"
+          }
