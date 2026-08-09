@@ -239,7 +239,8 @@ func esIdentificador(s string) bool {
 	}
 	for i, r := range s {
 		esLetra := r == '_' || r == '$' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
-		if !esLetra && !(i > 0 && r >= '0' && r <= '9') {
+		esDigitoInterno := i > 0 && r >= '0' && r <= '9'
+		if !esLetra && !esDigitoInterno {
 			return false
 		}
 	}

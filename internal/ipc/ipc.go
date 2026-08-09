@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"os/user"
 	"time"
 
@@ -50,7 +51,14 @@ type Response struct {
 }
 
 // PipeName devuelve \\.\pipe\codeguard-<SID del usuario actual>.
+//
+// CODEGUARD_PIPE lo sustituye entero. Existe porque el pipe es exclusivo: las
+// pruebas necesitan el suyo para no chocar con un daemon real corriendo en la
+// misma máquina, y sirve igual para correr una instancia aislada a mano.
 func PipeName() (string, error) {
+	if p := os.Getenv("CODEGUARD_PIPE"); p != "" {
+		return p, nil
+	}
 	u, err := user.Current()
 	if err != nil {
 		return "", err
@@ -90,7 +98,7 @@ func Call(req *Request, timeout time.Duration) (*Response, error) {
 		return nil, err
 	}
 	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(timeout + 3*time.Second))
+	_ = conn.SetDeadline(time.Now().Add(timeout + 3*time.Second))
 
 	req.ProtocolVersion = ProtocolVersion
 	payload, err := json.Marshal(req)

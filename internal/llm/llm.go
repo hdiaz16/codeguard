@@ -269,7 +269,7 @@ func (c *Client) CompleteStream(ctx context.Context, model, system, user string,
 	}
 	if resp.StatusCode == 400 {
 		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close() // se reintenta con otro cuerpo; este ya se leyó entero
 		if !strings.Contains(string(raw), "max_completion_tokens") {
 			return nil, fmt.Errorf("HTTP 400: %s%s", truncate(string(raw), 300), pistaDeError(string(raw)))
 		}

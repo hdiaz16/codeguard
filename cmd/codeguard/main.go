@@ -135,7 +135,7 @@ func ciCmd() *cobra.Command {
 	cmd.Flags().StringVar(&out, "out", "", "archivo de salida")
 	cmd.Flags().StringVar(&repoDir, "repo", ".", "directorio dentro del repo")
 	cmd.Flags().BoolVar(&shadow, "shadow", false, "modo sombra: registra pero nunca falla el job")
-	cmd.MarkFlagRequired("base")
+	_ = cmd.MarkFlagRequired("base")
 	return cmd
 }
 

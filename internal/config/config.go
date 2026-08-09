@@ -160,7 +160,8 @@ func Load(repoRoot string) (*Config, error) {
 		MaxDiffLines: 2000,
 		Risk:         Risk{Threshold: 35},
 		UI:           UI{MaxVisibleFindings: 7, AutoOpenPanel: "on_block"},
-		LLM:          LLM{TimeoutMs: 20000, MaxDiffTokens: 12000, APIKeyEnv: "FOUNDRY_API_KEY"},
+		//nolint:gosec // G101: es el NOMBRE de la variable de entorno, no una clave — precisamente el diseño que evita guardar credenciales
+		LLM: LLM{TimeoutMs: 20000, MaxDiffTokens: 12000, APIKeyEnv: "FOUNDRY_API_KEY"},
 	}
 	if err := k.Unmarshal("", cfg); err != nil {
 		return nil, fmt.Errorf("config.yaml no coincide con el esquema: %w", err)

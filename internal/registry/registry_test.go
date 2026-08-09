@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,6 +69,27 @@ func TestRemoveQuitaSoloElPedido(t *testing.T) {
 	}
 	if Remove(filepath.Join(base, "no-registrado")) {
 		t.Error("Remove no debe decir que quitó algo que no estaba")
+	}
+}
+
+// forget con la ruta corta de Windows (HECTOR~1) debía encontrar la entrada
+// que init guardó con la ruta larga. No lo hacía: comparaba texto crudo.
+func TestRemoveNormalizaLaRuta(t *testing.T) {
+	base := enTemporal(t)
+	repo := filepath.Join(base, "Proyecto Con Espacios")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	Add(repo, "proyecto", "")
+
+	// Misma carpeta, escrita distinto: separadores \, mayúsculas cambiadas,
+	// barra final. Debe encontrarla igual.
+	variante := strings.ToUpper(repo) + string(filepath.Separator)
+	if !Remove(variante) {
+		t.Errorf("Remove debió encontrar %q pese a la forma distinta", variante)
+	}
+	if len(Load()) != 0 {
+		t.Error("la entrada debió quedar eliminada")
 	}
 }
 

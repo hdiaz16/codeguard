@@ -192,7 +192,7 @@ func main() {
 	// fallo es invisible. Vive junto a la BD del usuario.
 	if base := os.Getenv("LOCALAPPDATA"); base != "" {
 		dir := filepath.Join(base, "codeguard")
-		os.MkdirAll(dir, 0o755)
+		_ = os.MkdirAll(dir, 0o755) // best-effort: el OpenFile del log de abajo reportaría el fallo
 		if f, err := os.OpenFile(filepath.Join(dir, "daemon.log"),
 			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			log.SetOutput(f)
@@ -214,7 +214,7 @@ func main() {
 	handler.HandleFunc("/graph.json", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Write(graphJSON.Load().([]byte))
+		_, _ = w.Write(graphJSON.Load().([]byte))
 	})
 	// Igual que el grafo: la configuración se sirve por HTTP y no por eventos.
 	// Raíz desde la que se lee la configuración del modelo. Se actualiza con
@@ -230,7 +230,7 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		json.NewEncoder(w).Encode(leerConfigLLM(filepath.FromSlash(raiz)))
+		_ = json.NewEncoder(w).Encode(leerConfigLLM(filepath.FromSlash(raiz)))
 	})
 	handler.Handle("/", assetsFS)
 

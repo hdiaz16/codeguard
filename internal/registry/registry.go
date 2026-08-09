@@ -29,7 +29,7 @@ func path() string {
 		base = os.TempDir()
 	}
 	dir := filepath.Join(base, "codeguard")
-	os.MkdirAll(dir, 0o755)
+	_ = os.MkdirAll(dir, 0o755) // si falla, la escritura de abajo dará el error real
 	return filepath.Join(dir, "repos.json")
 }
 
@@ -57,7 +57,7 @@ func Load() []Repo {
 	// otro lector la seguía viendo.
 	if len(alive) != len(repos) {
 		if data, err := json.MarshalIndent(alive, "", "  "); err == nil {
-			os.WriteFile(path(), data, 0o644)
+			_ = os.WriteFile(path(), data, 0o644) // best-effort: Load tolera que falte o falle
 		}
 	}
 	sort.Slice(alive, func(i, j int) bool { return alive[i].Nombre < alive[j].Nombre })
@@ -71,7 +71,11 @@ func Add(root, nombre, lenguaje string) {
 	defer mu.Unlock()
 	var repos []Repo
 	if raw, err := os.ReadFile(path()); err == nil {
-		json.Unmarshal(raw, &repos)
+		// Si el archivo existe pero no se puede parsear, NO seguimos: escribir
+		// encima perdería los demás proyectos por un JSON corrupto pasajero.
+		if err := json.Unmarshal(raw, &repos); err != nil {
+			return
+		}
 	}
 	now := time.Now().Format(time.RFC3339)
 	found := false
@@ -90,8 +94,23 @@ func Add(root, nombre, lenguaje string) {
 		repos = append(repos, Repo{Root: root, Nombre: nombre, Alta: now, UltVez: now, Lenguaje: lenguaje})
 	}
 	if data, err := json.MarshalIndent(repos, "", "  "); err == nil {
-		os.WriteFile(path(), data, 0o644)
+		_ = os.WriteFile(path(), data, 0o644) // best-effort: Load tolera que falte o falle
 	}
+}
+
+// normalizarRuta deja una ruta comparable: separadores /, sin barra final,
+// en minúsculas, y con la forma larga (resuelve HECTOR~1 → "Hector Diaz").
+// Sin esto, `forget` con la ruta corta de %TEMP% no encontraba la entrada
+// que init había guardado con la ruta larga.
+func normalizarRuta(p string) string {
+	if largo, err := filepath.Abs(p); err == nil {
+		if resuelto, err := filepath.EvalSymlinks(largo); err == nil {
+			p = resuelto
+		} else {
+			p = largo
+		}
+	}
+	return strings.ToLower(strings.TrimRight(filepath.ToSlash(p), "/"))
 }
 
 // Remove saca un proyecto del registro. Devuelve si estaba.
@@ -102,7 +121,7 @@ func Add(root, nombre, lenguaje string) {
 // archivo desde PowerShell salió mal —ConvertTo-Json desenvuelve los arreglos
 // de un elemento y el registro dejaba de ser una lista.
 func Remove(root string) bool {
-	root = strings.TrimRight(filepath.ToSlash(root), "/")
+	root = normalizarRuta(root)
 	mu.Lock()
 	defer mu.Unlock()
 	raw, err := os.ReadFile(path())
@@ -116,7 +135,7 @@ func Remove(root string) bool {
 	quedan := make([]Repo, 0, len(repos))
 	quitado := false
 	for _, r := range repos {
-		if strings.EqualFold(strings.TrimRight(r.Root, "/"), root) {
+		if normalizarRuta(r.Root) == root {
 			quitado = true
 			continue
 		}
@@ -126,7 +145,7 @@ func Remove(root string) bool {
 		return false
 	}
 	if data, err := json.MarshalIndent(quedan, "", "  "); err == nil {
-		os.WriteFile(path(), data, 0o644)
+		_ = os.WriteFile(path(), data, 0o644) // best-effort: Load tolera que falte o falle
 	}
 	return true
 }

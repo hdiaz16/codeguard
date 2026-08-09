@@ -45,7 +45,7 @@ func RememberRepo(repoRoot string) {
 	if existing[repoRoot] {
 		return
 	}
-	os.MkdirAll(filepath.Dir(path), 0o755)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755) // best-effort: el WriteString de abajo dará el error real
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
@@ -124,7 +124,7 @@ func WarmAll(ctx context.Context) {
 		cmd := exec.CommandContext(wctx, bin, args...)
 		proc.SinVentana(cmd)
 		cmd.Dir = repo
-		cmd.Run() // el exit code no importa: solo queremos el caché caliente
+		_ = cmd.Run() // el exit code no importa: solo queremos el caché caliente
 		cancel()
 		log.Printf("precalentado tsc en %s (%.1f s)", filepath.Base(repo), time.Since(start).Seconds())
 	}

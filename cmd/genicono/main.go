@@ -61,7 +61,7 @@ func main() {
 	}
 	// Sin comprobar el cierre, un PNG truncado se anunciaba como escrito.
 	if err := png.Encode(f, tira); err != nil {
-		f.Close()
+		_ = f.Close()
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

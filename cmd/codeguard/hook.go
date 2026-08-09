@@ -101,7 +101,9 @@ func runPreCommit() error {
 
 	// ── Run id para el trailer (prepare-commit-msg) ──
 	runID := store.NewULID()
-	os.WriteFile(lastRunFile(repoRoot), []byte(runID), 0o644)
+	// Best-effort: si no se puede dejar el run id, el trailer del commit no lo
+	// llevará, pero el análisis y el veredicto son los mismos.
+	_ = os.WriteFile(lastRunFile(repoRoot), []byte(runID), 0o644)
 
 	// ── Señal de código generado por IA (RADAR): variables de entorno de la
 	// herramienta que invoca el commit. Sube el riesgo (+20) y se etiqueta. ──

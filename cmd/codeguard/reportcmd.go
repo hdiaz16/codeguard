@@ -100,7 +100,7 @@ func reportCmd() *cobra.Command {
 
 			md := construirInforme(cfg, res, bloq, avisos, resueltos, len(supr), incluirAvisos)
 			dest := filepath.Join(repoRoot, filepath.FromSlash(reportFile))
-			os.MkdirAll(filepath.Dir(dest), 0o755)
+			_ = os.MkdirAll(filepath.Dir(dest), 0o755) // best-effort: el WriteFile de abajo dará el error real
 			if err := os.WriteFile(dest, []byte(md), 0o644); err != nil {
 				return err
 			}

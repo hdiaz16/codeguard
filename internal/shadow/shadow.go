@@ -146,11 +146,11 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 	switch {
 	case client == nil:
 		log.Println("sombra: sin endpoint/API key — capa LLM apagada")
-		r.Store.UpdateRunLLM(req.RunID, risk, false)
+		_ = r.Store.UpdateRunLLM(req.RunID, risk, false)
 		return
 	case risk < cfg.Risk.Threshold:
 		log.Printf("sombra: riesgo %d < umbral %d — sin LLM", risk, cfg.Risk.Threshold)
-		r.Store.UpdateRunLLM(req.RunID, risk, false)
+		_ = r.Store.UpdateRunLLM(req.RunID, risk, false)
 		return
 	}
 
@@ -165,8 +165,8 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 		case gastado >= cfg.LLM.MonthlyBudgetUSD:
 			log.Printf("sombra: presupuesto del mes agotado (%.2f de %.2f USD) — capa LLM apagada hasta el día 1",
 				gastado, cfg.LLM.MonthlyBudgetUSD)
-			r.Store.SaveLLMCall(store.LLMCall{RunID: req.RunID, Pillar: "todos", Status: "skipped"})
-			r.Store.UpdateRunLLM(req.RunID, risk, false)
+			_ = r.Store.SaveLLMCall(store.LLMCall{RunID: req.RunID, Pillar: "todos", Status: "skipped"})
+			_ = r.Store.UpdateRunLLM(req.RunID, risk, false)
 			return
 		}
 		if _, hayTarifas := cfg.LLM.CostoMicros(1, 1); !hayTarifas {
@@ -177,10 +177,10 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 	diffSHA := sha256hex(req.DiffUnified)
 	if _, hit := r.Store.DiffCacheGet(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model); hit {
 		log.Println("sombra: diff en caché — sin llamadas")
-		r.Store.UpdateRunLLM(req.RunID, risk, false)
+		_ = r.Store.UpdateRunLLM(req.RunID, risk, false)
 		return
 	}
-	r.Store.UpdateRunLLM(req.RunID, risk, true)
+	_ = r.Store.UpdateRunLLM(req.RunID, risk, true)
 
 	// Contexto común: diff REDACTADO (P5 — nada que parezca credencial sale
 	// a la red) y truncado por presupuesto, + lo ya encontrado.
@@ -222,7 +222,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 					call.Status = "timeout"
 				}
 				log.Printf("sombra %s: %v", pillar, err)
-				r.Store.SaveLLMCall(call)
+				_ = r.Store.SaveLLMCall(call)
 				return
 			}
 			call.Status = "ok"
@@ -235,7 +235,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 			ok, rejected := verify(req, pillar, res.Content, deterministic)
 			call.FindingsReturned = len(ok) + rejected
 			call.FindingsRejected = rejected
-			r.Store.SaveLLMCall(call)
+			_ = r.Store.SaveLLMCall(call)
 
 			mu.Lock()
 			verified = append(verified, ok...)
@@ -251,7 +251,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 		log.Println("sombra: no se pudieron guardar hallazgos:", err)
 	}
 	if payload, err := json.Marshal(verified); err == nil {
-		r.Store.DiffCachePut(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model, string(payload))
+		_ = r.Store.DiffCachePut(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model, string(payload))
 	}
 	log.Printf("sombra: %d hallazgos verificados registrados (shown=0)", len(verified))
 }

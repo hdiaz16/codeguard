@@ -97,7 +97,7 @@ func rulesCmd() *cobra.Command {
 			}
 			if raw == "" || json.Unmarshal([]byte(raw), &probe) != nil {
 				dbg := filepath.Join(repoRoot, ".codeguard", "rules-debug.txt")
-				os.WriteFile(dbg, []byte(res.Content), 0o644)
+				_ = os.WriteFile(dbg, []byte(res.Content), 0o644) // volcado de diagnóstico; el error ya se devuelve abajo
 				return fmt.Errorf("el modelo no devolvió reglas utilizables (respuesta cruda en %s)", dbg)
 			}
 			pretty, _ := json.MarshalIndent(probe, "", "  ")

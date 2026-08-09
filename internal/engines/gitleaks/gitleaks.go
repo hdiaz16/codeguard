@@ -54,8 +54,10 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	report.Close()
-	defer os.Remove(report.Name())
+	// Sólo se necesita el NOMBRE del temporal; gitleaks lo reescribe. El
+	// cierre y el borrado son de limpieza: su fallo no cambia el análisis.
+	_ = report.Close()
+	defer func() { _ = os.Remove(report.Name()) }()
 
 	// `protect` está deprecado desde 8.19: se usa `gitleaks git` (spec §5 etapa 1).
 	args := []string{"git", "--redact", "--report-format", "json", "--report-path", report.Name(), "--exit-code", "9"}

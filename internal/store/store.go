@@ -102,11 +102,11 @@ func (s *Store) migrate() error {
 			return err
 		}
 		if _, err := tx.Exec(string(ddl)); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback() // el error de la migración ya va en el return
 			return fmt.Errorf("migración %s: %w", name, err)
 		}
 		if _, err := tx.Exec(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, name, nowISO()); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -141,7 +141,7 @@ func (s *Store) SaveRun(meta RunMeta, res *pipeline.Result, filesChanged int) er
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	verdict := string(res.Verdict)
 	if len(res.Degraded) > 0 && res.Verdict == pipeline.Pass {
@@ -229,7 +229,7 @@ func (s *Store) SaveLLMFindings(runID string, fs []finding.Finding) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	for _, f := range fs {
 		id := f.ID
 		if id == "" {
@@ -335,7 +335,7 @@ func DefaultPath() string {
 		base = os.TempDir()
 	}
 	dir := filepath.Join(base, "codeguard")
-	os.MkdirAll(dir, 0o755)
+	_ = os.MkdirAll(dir, 0o755) // best-effort: Open dará el error real si no se puede escribir
 	return filepath.Join(dir, "codeguard.db")
 }
 

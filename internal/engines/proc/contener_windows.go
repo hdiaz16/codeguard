@@ -170,7 +170,9 @@ func contener(c *exec.Cmd) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo crear el job object: %w", err)
 	}
-	limpiar := func() { windows.CloseHandle(job) }
+	// Cerrar el job es lo que mata el árbol (KILL_ON_JOB_CLOSE); el error del
+	// propio Close no es accionable —el handle se descarta de todos modos.
+	limpiar := func() { _ = windows.CloseHandle(job) }
 
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
 		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
@@ -202,7 +204,7 @@ func contener(c *exec.Cmd) (func(), error) {
 	}
 	// Si esto falla no abortamos: las restricciones de interfaz son la capa
 	// menos crítica y perderlas no justifica dejar sin analizar el commit.
-	windows.SetInformationJobObject(
+	_, _ = windows.SetInformationJobObject(
 		job,
 		jobObjectBasicUIRestrictions,
 		uintptr(unsafe.Pointer(&ui)),
@@ -218,7 +220,7 @@ func contener(c *exec.Cmd) (func(), error) {
 		limpiar()
 		return nil, fmt.Errorf("no se pudo abrir el proceso %d: %w", c.Process.Pid, err)
 	}
-	defer windows.CloseHandle(h)
+	defer func() { _ = windows.CloseHandle(h) }() // el handle del proceso ya cumplió al asignarse al job
 
 	if err := windows.AssignProcessToJobObject(job, h); err != nil {
 		limpiar()

@@ -23,26 +23,33 @@ type FiltroExport struct {
 func (s *Store) ExportarRuns(destino string, f FiltroExport) (int, error) {
 	// La cláusula sigue siendo condicional; lo que nunca se concatena son los
 	// VALORES. Van como parámetros, así que da igual lo que traigan.
-	consulta := "SELECT id, repo_id, branch, verdict, blocking_findings, advisory_findings, created_at" +
-		" FROM runs WHERE 1=1"
+	//
+	// Los conteos salen de la tabla findings: runs no guarda totales — la
+	// primera versión de esto consultaba columnas que no existían y compiló
+	// igual, porque el SQL es texto. Lo atrapó el primer test del paquete.
+	consulta := `SELECT r.id, r.repo_id, r.branch, r.verdict,
+	       (SELECT COUNT(*) FROM findings f WHERE f.run_id = r.id AND f.blocking = 1),
+	       (SELECT COUNT(*) FROM findings f WHERE f.run_id = r.id AND f.blocking = 0),
+	       r.started_at
+	  FROM runs r WHERE 1=1`
 	var args []any
 	if f.Repo != "" {
-		consulta += " AND repo_id = ?"
+		consulta += " AND r.repo_id = ?"
 		args = append(args, f.Repo)
 	}
 	if f.Desde != "" {
-		consulta += " AND created_at >= ?"
+		consulta += " AND r.started_at >= ?"
 		args = append(args, f.Desde)
 	}
 	if f.Hasta != "" {
-		consulta += " AND created_at <= ?"
+		consulta += " AND r.started_at <= ?"
 		args = append(args, f.Hasta)
 	}
 	if f.Solo != "" {
-		consulta += " AND verdict = ?"
+		consulta += " AND r.verdict = ?"
 		args = append(args, f.Solo)
 	}
-	consulta += " ORDER BY created_at DESC"
+	consulta += " ORDER BY r.started_at DESC"
 	if f.Limite > 0 {
 		consulta += " LIMIT ?"
 		args = append(args, f.Limite)
@@ -101,8 +108,9 @@ func (s *Store) ExportarRuns(destino string, f FiltroExport) (int, error) {
 // ResumenSemanal describe la salud del repo en la última semana.
 func (s *Store) ResumenSemanal(repoID string) (string, error) {
 	desde := time.Now().AddDate(0, 0, -7).Format(time.RFC3339)
-	filas, err := s.db.Query(
-		"SELECT verdict, blocking_findings FROM runs WHERE repo_id = ? AND created_at >= ?", repoID, desde)
+	filas, err := s.db.Query(`SELECT r.verdict,
+	       (SELECT COUNT(*) FROM findings f WHERE f.run_id = r.id AND f.blocking = 1)
+	  FROM runs r WHERE r.repo_id = ? AND r.started_at >= ?`, repoID, desde)
 	if err != nil {
 		return "", err
 	}
@@ -116,22 +124,19 @@ func (s *Store) ResumenSemanal(repoID string) (string, error) {
 			continue
 		}
 		total++
-		if v == "block" {
+		switch v {
+		case "block":
 			bloqueados++
 			if b > 5 {
 				muyMalos++
 			}
-		} else if v == "pass" {
+		case "pass":
 			if b == 0 {
 				limpios++
 			} else {
 				conAvisos++
 			}
-		} else if v == "skipped" {
-			sinNada++
-		} else if v == "" {
-			sinNada++
-		} else {
+		default: // skipped, degraded, vacío: no cuentan como limpio ni bloqueado
 			sinNada++
 		}
 	}

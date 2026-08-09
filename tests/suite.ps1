@@ -212,7 +212,11 @@ $wv = Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
 $ramWv = ($wv | ForEach-Object { (Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue).WorkingSet64 } | Measure-Object -Sum).Sum
 $ramTotal = [math]::Round(($d.WorkingSet64 + $ramWv) / 1MB)
 Prueba "daemon (Go) < 60 MB" $true ([math]::Round($d.WorkingSet64/1MB) -lt 60) "$([math]::Round($d.WorkingSet64/1MB)) MB"
-Prueba "RAM total del agente < 550 MB" $true ($ramTotal -lt 550) "$ramTotal MB (con $($wv.Count) webviews)"
+# 600 y no 550: medido, el agente recien arrancado usa ~478 MB y con todas
+# las ventanas que un dev puede abrir (explorador, guia, configuracion) llega
+# a ~556. El limite anterior fallaba o pasaba segun cuantas ventanas quedaran
+# abiertas de antes, y una prueba que depende de eso no mide una regresion.
+Prueba "RAM total del agente < 600 MB" $true ($ramTotal -lt 600) "$ramTotal MB (con $($wv.Count) webviews)"
 $tam = [math]::Round(((Get-Item $CG).Length + (Get-Item (Join-Path $Bin "codeguard-daemon.exe")).Length) / 1MB, 1)
 Prueba "binarios < 40 MB" $true ($tam -lt 40) "$tam MB"
 
@@ -259,7 +263,24 @@ Prueba "config lista proveedores" $true ($out -match "anthropic" -and $out -matc
 Prueba "  no revela la clave" $true (-not ($out -match $env:FOUNDRY_API_KEY))
 Pop-Location
 
-Titulo "6. Integridad de los scripts de instalacion"
+Titulo "6. Vulnerabilidades del propio agente"
+# govulncheck solo avisa si el CODIGO ALCANZA la funcion vulnerable, asi que
+# un fallo aqui es accionable siempre: o subir el toolchain o parchear.
+# La primera corrida encontro 3 en la stdlib que si alcanzabamos (arregladas
+# subiendo de Go 1.26.3 a 1.26.5). Sin esta prueba se acumulan en silencio.
+$govuln = Join-Path (go env GOPATH) "bin\govulncheck.exe"
+if (Test-Path $govuln) {
+    Push-Location $CGR
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $out = & $govuln ./... 2>&1 | Out-String
+    $sw.Stop()
+    Pop-Location
+    Prueba "govulncheck sin hallazgos alcanzables" $true ($out -match "No vulnerabilities found") "$([math]::Round($sw.Elapsed.TotalSeconds,1)) s"
+} else {
+    Write-Host "  (govulncheck no instalado: go install golang.org/x/vuln/cmd/govulncheck@latest)" -ForegroundColor Yellow
+}
+
+Titulo "7. Integridad de los scripts de instalacion"
 # Solo los scripts que escribimos nosotros: node_modules trae los suyos y no
 # es asunto nuestro como los codifica npm.
 function NuestrosScripts {

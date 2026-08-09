@@ -1,0 +1,57 @@
+# Análisis estático del propio CodeGuard. Un agente que revisa el código de
+# otros no puede permitirse menos consigo mismo.
+#
+# La selección es deliberada, no el default:
+#   - staticcheck/govet/unused/ineffassign: errores reales, casi sin ruido.
+#   - errcheck: el retorno ignorado que ya nos mordió dos veces (el Close del
+#     .gitattributes y el del generador de íconos). Con las exclusiones
+#     estándar para no marcar cada `defer Close()` idiomático.
+#   - gosec: la mirada de seguridad sobre nosotros mismos.
+# Sin misspell: los comentarios están en español y lo dispararían entero.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        # Permisos de archivo: gosec quiere 0600/0750, pero en Windows las
+        # ACL POSIX no aplican y 0644/0755 son el default de todo Go. Los
+        # datos ya viven bajo %LOCALAPPDATA% del usuario, protegido por SO.
+        - G301
+        - G302
+        - G306
+        # Overflow de enteros: los usamos en conversiones acotadas por
+        # construcción (canales de color 0-255, tamaños de ícono ≤256).
+        - G115
+        # Path traversal por taint: gosec marca leer archivos cuya ruta viene
+        # de fuera. En cada caso la ruta está confinada —bajo la raíz del repo
+        # que git nos dio, o bajo %LOCALAPPDATA% del usuario— y donde había
+        # riesgo real (el snippet del panel) sí se valida con filepath.Clean +
+        # prefijo. gosec no puede probar el confinamiento; nosotros sí.
+        - G703
+        - G122
+        # Errores sin manejar en llamadas de limpieza (Close/Remove diferidos):
+        # ya se marcan explícitos con _ = donde corresponde; G104 duplica a
+        # errcheck, que es más preciso.
+        - G104
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      # En las pruebas, ignorar un retorno suele ser el punto de la prueba
+      # (se verifica el efecto, no el error), y gosec marca los fixtures.
+      - path: _test\.go
+        linters: [errcheck, gosec]
+      # Los spikes son experimentos congelados de la fase 0: se conservan
+      # como registro, no como código vivo.
+      - path: ^spikes/
+        linters: [errcheck, govet, staticcheck, unused, ineffassign, gosec]

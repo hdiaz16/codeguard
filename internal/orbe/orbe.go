@@ -44,7 +44,7 @@ func PNG(tamano int, estado string) []byte {
 		return b
 	}
 	var buf bytes.Buffer
-	png.Encode(&buf, Dibujar(tamano, estado))
+	_ = png.Encode(&buf, Dibujar(tamano, estado)) // a un bytes.Buffer no falla
 	cache[clave] = buf.Bytes()
 	return buf.Bytes()
 }
@@ -167,9 +167,9 @@ func ConstruirICO(tamanos []int, estado string) ([]byte, error) {
 
 	var out bytes.Buffer
 	// ICONDIR: reservado, tipo 1 (icono), número de imágenes.
-	binary.Write(&out, binary.LittleEndian, uint16(0))
-	binary.Write(&out, binary.LittleEndian, uint16(1))
-	binary.Write(&out, binary.LittleEndian, uint16(len(imgs)))
+	_ = binary.Write(&out, binary.LittleEndian, uint16(0))
+	_ = binary.Write(&out, binary.LittleEndian, uint16(1))
+	_ = binary.Write(&out, binary.LittleEndian, uint16(len(imgs)))
 
 	desplazamiento := 6 + 16*len(imgs)
 	for _, e := range imgs {
@@ -177,14 +177,15 @@ func ConstruirICO(tamanos []int, estado string) ([]byte, error) {
 		if e.tamano >= 256 {
 			ancho = 0 // 0 significa 256 en el formato
 		}
-		out.WriteByte(ancho)                                            // ancho
-		out.WriteByte(ancho)                                            // alto
-		out.WriteByte(0)                                                // colores de paleta (0 = sin paleta)
-		out.WriteByte(0)                                                // reservado
-		binary.Write(&out, binary.LittleEndian, uint16(1))              // planos
-		binary.Write(&out, binary.LittleEndian, uint16(32))             // bits por píxel
-		binary.Write(&out, binary.LittleEndian, uint32(len(e.png)))     // tamaño
-		binary.Write(&out, binary.LittleEndian, uint32(desplazamiento)) // offset
+		// Todo va a un bytes.Buffer, que nunca falla al escribir.
+		out.WriteByte(ancho)                                                // ancho
+		out.WriteByte(ancho)                                                // alto
+		out.WriteByte(0)                                                    // colores de paleta (0 = sin paleta)
+		out.WriteByte(0)                                                    // reservado
+		_ = binary.Write(&out, binary.LittleEndian, uint16(1))              // planos
+		_ = binary.Write(&out, binary.LittleEndian, uint16(32))             // bits por píxel
+		_ = binary.Write(&out, binary.LittleEndian, uint32(len(e.png)))     // tamaño
+		_ = binary.Write(&out, binary.LittleEndian, uint32(desplazamiento)) // offset
 		desplazamiento += len(e.png)
 	}
 	for _, e := range imgs {

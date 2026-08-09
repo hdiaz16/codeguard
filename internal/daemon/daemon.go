@@ -168,7 +168,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		if s.OnCommand != nil {
 			s.OnCommand(req.Command, req.RepoRoot)
 		}
-		ipc.WriteResponse(conn, &ipc.Response{RunID: req.RunID, Verdict: "ok"})
+		_ = ipc.WriteResponse(conn, &ipc.Response{RunID: req.RunID, Verdict: "ok"}) // ack de comando; si el pipe se cerró, no hay nada que hacer
 		return
 	}
 	if s.OnRequest != nil {
@@ -184,11 +184,16 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 	if s.Shadow != nil && (resp.Verdict == "pass" || resp.Verdict == "block") {
 		if cfg, err := config.Load(req.RepoRoot); err == nil && cfg != nil {
+			//nolint:gosec // G118: la sombra sobrevive al request a propósito (ver context.Background abajo)
 			go func() {
 				// El hook persiste el run justo después de recibir la respuesta;
 				// esta espera evita actualizar un run que aún no existe.
 				time.Sleep(2 * time.Second)
-				s.Shadow.Run(context.Background(), cfg, req, resp.Findings)
+				// context.Background a propósito (no el de la petición): la
+				// sombra corre DESPUÉS de responder al hook y sobrevive al
+				// cierre de la conexión. Atarla al contexto de la petición la
+				// cancelaría justo al empezar.
+				s.Shadow.Run(context.Background(), cfg, req, resp.Findings) //nolint:contextcheck // desligado del request a propósito
 			}()
 		}
 	}
