@@ -150,3 +150,5 @@ func (s *Store) ResumenSemanal(repoID string) (string, error) {
 	return fmt.Sprintf("%d commits: %d limpios, %d con avisos, %d bloqueados, %d omitidos",
 		total, limpios, conAvisos, bloqueados, sinNada), nil
 }
+
+// comentario nuevo

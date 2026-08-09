@@ -1,6 +1,7 @@
 package linters
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os/exec"
@@ -26,6 +27,24 @@ func runTool(ctx context.Context, dir, bin string, args ...string) (string, erro
 	// Los linters se leen línea por línea: un texto recortado sigue siendo
 	// útil, a diferencia de un JSON a medias.
 	return string(salida.Combinada()), nil
+}
+
+// runToolStdin ejecuta una herramienta pasándole contenido por la entrada
+// estándar y devuelve su salida. Se usa para preguntarle a gofmt cómo
+// formatearía un contenido concreto, sin depender de lo que haya en disco.
+func runToolStdin(ctx context.Context, dir, bin string, entrada []byte, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	cmd.Env = proc.Entorno()
+	cmd.Stdin = bytes.NewReader(entrada)
+	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return nil, err
+		}
+	}
+	return salida.Stdout, nil
 }
 
 func relTo(root, p string) string {
