@@ -1,5 +1,13 @@
 # CodeGuard baseline — hallazgos preexistentes suprimidos (§17 paso 4).
 # Solo lo NUEVO bloquea. Regenerar con: codeguard baseline
 # Los secretos nunca se suprimen.
+17c4a03954d745888aab87b85819ae5fbe687aa09a82692f3f20f23214df7bea  # require-lock-timeout migrations/001_init.sql:23
+55304b95a89ab5ebece2b79c9eb36c3033f8238386af8e11dc3b4139515c4d75  # require-statement-timeout migrations/001_init.sql:23
 5eddc7c63b6503a55db149f8b9f4b47ba3cfb8859efcc8166e279d4aec291e1b  # gofmt spikes/s4-namedpipes/main.go:1
+61a17959f372de542b7691c36e9ab5b2806ce7309778858de09f0bcfcd13cd4c  # require-concurrent-index-creation migrations/001_init.sql:43
+8c7f218e1413c26aaba732b09089df2cfd819b8fbfb7f9695c10018a5696ab6a  # ruff-format spikes/s5-tsc-incremental/generate_project.py:1
+9802592b11420599450f45bb9115afb232f2fba99af80bf6aa295e746d3e245f  # I001 spikes/s5-tsc-incremental/generate_project.py:3
+af732c5640a2df29003481e74c037f7747b2e1fd357e9fcc298ce0547f2f85dd  # prefer-robust-stmts migrations/001_init.sql:2
 c0d3801ddf9676033d20c67614c8684db2bb9f46f86088131e735e2c4b250cda  # gofmt spikes/s3-foundry/main.go:1
+db32d603512220cfea072244ebaade0d8d8441c91314dc96cd00733c36c35b5b  # prefer-bigint-over-int migrations/001_init.sql:16
+e3386511ff42e250ae91e2129854b7be692721d54088025c54352245fc7e2187  # ruff-format spikes/s1-semgrep/generate_testrepo.py:1

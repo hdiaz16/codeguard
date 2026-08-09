@@ -51,9 +51,41 @@ func RememberRepo(repoRoot string) {
 	f.WriteString(repoRoot + "\n")
 }
 
+// WarmTrivyDB descarga/refresca la base de vulnerabilidades fuera del camino
+// del commit (corrección H10 de la auditoría). El hook siempre corre trivy con
+// --skip-db-update: sin esta rutina, la primera vez falla ("cannot be specified
+// on the first run") y después envejece para siempre.
+func WarmTrivyDB(ctx context.Context) {
+	if _, err := exec.LookPath("trivy"); err != nil {
+		return // trivy no instalado: nada que refrescar
+	}
+	// metadata.json de la DB: si tiene menos de 24 h, no se toca
+	cache := filepath.Join(os.Getenv("LOCALAPPDATA"), "trivy", "db", "metadata.json")
+	if st, err := os.Stat(cache); err == nil && time.Since(st.ModTime()) < 24*time.Hour {
+		return
+	}
+	start := time.Now()
+	c, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(c, "trivy", "image", "--download-db-only")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("trivy: no se pudo refrescar la DB: %v (%s)", err, firstLine(string(out)))
+		return
+	}
+	log.Printf("trivy: base de vulnerabilidades actualizada (%.0f s)", time.Since(start).Seconds())
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i > 0 {
+		return s[:i]
+	}
+	return s
+}
+
 // WarmAll recalienta tsc en cada repo recordado. Llamar en goroutine al
 // arrancar el daemon; nunca está en el camino de ningún commit.
 func WarmAll(ctx context.Context) {
+	WarmTrivyDB(ctx)
 	f, err := os.Open(warmListPath())
 	if err != nil {
 		return

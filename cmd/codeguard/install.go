@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"codeguard/internal/gitdiff"
+	"codeguard/internal/registry"
 )
 
 // Los shims van con LF y shebang sh: Git for Windows los ejecuta vía bash
@@ -67,6 +68,10 @@ func installCmd() *cobra.Command {
 					return fmt.Errorf("git config %s: %v: %s", kv[0], err, out)
 				}
 			}
+
+			// Registrar el proyecto también aquí: el dev que recibe la config
+			// por `git pull` solo corre `install`, nunca `init`.
+			registry.Add(repoRoot, filepath.Base(repoRoot), "")
 
 			fmt.Println("CodeGuard instalado en", repoRoot)
 			fmt.Println("  hooks:   .githooks/{pre-commit, prepare-commit-msg, post-commit}")
