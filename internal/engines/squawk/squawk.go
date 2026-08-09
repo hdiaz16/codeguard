@@ -106,10 +106,9 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 		if blocking {
 			sev = finding.Error
 		}
-		msg := v.Message
-		if msg == "" {
-			msg = v.Rule
-		}
+		// El resto del producto le habla al desarrollador en español; una
+		// migración bloqueada es el peor momento para obligarle a traducir.
+		msg, arreglo := traducir(v.Rule, v.Message, v.Help)
 		f := finding.Finding{
 			Engine:   "squawk",
 			RuleKey:  v.Rule,
@@ -122,7 +121,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 			Message:  msg,
 			Why: "Cambio de esquema con riesgo de lock o incompatibilidad. Pasar el lint no basta: " +
 				"aplica la migración con lock_timeout y statement_timeout configurados en Postgres.",
-			FixHint:  v.Help,
+			FixHint:  arreglo,
 			Verified: true,
 			Source:   finding.Deterministic,
 			// El SQL de la línea puede no estar disponible; el fingerprint usa regla+ruta.
