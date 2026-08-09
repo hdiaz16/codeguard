@@ -37,38 +37,72 @@ if (Test-Path (Join-Path $Src "rulepacks")) {
 }
 Ok "binarios y rulepack copiados"
 
-# ── 2. motores descargables (gitleaks, trivy) con hash registrado ────────────
-$hashes = @{}
-$hashFile = Join-Path $Engines "hashes.json"
-if (Test-Path $hashFile) {
-    (Get-Content $hashFile -Raw | ConvertFrom-Json).psobject.Properties |
-        ForEach-Object { $hashes[$_.Name] = $_.Value }
+# ── 2. motores descargables (gitleaks, trivy) con hash FIJADO ────────────────
+# Los hashes salen de los checksums.txt que publican los propios proyectos en
+# sus releases, no de la primera descarga que le toco a esta maquina. Un
+# binario alterado en transito o en el espejo no llega a instalarse: se
+# verifica el zip ANTES de extraerlo y se aborta.
+#
+# Fuente de verdad compartida con el agente:
+#   internal/engines/identidad/motores.json
+# Al subir de version hay que actualizar los dos.
+$PinZip = @{
+    "gitleaks" = "54fe94f644b832dd08e8c3a5915efb3bfa862386d59fb27ca0792cb687a83573"
+    "trivy"    = "382250158fb9431ff9b87904205027b066a544234b8952b2dd764bd712d55387"
+}
+$PinExe = @{
+    "gitleaks" = "9d08e3f5cfb35a98f230b97bcda24f8d3fc66363c91868ffc98dac0afebdcb72"
+    "trivy"    = "e4a8c8414258c22cd532b73470d544087208bace64bc2ad9c44afa4a94bb33d1"
 }
 
 function Install-FromZip($name, $url, $exeInZip) {
     $exe = Join-Path $Engines "$name.exe"
-    if (Test-Path $exe) { Ok "$name ya presente"; return }
+    if (Test-Path $exe) {
+        # Presente no basta: tiene que ser el binario publicado.
+        $h = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+        if ($h -eq $PinExe[$name]) { Ok "$name ya presente y verificado"; return }
+        Write-Host "    $name presente pero NO coincide con el binario publicado" -ForegroundColor Yellow
+        Write-Host "    se reemplaza por la version verificada" -ForegroundColor Yellow
+        Remove-Item -LiteralPath $exe -Force
+    }
     Step "Descargando $name"
     $tmp = Join-Path $env:TEMP "cg-$name.zip"
     Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+
+    # Verificar ANTES de extraer: un zip manipulado no se descomprime siquiera.
+    $zh = (Get-FileHash $tmp -Algorithm SHA256).Hash.ToLower()
+    if ($zh -ne $PinZip[$name]) {
+        Remove-Item -LiteralPath $tmp -Force
+        throw @"
+$name no coincide con el checksum publicado por sus autores.
+  descargado: $zh
+  esperado:   $($PinZip[$name])
+La descarga se descarto sin abrir. Puede ser una version distinta a la que
+fijamos, un espejo alterado o una red que modifica el trafico. No se instala
+nada hasta aclararlo.
+"@
+    }
+    Ok "${name}: checksum del publicador verificado"
+
     $dir = Join-Path $env:TEMP "cg-$name"
     Expand-Archive $tmp $dir -Force
     $found = Get-ChildItem $dir -Recurse -Filter $exeInZip | Select-Object -First 1
     if (-not $found) { throw "$exeInZip no venia en el zip de $name" }
     Copy-Item $found.FullName $exe -Force
     Remove-Item $tmp, $dir -Recurse -Force -Confirm:$false
-    # hardening 11: hash registrado en la primera instalacion; codeguard repair
-    # lo verificara en cada arranque. Pinnear en este script cuando se bendiga.
-    $h = (Get-FileHash $exe -Algorithm SHA256).Hash
-    $script:hashes[$name] = $h
-    Ok "$name $((Get-Item $exe).Length / 1MB -as [int]) MB - sha256 $($h.Substring(0,16))..."
+
+    $h = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+    if ($h -ne $PinExe[$name]) {
+        Remove-Item -LiteralPath $exe -Force
+        throw "${name}: el zip era correcto pero el .exe extraido no coincide ($h)"
+    }
+    Ok "$name $((Get-Item $exe).Length / 1MB -as [int]) MB - verificado"
 }
 
 Install-FromZip "gitleaks" "https://github.com/gitleaks/gitleaks/releases/download/v$GitleaksVer/gitleaks_${GitleaksVer}_windows_x64.zip" "gitleaks.exe"
 if (-not $SkipTrivy) {
     Install-FromZip "trivy" "https://github.com/aquasecurity/trivy/releases/download/v$TrivyVer/trivy_${TrivyVer}_windows-64bit.zip" "trivy.exe"
 }
-$hashes | ConvertTo-Json | Set-Content $hashFile
 
 # ── 3. motores Python (semgrep, squawk, ruff) ────────────────────────────────
 Step "Motores Python (semgrep, squawk, ruff)"

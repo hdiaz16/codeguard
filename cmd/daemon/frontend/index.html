@@ -311,7 +311,14 @@
     </details>`;
   }
 
+  // Raíz del proyecto que se está viendo AHORA. El botón del grafo debe abrir
+  // el de este proyecto, no el del último que se analizó: con varios repos
+  // enrolados no son el mismo, y el dev que selecciona uno bloqueado espera
+  // ver ese.
+  let rootActual = null;
+
   function render(p) {
+    rootActual = p.repo_root || null;
     const v = $("verdict");
     if (p.verdict === "block") {
       v.textContent = `Bloqueado: ${p.blocking} problema${p.blocking === 1 ? "" : "s"} que el CI también rechazaría`;
@@ -469,7 +476,7 @@
   $("btn-help").addEventListener("click", () => emit("open-guide", null));
 
   $("btn-graph").addEventListener("click", () => {
-    emit("open-graph", null);
+    emit("open-graph", rootActual ? [rootActual] : null);
     const b = $("btn-graph");
     b.textContent = "…";
     setTimeout(() => { b.textContent = "🕸"; }, 2500);

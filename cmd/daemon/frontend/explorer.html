@@ -198,15 +198,35 @@ try {
   const r = await fetch("/graph.json?t=" + Date.now());
   if (!r.ok) throw new Error("HTTP " + r.status);
   DATA = await r.json();
+  if (DATA.error) throw new Error(DATA.error);
   if (!DATA.nodes || !DATA.nodes.length) throw new Error("el grafo llegó vacío");
 } catch (err) {
+  // Quedarse sin grafo no debe dejar al dev encerrado: se mantiene la lista de
+  // proyectos para que pueda saltar a otro sin cerrar la ventana.
+  const otros = (DATA && DATA.proyectos || []).filter(p => !p.activo);
+  const lista = otros.length
+    ? `<div style="margin-top:26px"><div style="color:#6f7b85;font-size:12px;margin-bottom:9px">
+         Otros proyectos con contexto:</div>
+       <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">${
+         otros.map(p => `<button data-root="${p.root}" style="background:#161b20;border:0;
+           color:#c8d2da;padding:7px 13px;border-radius:7px;cursor:pointer;font:13px 'Segoe UI'">
+           ${p.estado === "block" ? "⛔ " : ""}${p.nombre}</button>`).join("")}</div></div>`
+    : "";
   document.body.innerHTML =
     `<div style="display:grid;place-items:center;height:100%;text-align:center;
        font:14px 'Segoe UI';color:#a3aeb7;padding:40px">
-       <div><b style="color:#e8edf1;font-size:16px">No se pudo cargar el grafo</b><br><br>
-       ${String(err.message || err)}<br><br>
-       <span style="color:#6f7b85;font-size:12px">Revisa
-       %LOCALAPPDATA%\\codeguard\\daemon.log</span></div></div>`;
+       <div style="max-width:620px">
+       <b style="color:#e8edf1;font-size:16px">No se pudo mostrar el grafo</b><br><br>
+       <span style="white-space:pre-line">${String(err.message || err)}</span><br><br>
+       <span style="color:#6f7b85;font-size:12px">Detalle técnico en
+       %LOCALAPPDATA%\\codeguard\\daemon.log</span>
+       ${lista}</div></div>`;
+  document.body.addEventListener("click", e => {
+    const b = e.target.closest("button[data-root]");
+    if (!b) return;
+    try { Events.Emit("graph-switch", [b.dataset.root]); }
+    catch { location.reload(); }
+  });
   throw err;
 }
 

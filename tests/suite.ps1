@@ -182,7 +182,34 @@ Prueba "graph --deep abre el explorador" $true ($out -match "ventana del agente|
 Prueba "  no usa el navegador" $true (-not ($out -match "docs.explorador.index.html" -and $out -notmatch "ventana"))
 $out = & $CG stats 2>&1 | Out-String
 Prueba "stats responde" $true ($out.Length -gt 0)
+$out = & $CG engines 2>&1 | Out-String
+Prueba "engines verifica los binarios" $true ($out -match "publicados por sus autores")
+Prueba "  gitleaks marcado como critico" $true ($out -match "gitleaks \(cr")
 Pop-Location
+
+Titulo "6. Integridad de los scripts de instalacion"
+# Solo los scripts que escribimos nosotros: node_modules trae los suyos y no
+# es asunto nuestro como los codifica npm.
+function NuestrosScripts {
+    Get-ChildItem (Split-Path $PSScriptRoot -Parent) -Recurse -Filter *.ps1 |
+        Where-Object { $_.FullName -notmatch "node_modules|\\spikes\\" }
+}
+# Un error de sintaxis en install.ps1 no se nota hasta que un dev lo corre en
+# su maquina y falla la instalacion entera. Un "$var:" mal escrito ya paso.
+$malos = @()
+NuestrosScripts | ForEach-Object {
+    $errs = $null
+    [void][System.Management.Automation.PSParser]::Tokenize((Get-Content $_.FullName -Raw), [ref]$errs)
+    if ($errs -and $errs.Count) { $malos += "$($_.Name):$($errs[0].Token.StartLine)" }
+}
+Prueba "todos los .ps1 parsean" 0 $malos.Count ($malos -join ", ")
+# PowerShell 5 rompe con UTF-8 sin BOM: los acentos y guiones largos salen mal.
+$sinBom = @()
+NuestrosScripts | ForEach-Object {
+    $b = [System.IO.File]::ReadAllBytes($_.FullName)
+    if ($b.Length -lt 3 -or $b[0] -ne 0xEF -or $b[1] -ne 0xBB -or $b[2] -ne 0xBF) { $sinBom += $_.Name }
+}
+Prueba "todos los .ps1 llevan BOM" 0 $sinBom.Count ($sinBom -join ", ")
 
 # ── resumen ──────────────────────────────────────────────────────────────────
 Write-Host ""

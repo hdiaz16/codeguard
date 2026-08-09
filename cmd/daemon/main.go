@@ -52,6 +52,28 @@ type snippetLine struct {
 	Culprit bool   `json:"culprit"`
 }
 
+// rootsDelEvento saca las rutas de un evento del frontend. Wails entrega el
+// dato como llegó de JavaScript, y las dos formas de Emit del runtime lo
+// mandan distinto: una como arreglo, otra como valor suelto.
+func rootsDelEvento(e *application.CustomEvent) []string {
+	if e == nil || e.Data == nil {
+		return nil
+	}
+	raw, err := json.Marshal(e.Data)
+	if err != nil {
+		return nil
+	}
+	var roots []string
+	if json.Unmarshal(raw, &roots) == nil && len(roots) > 0 {
+		return roots
+	}
+	var uno string
+	if json.Unmarshal(raw, &uno) == nil && uno != "" {
+		return []string{uno}
+	}
+	return nil
+}
+
 type panelPayload struct {
 	Repo        string `json:"repo"`
 	RepoRoot    string `json:"repo_root"`
@@ -479,27 +501,44 @@ func main() {
 		}
 		stateMu.Unlock()
 		sort.Slice(proyectos, func(i, j int) bool { return proyectos[i].Nombre < proyectos[j].Nombre })
-		if payload == nil {
-			log.Println("grafo: sin contexto para", root)
-			return
-		}
 		repoRoot := filepath.FromSlash(root)
+		nombre := filepath.Base(repoRoot)
+		if payload != nil {
+			nombre = payload.Repo
+		}
 		go func() {
+			// La ventana se abre SIEMPRE. Antes, cualquiera de estos fallos
+			// hacía que el botón no hiciera absolutamente nada: sin ventana,
+			// sin mensaje, sólo una línea en un log que nadie mira.
 			cg, err := codegraph.Build(repoRoot)
-			if err != nil || cg == nil || len(cg.Nodes) == 0 {
-				log.Printf("grafo no disponible para %s: %v", repoRoot, err)
-				return
+			var motivo string
+			switch {
+			case err != nil:
+				motivo = "No pude leer el código de este proyecto: " + err.Error()
+			case cg == nil || len(cg.Nodes) == 0:
+				motivo = "No encontré funciones que mapear en " + nombre + ".\n\n" +
+					"El explorador entiende Go (por go.mod) y TypeScript/JavaScript " +
+					"(por package.json). Si este proyecto usa otro lenguaje, todavía no está cubierto."
 			}
-			cg.Overlay = buildOverlay(cg, payload)
+			if motivo != "" {
+				log.Printf("grafo de %s no disponible: %s", nombre, strings.SplitN(motivo, "\n", 2)[0])
+				cg = &codegraph.Graph{Root: root, Error: motivo}
+			} else if payload != nil {
+				// Sin análisis previo no hay hallazgos que superponer, pero el
+				// mapa del código se puede ver igual.
+				cg.Overlay = buildOverlay(cg, payload)
+			}
 			cg.Proyectos = proyectos
 			data, err := json.Marshal(cg)
 			if err != nil {
 				log.Println("grafo: no se pudo serializar:", err)
-				return
+				data = []byte(`{"nodes":[],"edges":[],"error":"no se pudo preparar el grafo"}`)
 			}
 			graphJSON.Store(data)
-			log.Printf("grafo de %s: %d nodos, %d aristas (%d KB servidos en /graph.json)",
-				payload.Repo, len(cg.Nodes), len(cg.Edges), len(data)/1024)
+			if motivo == "" {
+				log.Printf("grafo de %s: %d nodos, %d aristas (%d KB servidos en /graph.json)",
+					nombre, len(cg.Nodes), len(cg.Edges), len(data)/1024)
+			}
 			application.InvokeAsync(func() {
 				if explorer != nil {
 					explorer.Close()
@@ -527,7 +566,13 @@ func main() {
 		}()
 	}
 
-	app.Event.On("open-graph", func(*application.CustomEvent) {
+	app.Event.On("open-graph", func(e *application.CustomEvent) {
+		// El panel manda la raíz del proyecto que se está viendo. Sin ella
+		// —p.ej. desde el menú de la bandeja— se cae al último analizado.
+		if roots := rootsDelEvento(e); len(roots) > 0 && roots[0] != "" {
+			openGraph(roots[0])
+			return
+		}
 		if lastPayload == nil {
 			log.Println("grafo: aún no hay proyecto activo")
 			return
@@ -564,15 +609,7 @@ func main() {
 	})
 	// El explorador pide cambiar al grafo de otro proyecto.
 	app.Event.On("graph-switch", func(e *application.CustomEvent) {
-		raw, _ := json.Marshal(e.Data)
-		var roots []string
-		if json.Unmarshal(raw, &roots) != nil || len(roots) == 0 {
-			var one string
-			if json.Unmarshal(raw, &one) == nil {
-				roots = []string{one}
-			}
-		}
-		if len(roots) > 0 {
+		if roots := rootsDelEvento(e); len(roots) > 0 {
 			openGraph(roots[0])
 		}
 	})

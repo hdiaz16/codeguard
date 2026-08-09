@@ -45,6 +45,10 @@ type Graph struct {
 	// Proyectos con contexto vivo, para cambiar de repo desde el explorador.
 	// El grafo es SIEMPRE de un proyecto: no se mezclan sistemas distintos.
 	Proyectos []Proyecto `json:"proyectos,omitempty"`
+	// Error explica, en palabras para el desarrollador, por qué no hay grafo.
+	// La ventana se abre igual y lo muestra: un botón que no hace nada es
+	// peor que un botón que explica qué pasó.
+	Error string `json:"error,omitempty"`
 }
 
 type Proyecto struct {

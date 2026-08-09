@@ -1,0 +1,42 @@
+{
+  "_comentario": [
+    "Hashes SHA-256 tomados de los archivos checksums.txt que publican los",
+    "propios proyectos en sus releases de GitHub, no de la primera descarga",
+    "que le tocó a una máquina. Un binario alterado en tránsito o en el",
+    "espejo ya no se instala: el instalador verifica el zip ANTES de extraer",
+    "y aborta si no coincide.",
+    "",
+    "Para subir de versión: descarga el checksums.txt de la release nueva,",
+    "copia la línea del artefacto de Windows, y añade una entrada más al",
+    "arreglo de versiones. Las versiones viejas se quedan: un equipo no",
+    "actualiza todo el mismo día."
+  ],
+  "motores": {
+    "gitleaks": {
+      "critico": true,
+      "versiones": [
+        {
+          "version": "8.30.0",
+          "artefacto": "gitleaks_8.30.0_windows_x64.zip",
+          "url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_windows_x64.zip",
+          "sha256_zip": "54fe94f644b832dd08e8c3a5915efb3bfa862386d59fb27ca0792cb687a83573",
+          "sha256_exe": "9d08e3f5cfb35a98f230b97bcda24f8d3fc66363c91868ffc98dac0afebdcb72",
+          "fuente": "gitleaks_8.30.0_checksums.txt"
+        }
+      ]
+    },
+    "trivy": {
+      "critico": false,
+      "versiones": [
+        {
+          "version": "0.71.0",
+          "artefacto": "trivy_0.71.0_windows-64bit.zip",
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.71.0/trivy_0.71.0_windows-64bit.zip",
+          "sha256_zip": "382250158fb9431ff9b87904205027b066a544234b8952b2dd764bd712d55387",
+          "sha256_exe": "e4a8c8414258c22cd532b73470d544087208bace64bc2ad9c44afa4a94bb33d1",
+          "fuente": "trivy_0.71.0_checksums.txt"
+        }
+      ]
+    }
+  }
+}

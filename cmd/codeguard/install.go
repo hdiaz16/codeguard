@@ -12,6 +12,7 @@ import (
 
 	"codeguard/internal/config"
 	"codeguard/internal/daemon"
+	"codeguard/internal/engines/identidad"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/registry"
 )
@@ -151,6 +152,19 @@ func repairCmd() *cobra.Command {
 			if err := repararRulepack(); err != nil {
 				ok = false
 				fmt.Println("  " + err.Error())
+			}
+			// Identidad de los motores descargables: que estén no basta, tienen
+			// que ser los que publicaron sus autores.
+			for _, r := range identidad.Verificar(DirMotores()) {
+				switch r.Estado {
+				case identidad.Verificado:
+					fmt.Printf("  ok    %s v%s (binario publicado)\n", r.Motor, r.Version)
+				case identidad.Ausente:
+					// Ya lo reporta el bloque de herramientas de arriba.
+				default:
+					ok = false
+					fmt.Printf("  ALERTA %s: %s → revisa con `codeguard engines`\n", r.Motor, r.Detalle)
+				}
 			}
 			if !ok {
 				fmt.Println("\nsin gitleaks la compuerta de secretos es fail-closed y bloquea los commits")
