@@ -1,0 +1,44 @@
+﻿CODEGUARD — QUÉ ES Y QUÉ VAS A INSTALAR
+
+CodeGuard es un agente local de análisis pre-commit. Vive en tu máquina,
+revisa lo que estás a punto de commitear y bloquea únicamente lo que el
+CI también rechazaría. Si el commit pasa aquí, pasa allá.
+
+QUÉ HACE
+
+  · Busca secretos y credenciales en lo staged (compuerta fail-closed).
+  · Aplica 112 reglas propias de seguridad, calidad y datos sobre
+    Go, Python, TypeScript/JS, C# y Java.
+  · Detecta migraciones de PostgreSQL riesgosas y dependencias con CVE.
+  · Un orbe en la esquina de tu pantalla muestra el estado de cada análisis.
+
+QUÉ SE INSTALA Y DÓNDE
+
+  · CodeGuard (CLI + daemon del orbe) en %LOCALAPPDATA%\CodeGuard\bin
+  · Motores de análisis en %LOCALAPPDATA%\CodeGuard\engines:
+      gitleaks y trivy — descargados de sus releases oficiales y verificados
+      contra el checksum SHA-256 publicado por sus autores; si un checksum
+      no coincide, no se instala nada.
+      semgrep, squawk y ruff — vía pip (instala Python si no lo tienes).
+  · Todos los motores son necesarios: sin ellos se rompe la paridad con el CI.
+
+QUÉ CAMBIA EN TU EQUIPO
+
+  · Se agregan las carpetas de CodeGuard al PATH de tu usuario.
+  · El daemon del orbe arranca con tu sesión de Windows.
+  · Nada requiere permisos de administrador; todo es por-usuario.
+
+TU CÓDIGO NO SALE DE TU MÁQUINA
+
+  · Todo el análisis es local. La telemetría se guarda en una base de
+    datos SQLite en tu equipo y no se envía a ningún lado.
+  · La capa de consejo con modelo de IA es opcional y viene apagada;
+    si algún día la activas, todo lo que parezca una credencial se
+    redacta antes de cualquier llamada.
+
+DESINSTALACIÓN
+
+  · Desde "Aplicaciones instaladas" de Windows, cuando quieras.
+    Tus repositorios no se tocan.
+
+Al aceptar, autorizas la instalación descrita arriba en tu equipo.

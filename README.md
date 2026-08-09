@@ -63,13 +63,22 @@ a los demás.
 
 ## Instalación
 
+Con el paquete instalador (lo genera `dist\build-dist.ps1` si hay Inno Setup):
+
+```
+CodeGuard-Setup.exe          # asistente gráfico; /VERYSILENT para reparto masivo
+```
+
+O con el script clásico:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File dist\install.ps1
 ```
 
 Sin permisos de administrador. Instala binarios y motores bajo
 `%LOCALAPPDATA%\CodeGuard`, deja el daemon arrancando con la sesión y verifica
-cada motor descargado contra el checksum publicado por sus autores.
+cada motor descargado contra el checksum publicado por sus autores. El setup
+queda registrado en «Aplicaciones instaladas» con su desinstalador.
 
 Después, en cada repositorio:
 
