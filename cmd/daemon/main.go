@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -308,6 +310,37 @@ func main() {
 		if lastPayload != nil {
 			app.Event.Emit("analysis", lastPayload)
 		}
+	})
+
+	// Botón 🕸: genera el grafo de dependencias del repo del último análisis
+	// y lo abre (Obsidian si el repo tiene vault; app por defecto si no).
+	app.Event.On("open-graph", func(*application.CustomEvent) {
+		if lastPayload == nil {
+			return
+		}
+		repoRoot := filepath.FromSlash(lastPayload.RepoRoot)
+		go func() {
+			exe, err := os.Executable()
+			if err != nil {
+				return
+			}
+			cli := filepath.Join(filepath.Dir(exe), "codeguard.exe")
+			cmd := exec.Command(cli, "graph")
+			cmd.Dir = repoRoot
+			if out, err := cmd.CombinedOutput(); err != nil {
+				log.Println("graph falló:", err, string(out))
+				return
+			}
+			target := filepath.Join(repoRoot, "docs", "obsidian", "Grafo de dependencias.md")
+			if _, err := os.Stat(target); err != nil {
+				target = filepath.Join(repoRoot, "docs", "grafo-dependencias.md")
+			}
+			if strings.Contains(target, "obsidian") {
+				exec.Command("cmd", "/c", "start", "", "obsidian://open?path="+url.QueryEscape(target)).Start()
+			} else {
+				exec.Command("cmd", "/c", "start", "", target).Start()
+			}
+		}()
 	})
 
 	shadowStore, err := store.Open(store.DefaultPath())

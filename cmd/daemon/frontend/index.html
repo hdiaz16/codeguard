@@ -231,6 +231,7 @@
   <div class="shell" id="card">
   <header>
     <div class="winbtns">
+      <button id="btn-graph" title="Generar y abrir el grafo de dependencias del repo">🕸</button>
       <button id="btn-min" title="Contraer al último veredicto">–</button>
       <button id="btn-close" class="close" title="Ocultar panel — CodeGuard sigue en la bandeja">✕</button>
     </div>
@@ -405,6 +406,12 @@
   Events.On("panel-hide", closeOrganic);
 
   $("btn-close").addEventListener("click", closeOrganic);
+  $("btn-graph").addEventListener("click", () => {
+    emit("open-graph", null);
+    const b = $("btn-graph");
+    b.textContent = "…";
+    setTimeout(() => { b.textContent = "🕸"; }, 2500);
+  });
   $("btn-min").addEventListener("click", () => {
     const main = $("main");
     main.hidden = !main.hidden; // contrae a solo el veredicto de la cabecera
