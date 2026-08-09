@@ -133,6 +133,15 @@
     background: rgba(229,181,74,.12); color: var(--warn);
     padding: 9px 18px; font-size: 12px; font-weight: 500;
   }
+  /* cambio de contexto entre proyectos — cada uno con su estado */
+  .repos { display: flex; gap: 6px; padding: 8px 18px 2px; flex-wrap: wrap; }
+  .repos .tab {
+    font-size: 11px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+    background: var(--d2); color: var(--ink-3); transition: .15s; white-space: nowrap;
+  }
+  .repos .tab:hover { background: var(--d3); color: var(--ink); }
+  .repos .tab.activo { background: var(--d3); color: var(--ink); font-weight: 600; }
+  .repos .tab.blk { color: var(--block); }
   .degraded { color: var(--ink-3); font-size: 11px; padding: 8px 18px 14px; }
   .traynote { color: var(--ink-3); font-size: 10.5px; text-align: center; padding: 10px 16px 14px; }
   .empty { color: var(--ink-3); text-align: center; padding: 44px 20px; }
@@ -241,6 +250,7 @@
     <div id="thinking"><span class="dot"></span><span id="thinking-text"></span></div>
   </header>
   <div id="parity" class="parity" hidden>Tu rule pack no coincide con el del repo; no puedo garantizar que pase el CI.</div>
+  <div id="repos" class="repos" hidden></div>
   <main id="main">
     <div class="empty">Haz un commit en un repo enrolado y aquí aparecerá el resultado.</div>
   </main>
@@ -314,6 +324,22 @@
     $("meta").textContent = `${p.repo} @ ${p.branch} · ${p.at} · ${p.elapsed_ms} ms` +
       (extras.length ? ` · ${extras.join(" · ")}` : "");
     $("parity").hidden = p.ci_parity;
+
+    // ── proyectos con contexto vivo: cada uno con SU estado ──
+    // Cambiar de pestaña cambia de contexto; ninguno afecta a los demás.
+    const tabs = $("repos");
+    if (p.otros_repos && p.otros_repos.length) {
+      const activo = `<span class="tab activo" data-root="">${esc(p.repo)}</span>`;
+      const otros = p.otros_repos.map(s => {
+        const [head, root] = s.split("|");
+        const blk = head.startsWith("⛔");
+        return `<span class="tab ${blk ? "blk" : ""}" data-root="${esc(root)}">${esc(head)}</span>`;
+      }).join("");
+      tabs.innerHTML = activo + otros;
+      tabs.hidden = false;
+    } else {
+      tabs.hidden = true;
+    }
 
     const blockers = (p.findings || []).filter(f => f.blocking);
     const advisory = (p.findings || []).filter(f => !f.blocking);
@@ -406,6 +432,13 @@
   Events.On("panel-hide", closeOrganic);
 
   $("btn-close").addEventListener("click", closeOrganic);
+  // cambio de contexto entre proyectos
+  $("repos").addEventListener("click", e => {
+    const t = e.target.closest(".tab[data-root]");
+    if (!t || !t.dataset.root) return;
+    emit("switch-repo", [t.dataset.root]);
+  });
+
   $("btn-graph").addEventListener("click", () => {
     emit("open-graph", null);
     const b = $("btn-graph");

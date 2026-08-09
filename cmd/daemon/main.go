@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"codeguard/internal/daemon"
 	"codeguard/internal/finding"
 	"codeguard/internal/ipc"
+	"codeguard/internal/pipeline"
 	"codeguard/internal/shadow"
 	"codeguard/internal/store"
 )
@@ -36,7 +38,7 @@ const panelWidth = 480
 // panelFinding es lo que pinta el panel: el hallazgo + su código señalado.
 type panelFinding struct {
 	finding.Finding
-	Snippet      []snippetLine `json:"snippet"`
+	Snippet []snippetLine `json:"snippet"`
 	// Tono §12.2: determinista se enuncia como hecho; el LLM (fase 3+) como observación.
 	IsFact bool `json:"is_fact"`
 }
@@ -53,15 +55,18 @@ type panelPayload struct {
 	Branch      string `json:"branch"`
 	AIGenerated bool   `json:"ai_generated"`
 	Suppressed  int    `json:"suppressed"`
-	Verdict   string         `json:"verdict"`
-	Blocking  int            `json:"blocking"`
-	Advisory  int            `json:"advisory"`
-	CIParity  bool           `json:"ci_parity"`
-	Degraded  []string       `json:"degraded"`
-	Findings  []panelFinding `json:"findings"`
-	MaxShow   int            `json:"max_show"`
-	ElapsedMs int64          `json:"elapsed_ms"`
-	At        string         `json:"at"`
+	// Otros proyectos con contexto vivo: "✓ repo|ruta" — para cambiar de
+	// contexto desde el panel. Informativo: no altera el estado de nadie.
+	OtrosRepos []string       `json:"otros_repos,omitempty"`
+	Verdict    string         `json:"verdict"`
+	Blocking   int            `json:"blocking"`
+	Advisory   int            `json:"advisory"`
+	CIParity   bool           `json:"ci_parity"`
+	Degraded   []string       `json:"degraded"`
+	Findings   []panelFinding `json:"findings"`
+	MaxShow    int            `json:"max_show"`
+	ElapsedMs  int64          `json:"elapsed_ms"`
+	At         string         `json:"at"`
 }
 
 func snippet(repoRoot, rel string, line int) []snippetLine {
@@ -96,6 +101,18 @@ func snippet(repoRoot, rel string, line int) []snippetLine {
 	return out
 }
 
+// orbStateFor traduce el veredicto de UN proyecto al clima del orbe.
+func orbStateFor(p *panelPayload) string {
+	switch {
+	case p.Verdict == "block":
+		return "blocked"
+	case p.Advisory > 0:
+		return "idle"
+	default:
+		return "pass"
+	}
+}
+
 type trayState struct {
 	tray  *application.SystemTray
 	reset *time.Timer
@@ -122,6 +139,18 @@ func (t *trayState) setPass(tooltip string) {
 }
 
 func main() {
+	// El daemon corre sin consola (-H windowsgui): sin este log, cualquier
+	// fallo es invisible. Vive junto a la BD del usuario.
+	if base := os.Getenv("LOCALAPPDATA"); base != "" {
+		dir := filepath.Join(base, "codeguard")
+		os.MkdirAll(dir, 0o755)
+		if f, err := os.OpenFile(filepath.Join(dir, "daemon.log"),
+			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			log.SetOutput(f)
+			log.Printf("=== daemon arrancado ===")
+		}
+	}
+
 	frontend, err := fs.Sub(assets, "frontend")
 	if err != nil {
 		log.Fatal(err)
@@ -138,14 +167,14 @@ func main() {
 	// Sin ventana principal: el panel y la burbuja son las únicas ventanas.
 	// Una ventana oculta extra costaba un renderer de WebView2 (~60 MB).
 	panel := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "CodeGuard",
-		Frameless:        true,
-		AlwaysOnTop:      true,
-		Hidden:           true, // §12.2: oculto mientras no haya nada que mostrar
-		Width:            panelWidth,
-		Height:           600,
-		DisableResize:    true,
-		URL:              "/",
+		Title:         "CodeGuard",
+		Frameless:     true,
+		AlwaysOnTop:   true,
+		Hidden:        true, // §12.2: oculto mientras no haya nada que mostrar
+		Width:         panelWidth,
+		Height:        600,
+		DisableResize: true,
+		URL:           "/",
 		// Transparente puro: el acrílico cubría todo el rectángulo de la
 		// ventana y se veía como un fondo doble alrededor de la tarjeta.
 		BackgroundType:   application.BackgroundTypeTransparent,
@@ -247,6 +276,10 @@ func main() {
 		})
 	})
 	menu.AddSeparator()
+	menu.Add("Explorador de código 3D").OnClick(func(*application.Context) {
+		app.Event.Emit("open-graph", nil)
+	})
+	menu.AddSeparator()
 	menu.Add("Demo de estados (12 s)").OnClick(func(*application.Context) {
 		go func() {
 			states := []string{"idle", "working", "pass", "blocked", "degraded", "offline"}
@@ -278,7 +311,33 @@ func main() {
 		application.InvokeAsync(func() { panel.Hide() })
 	})
 
-	var lastPayload *panelPayload
+	// ── Contexto POR PROYECTO ──────────────────────────────────────────────
+	// Cada repo mantiene su propio estado y su propia historia. El orbe
+	// refleja SIEMPRE el proyecto del último análisis — un bloqueo en el
+	// repo A jamás secuestra el verde del repo B. Los demás proyectos se
+	// listan en el panel para poder cambiar de contexto, nada más.
+	var lastPayload *panelPayload           // contexto activo (el último analizado)
+	repoState := map[string]*panelPayload{} // contexto de cada proyecto
+	var stateMu sync.Mutex
+
+	// otherRepos: resumen de los demás proyectos, informativo (no bloquea nada).
+	otherRepos := func(activeRoot string) []string {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		var out []string
+		for root, p := range repoState {
+			if root == activeRoot {
+				continue
+			}
+			mark := "✓"
+			if p.Verdict == "block" {
+				mark = "⛔"
+			}
+			out = append(out, fmt.Sprintf("%s %s|%s", mark, p.Repo, root))
+		}
+		sort.Strings(out)
+		return out
+	}
 
 	// Feedback del panel → tabla feedback (etapa 9).
 	app.Event.On("feedback", func(e *application.CustomEvent) {
@@ -304,37 +363,82 @@ func main() {
 		}
 	})
 
-	// El panel pide el último resultado al abrirse.
+	// El panel pide el contexto activo al abrirse.
 	app.Event.On("panel-ready", func(*application.CustomEvent) {
 		if lastPayload != nil {
 			app.Event.Emit("analysis", lastPayload)
 		}
 	})
 
+	// Cambio de contexto: el panel pide ver otro proyecto. Cada uno conserva
+	// su propio análisis; cambiar de contexto no altera el estado de nadie.
+	app.Event.On("switch-repo", func(e *application.CustomEvent) {
+		raw, _ := json.Marshal(e.Data)
+		var roots []string
+		if json.Unmarshal(raw, &roots) != nil || len(roots) == 0 {
+			var one string
+			if json.Unmarshal(raw, &one) == nil {
+				roots = []string{one}
+			}
+		}
+		if len(roots) == 0 {
+			return
+		}
+		stateMu.Lock()
+		p := repoState[roots[0]]
+		stateMu.Unlock()
+		if p == nil {
+			return
+		}
+		p.OtrosRepos = otherRepos(p.RepoRoot)
+		lastPayload = p // el contexto activo pasa a ser el elegido
+		app.Event.Emit("analysis", p)
+		ts.set(orbStateFor(p), fmt.Sprintf("%s@%s: %d bloqueantes, %d avisos (%s)",
+			p.Repo, p.Branch, p.Blocking, p.Advisory, p.At))
+	})
+
 	// Botón 🕸: el explorador de código en su PROPIA ventana del agente
 	// (nada de navegador) con el análisis proyectado encima.
 	var explorer *application.WebviewWindow
-	app.Event.On("open-graph", func(*application.CustomEvent) {
-		if lastPayload == nil {
+	var pendingGraph *codegraph.Graph
+	// La página avisa cuando cargó; recién entonces se le manda el grafo.
+	app.Event.On("explorer-ready", func(*application.CustomEvent) {
+		if pendingGraph != nil {
+			app.Event.Emit("graph-data", pendingGraph)
+		}
+	})
+	// openGraph construye el explorador de UN proyecto (nunca mezcla sistemas)
+	// e incluye la lista de los demás para poder cambiar de contexto.
+	openGraph := func(root string) {
+		stateMu.Lock()
+		payload := repoState[root]
+		var proyectos []codegraph.Proyecto
+		for r, p := range repoState {
+			proyectos = append(proyectos, codegraph.Proyecto{
+				Nombre: p.Repo, Root: r, Activo: r == root, Estado: p.Verdict,
+			})
+		}
+		stateMu.Unlock()
+		sort.Slice(proyectos, func(i, j int) bool { return proyectos[i].Nombre < proyectos[j].Nombre })
+		if payload == nil {
+			log.Println("grafo: sin contexto para", root)
 			return
 		}
-		repoRoot := filepath.FromSlash(lastPayload.RepoRoot)
-		payload := lastPayload
+		repoRoot := filepath.FromSlash(root)
 		go func() {
 			cg, err := codegraph.BuildGo(repoRoot)
-			if err != nil || len(cg.Nodes) == 0 {
-				log.Println("grafo no disponible para este repo:", err)
+			if err != nil || cg == nil || len(cg.Nodes) == 0 {
+				log.Printf("grafo no disponible para %s: %v", repoRoot, err)
 				return
 			}
 			cg.Overlay = buildOverlay(cg, payload)
-			html, err := codegraph.RenderHTML(cg)
-			if err != nil {
-				log.Println("render del grafo:", err)
-				return
-			}
+			cg.Proyectos = proyectos
+			log.Printf("grafo de %s: %d nodos, %d aristas", payload.Repo, len(cg.Nodes), len(cg.Edges))
+			pendingGraph = cg
 			application.InvokeAsync(func() {
 				if explorer != nil {
 					explorer.Close()
+					explorer = nil
 				}
 				w, h := 1280, 820
 				if screen := app.Screen.GetPrimary(); screen != nil {
@@ -349,13 +453,35 @@ func main() {
 					Title:            "CodeGuard — explorador de código",
 					Width:            w,
 					Height:           h,
-					HTML:             html,
+					URL:              "/explorer.html",
 					BackgroundColour: application.RGBA{Red: 11, Green: 14, Blue: 17, Alpha: 255},
 				})
 				explorer.Center()
 				explorer.Show()
 			})
 		}()
+	}
+
+	app.Event.On("open-graph", func(*application.CustomEvent) {
+		if lastPayload == nil {
+			log.Println("grafo: aún no hay análisis que proyectar")
+			return
+		}
+		openGraph(lastPayload.RepoRoot)
+	})
+	// El explorador pide cambiar al grafo de otro proyecto.
+	app.Event.On("graph-switch", func(e *application.CustomEvent) {
+		raw, _ := json.Marshal(e.Data)
+		var roots []string
+		if json.Unmarshal(raw, &roots) != nil || len(roots) == 0 {
+			var one string
+			if json.Unmarshal(raw, &one) == nil {
+				roots = []string{one}
+			}
+		}
+		if len(roots) > 0 {
+			openGraph(roots[0])
+		}
 	})
 
 	shadowStore, err := store.Open(store.DefaultPath())
@@ -416,14 +542,14 @@ func main() {
 				Branch:      req.Branch,
 				AIGenerated: req.AIGenerated,
 				Suppressed:  resp.Suppressed,
-				Verdict:   resp.Verdict,
-				Blocking:  resp.BlockingFindings,
-				Advisory:  resp.AdvisoryFindings,
-				CIParity:  resp.CIParity,
-				Degraded:  resp.Degraded,
-				MaxShow:   maxShow,
-				ElapsedMs: resp.ElapsedMs,
-				At:        time.Now().Format("15:04:05"),
+				Verdict:     resp.Verdict,
+				Blocking:    resp.BlockingFindings,
+				Advisory:    resp.AdvisoryFindings,
+				CIParity:    resp.CIParity,
+				Degraded:    resp.Degraded,
+				MaxShow:     maxShow,
+				ElapsedMs:   resp.ElapsedMs,
+				At:          time.Now().Format("15:04:05"),
 			}
 			for _, f := range resp.Findings {
 				payload.Findings = append(payload.Findings, panelFinding{
@@ -432,14 +558,23 @@ func main() {
 					IsFact:  f.Source == finding.Deterministic,
 				})
 			}
+			// cada proyecto guarda su contexto; el activo pasa a ser este
+			stateMu.Lock()
+			repoState[payload.RepoRoot] = payload
+			stateMu.Unlock()
+			payload.OtrosRepos = otherRepos(payload.RepoRoot)
 			lastPayload = payload
 
 			tooltip := fmt.Sprintf("%s@%s: %d bloqueantes, %d avisos (%s)",
 				payload.Repo, payload.Branch, payload.Blocking, payload.Advisory, payload.At)
+			// motores ausentes = asunto de configuración, no degradación real:
+			// un trivy no instalado no debe pintar de naranja cada commit.
+			realDegraded := len(resp.Degraded) > 0 && !pipeline.SoloFaltantes(resp.Degraded)
+			// El orbe habla SOLO del proyecto que acabas de tocar.
 			switch {
 			case resp.Verdict == "block":
 				ts.set("blocked", tooltip)
-			case len(resp.Degraded) > 0:
+			case realDegraded:
 				ts.set("degraded", tooltip+" — no corrió: "+strings.Join(resp.Degraded, ", "))
 			default:
 				ts.setPass(tooltip)

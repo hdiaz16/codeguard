@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -40,14 +41,14 @@ type Result struct {
 }
 
 type Options struct {
-	Config    *config.Config
-	Diff      *gitdiff.Diff
-	Secrets   engines.Engine   // etapa 1, fail-closed
-	Engines   []engines.Engine // etapa 2
-	Rulepack  string           // ruta al rulepack pinneado
-	IsMerge   bool
-	IsRevert  bool
-	Timeout   time.Duration
+	Config   *config.Config
+	Diff     *gitdiff.Diff
+	Secrets  engines.Engine   // etapa 1, fail-closed
+	Engines  []engines.Engine // etapa 2
+	Rulepack string           // ruta al rulepack pinneado
+	IsMerge  bool
+	IsRevert bool
+	Timeout  time.Duration
 	// Suppressions: fingerprints de la baseline (§17 paso 4) — hallazgos
 	// preexistentes que no deben bloquear. Los secretos NUNCA se suprimen.
 	Suppressions map[string]bool
@@ -132,7 +133,15 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 		}
 		for i, fs := range results {
 			res.Findings = append(res.Findings, fs...)
-			if failures[i] != nil {
+			if failures[i] == nil {
+				continue
+			}
+			// Un motor NO INSTALADO es un asunto de configuración, no una
+			// degradación del análisis: se informa distinto para que un trivy
+			// ausente no pinte de naranja cada commit del día.
+			if isMissingBinary(failures[i]) {
+				res.Degraded = append(res.Degraded, "falta:"+opt.Engines[i].Name())
+			} else {
 				res.Degraded = append(res.Degraded, opt.Engines[i].Name()+":error")
 			}
 		}
@@ -179,6 +188,30 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 		res.Verdict = Block
 	}
 	return res, nil
+}
+
+// isMissingBinary distingue "la herramienta no está instalada" de "corrió y
+// falló". Windows: ERROR_FILE_NOT_FOUND / "executable file not found".
+func isMissingBinary(err error) bool {
+	if errors.Is(err, exec.ErrNotFound) {
+		return true
+	}
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "executable file not found") ||
+		strings.Contains(m, "no such file") ||
+		strings.Contains(m, "cannot find the file") ||
+		strings.Contains(m, "el sistema no puede encontrar")
+}
+
+// SoloFaltantes indica si todas las capas degradadas son motores ausentes
+// (configuración) y no fallos reales del análisis.
+func SoloFaltantes(degraded []string) bool {
+	for _, d := range degraded {
+		if !strings.HasPrefix(d, "falta:") {
+			return false
+		}
+	}
+	return len(degraded) > 0
 }
 
 func filterExcluded(cfg *config.Config, files []gitdiff.ChangedFile) []gitdiff.ChangedFile {

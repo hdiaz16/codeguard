@@ -42,6 +42,16 @@ type Graph struct {
 	// Overlay del último análisis: el grafo deja de ser un mapa bonito y se
 	// convierte en el radar del agente (dónde duele, qué tocaste).
 	Overlay *Overlay `json:"overlay,omitempty"`
+	// Proyectos con contexto vivo, para cambiar de repo desde el explorador.
+	// El grafo es SIEMPRE de un proyecto: no se mezclan sistemas distintos.
+	Proyectos []Proyecto `json:"proyectos,omitempty"`
+}
+
+type Proyecto struct {
+	Nombre string `json:"nombre"`
+	Root   string `json:"root"`
+	Activo bool   `json:"activo"`
+	Estado string `json:"estado"` // pass | block | —
 }
 
 // Overlay proyecta los hallazgos y el diff sobre el grafo.

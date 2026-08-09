@@ -1,0 +1,3 @@
+#!/bin/sh
+# instalado por codeguard install — no editar a mano
+exec "$(git config codeguard.binpath)/codeguard.exe" hook prepare-commit-msg "$@"
