@@ -297,12 +297,16 @@ func main() {
 		app.Event.Emit("panel-show", nil)
 	}
 
-	// Burbuja de estado: widget flotante abajo a la izquierda (§12.1),
+	// Burbuja de estado: widget flotante abajo a la derecha (§12.1),
 	// transparente, siempre visible, con ondas animadas por estado.
-	// El orbe (128 px) se ancla abajo-derecha; el resto de la ventana es aire
-	// transparente para que la burbuja de estado quepa arriba y a la izquierda
-	// sin recortarse. Agrandarla no mueve el orbe: sigue en la misma esquina.
-	const widgetW, widgetH = 320, 210
+	// El orbe se ancla abajo-derecha; el resto de la ventana es aire
+	// transparente para que la burbuja quepa arriba y a la izquierda sin
+	// recortarse. Agrandarla no mueve el orbe: sigue en la misma esquina.
+	//
+	// 300x180 aloja el orbe de 84 px anclado abajo-derecha más la burbuja, que
+	// crece hacia arriba y a la izquierda. Si cambia el tamaño del orbe en
+	// widget.html, esto no necesita cambiar: el orbe se ancla solo.
+	const widgetW, widgetH = 300, 180
 	widget := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "CodeGuard estado",
 		Frameless:        true,
@@ -313,6 +317,10 @@ func main() {
 		BackgroundType:   application.BackgroundTypeTransparent,
 		BackgroundColour: application.RGBA{Red: 0, Green: 0, Blue: 0, Alpha: 0},
 		URL:              "/widget.html",
+		// OJO: no usar IgnoreMouseEvents aquí. En Windows Wails lo implementa
+		// añadiendo WS_EX_LAYERED junto a WS_EX_TRANSPARENT, y una ventana
+		// layered deja de componerse con transparencia real: el orbe se
+		// convierte en un rectángulo blanco opaco. Se probó y se revirtió.
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: true,
 			// Sin esto, Windows dibuja borde y sombra alrededor de la
@@ -336,6 +344,7 @@ func main() {
 			widget.SetPosition(x, y)
 		}
 	}
+
 	// El evento ApplicationStarted llega antes de que la ventana exista:
 	// se reintenta hasta que el orbe quede en su esquina.
 	dockWidgetSeguro := func() {

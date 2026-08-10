@@ -9,25 +9,30 @@
      separación es luz y elevación. Colores semánticos definidos para
      escanear hallazgos de un vistazo. */
   :root {
-    /* profundidad: excavado → base → elevado (+ interactivo) */
-    --d0: #121417;   /* excavado: snippets, pozos */
-    --d1: #1b1e22;   /* base: la tarjeta del panel */
-    --d2: #23272c;   /* elevado: tarjetas de hallazgo */
-    --d3: #2c3138;   /* interactivo: botones, hover */
+    /* Profundidad construida ALREDEDOR del gris pizarra pedido (#25272c es
+       --d1, la tarjeta del panel): un escalón excavado por debajo y dos de
+       elevación por encima, manteniendo el mismo salto de luminancia que
+       tenía el sistema anterior. */
+    --d0: #1a1c20;   /* excavado: snippets, pozos */
+    --d1: #25272c;   /* base: la tarjeta del panel */
+    --d2: #2e3138;   /* elevado: tarjetas de hallazgo */
+    --d3: #383c44;   /* interactivo: botones, hover */
 
-    /* tinta en 3 pesos */
-    --ink: #edf0f2; --ink-2: #a9b2ba; --ink-3: #78818a;
+    /* tinta en 3 pesos, con una gota de menta para que no pelee con el acento */
+    --ink: #eaf3f0; --ink-2: #a7b3b0; --ink-3: #78847f;
 
-    /* semánticos definidos — cada uno significa UNA cosa */
-    --accent: #8fb8ce;   /* niebla: marca, enlaces, acciones */
-    --block:  #e4604b;   /* bloquea: rojo franco */
+    /* semánticos definidos — cada uno significa UNA cosa.
+       La familia menta lleva lo bueno y lo neutro; el rojo y el ámbar quedan
+       reservados a la alarma, que es lo único que debe interrumpir. */
+    --accent: #b8f7e4;   /* menta: marca, enlaces, acciones */
+    --block:  #e4604b;   /* bloquea: rojo franco — se conserva a propósito */
     --warn:   #e5b54a;   /* atención: ámbar franco */
-    --ok:     #4ec28e;   /* bien: verde franco */
+    --ok:     #6fdcb4;   /* bien: menta honda, distinguible del acento claro */
 
     /* pilares: fondo tintado + texto definido */
-    --p-sec-bg: #46231d; --p-sec-fg: #f0937d;
-    --p-qua-bg: #1d2b36; --p-qua-fg: #8fc1e3;
-    --p-dat-bg: #1d332a; --p-dat-fg: #7fd6a8;
+    --p-sec-bg: #3d221d; --p-sec-fg: #f0937d;
+    --p-qua-bg: #22303a; --p-qua-fg: #9fd0ea;
+    --p-dat-bg: #1e3a31; --p-dat-fg: #9beeca;
 
     /* sombras del sistema (la única fuente de separación).
        --float pequeña a propósito: una sombra grande alrededor de la tarjeta
@@ -105,20 +110,34 @@
     -webkit-app-region: drag;
   }
   header .brand { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  /* Dos familias, no cinco botones iguales: a la izquierda lo que ABRE cosas
+     (guía, mapa, modelo), a la derecha lo que gobierna esta ventana (contraer,
+     cerrar). Antes compartían un gap uniforme y el ojo no distinguía "voy a
+     otra parte" de "cierro esto". El separador es luz, no una línea. */
   .winbtns {
-    position: absolute; top: 12px; right: 12px; display: flex; gap: 6px;
+    position: absolute; top: 12px; right: 12px; display: flex; gap: 4px;
     -webkit-app-region: no-drag;
   }
+  .winbtns .grupo { display: flex; gap: 4px; }
+  .winbtns .grupo + .grupo { margin-left: 12px; position: relative; }
+  .winbtns .grupo + .grupo::before {
+    content: ""; position: absolute; left: -6px; top: 6px; bottom: 6px;
+    width: 1px; background: rgba(255,255,255,.07);
+  }
   .winbtns button {
-    width: 28px; height: 26px; border: none; border-radius: 8px;
+    width: 28px; height: 28px; border: none; border-radius: 8px;
     background: var(--d2); color: var(--ink-3);
     cursor: pointer; line-height: 0; box-shadow: var(--raise);
     display: grid; place-items: center; padding: 0;
     transition: background .15s, color .15s, transform .1s;
   }
+  /* 16 px sobre rejilla de 24 con trazo 2 => 1.33 px efectivos y las líneas
+     rectas caen en pixel entero. Antes: rejilla de 20 a 15 px con trazo 1.5,
+     o sea 1.125 px — a escalado fraccionario de Windows eso cae ENTRE pixeles
+     y por eso los iconos se veian sucios y desiguales. */
   .winbtns button svg {
-    width: 15px; height: 15px;
-    fill: none; stroke: currentColor; stroke-width: 1.5;
+    width: 16px; height: 16px;
+    fill: none; stroke: currentColor; stroke-width: 2;
     stroke-linecap: round; stroke-linejoin: round;
   }
   .winbtns button svg .lleno { fill: currentColor; stroke: none; }
@@ -262,11 +281,11 @@
     transition: background .15s, color .15s, transform .1s, box-shadow .15s;
   }
   .fb button:hover { color: var(--ink); transform: translateY(-1px); box-shadow: 0 2px 4px rgba(0,0,0,.5), 0 6px 16px rgba(0,0,0,.3); }
-  .fb button.sent { background: rgba(143,184,206,.16); color: var(--accent); pointer-events: none; transform: none; box-shadow: none; }
+  .fb button.sent { background: rgba(184,247,228,.14); color: var(--accent); pointer-events: none; transform: none; box-shadow: none; }
 
   .explain {
     margin: 9px 0 2px; padding: 10px 12px; border-radius: 10px;
-    background: rgba(143,184,206,.09);
+    background: rgba(184,247,228,.08);
     color: var(--ink-2); font-size: 12.5px; line-height: 1.55;
     animation: rise .4s ease both;
   }
@@ -280,39 +299,53 @@
     <!-- Íconos dibujados, no emojis: un emoji cambia de forma según la fuente
          del sistema y ninguno decía con claridad qué hacía el botón. -->
     <div class="winbtns">
-      <button id="btn-help" aria-label="Guía de uso"
-              title="Guía de uso — qué es cada cosa, paso a paso">
-        <svg viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="7.5"/>
-          <path d="M7.8 7.6a2.2 2.2 0 1 1 2.9 2.1c-.5.2-.7.6-.7 1.1v.5"/>
-          <circle cx="10" cy="14.3" r=".9" class="lleno"/>
-        </svg>
-      </button>
-      <button id="btn-graph" aria-label="Mapa del código"
-              title="Mapa del código — quién llama a quién, en 3D">
-        <svg viewBox="0 0 20 20" aria-hidden="true">
-          <path d="M10 4.6v3.1M6.2 14.2l2.3-2.6M13.8 14.2l-2.3-2.6"/>
-          <circle cx="10" cy="3.4" r="1.9" class="lleno"/>
-          <circle cx="5.2" cy="15.4" r="1.9" class="lleno"/>
-          <circle cx="14.8" cy="15.4" r="1.9" class="lleno"/>
-          <circle cx="10" cy="9.7" r="2.1"/>
-        </svg>
-      </button>
-      <button id="btn-config" aria-label="Configurar el modelo"
-              title="Configurar el modelo que aconseja — proveedor, endpoint y clave">
-        <svg viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="2.6"/>
-          <path d="M10 3.1v1.8M10 15.1v1.8M16.9 10h-1.8M4.9 10H3.1M14.9 5.1l-1.3 1.3M6.4 13.6l-1.3 1.3M14.9 14.9l-1.3-1.3M6.4 6.4L5.1 5.1"/>
-        </svg>
-      </button>
-      <button id="btn-min" aria-label="Contraer"
-              title="Contraer — deja sólo el veredicto">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 10h10"/></svg>
-      </button>
-      <button id="btn-close" class="close" aria-label="Ocultar panel"
-              title="Ocultar el panel — CodeGuard sigue vigilando desde el orbe">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 6l8 8M14 6l-8 8"/></svg>
-      </button>
+      <div class="grupo">
+        <button id="btn-help" aria-label="Guía de uso"
+                title="Guía de uso — qué es cada cosa, paso a paso">
+          <!-- Interrogación dentro del círculo, con el gancho y el punto sobre
+               la misma vertical (x=12). El anterior tenía el gancho descentrado
+               y a 15 px parecía un borrón. -->
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M9.4 9.3a2.7 2.7 0 1 1 3.4 2.6c-.5.2-.8.7-.8 1.2v.6"/>
+            <circle cx="12" cy="17" r="1.1" class="lleno"/>
+          </svg>
+        </button>
+        <button id="btn-graph" aria-label="Mapa del código"
+                title="Mapa del código — quién llama a quién, en 3D">
+          <!-- Tres nodos y un centro: las aristas salen del BORDE de cada
+               círculo, no de su centro, así no se ven pinchados. -->
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 6.5v3M9.6 14.4l-2 2M14.4 14.4l2 2"/>
+            <circle cx="12" cy="12" r="2.5"/>
+            <circle cx="12" cy="4.5" r="2" class="lleno"/>
+            <circle cx="6" cy="18" r="2" class="lleno"/>
+            <circle cx="18" cy="18" r="2" class="lleno"/>
+          </svg>
+        </button>
+        <button id="btn-config" aria-label="Configurar el modelo"
+                title="Configurar el modelo que aconseja — proveedor, endpoint y clave">
+          <!-- Deslizadores, no engranaje: los 8 dientes del engranaje a 16 px
+               eran ocho segmentos de 2 px peleándose por el mismo pixel. Dos
+               carriles con su tirador se leen a cualquier tamaño, y describen
+               mejor lo que hay detrás (ajustes), no "maquinaria". -->
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 9h16M4 15h16"/>
+            <circle cx="9.5" cy="9" r="2.4" class="lleno"/>
+            <circle cx="15" cy="15" r="2.4" class="lleno"/>
+          </svg>
+        </button>
+      </div>
+      <div class="grupo">
+        <button id="btn-min" aria-label="Contraer"
+                title="Contraer — deja sólo el veredicto">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg>
+        </button>
+        <button id="btn-close" class="close" aria-label="Ocultar panel"
+                title="Ocultar el panel — CodeGuard sigue vigilando desde el orbe">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+        </button>
+      </div>
     </div>
     <div class="brand">CodeGuard</div>
     <div class="verdict" id="verdict">esperando el primer análisis…</div>
