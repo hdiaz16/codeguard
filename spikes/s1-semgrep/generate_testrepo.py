@@ -1,5 +1,6 @@
 """Genera el repo de prueba del spike S1: ~20 archivos en 5 lenguajes,
 con defectos sembrados que las house-rules deben detectar."""
+
 import os
 
 BASE = os.path.join(os.path.dirname(__file__), "testrepo")

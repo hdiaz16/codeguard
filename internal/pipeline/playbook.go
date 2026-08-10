@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path"
@@ -81,6 +82,15 @@ func revisarLockfiles(cfg *config.Config, files []gitdiff.ChangedFile) []finding
 				break
 			}
 
+			// Un manifiesto que no declara ninguna dependencia externa no puede
+			// tener lockfile: no hay nada que fijar. Exigírselo es un bloqueo
+			// sin salida —`go mod tidy` corre limpio y no genera go.sum— que
+			// sólo deja al dev la opción del bypass. Sin dependencias tampoco
+			// hay riesgo: no existe versión que pueda resolverse distinto.
+			if existe == "" && sinDependencias(cfg.RepoRoot, f.Path, m.Manifiesto) {
+				break
+			}
+
 			// Sin lockfile en el repo es un problema mayor que tenerlo desfasado.
 			var fnd finding.Finding
 			if existe == "" {
@@ -121,6 +131,76 @@ func revisarLockfiles(cfg *config.Config, files []gitdiff.ChangedFile) []finding
 		}
 	}
 	return out
+}
+
+// sinDependencias dice si un manifiesto declara cero dependencias externas.
+//
+// Sólo afirma que sí cuando puede comprobarlo leyendo el archivo: ante uno
+// ilegible, o un formato que no sabe interpretar, devuelve false y el hallazgo
+// se mantiene. La regla existe para proteger la instalación reproducible;
+// relajarla por una corazonada sería peor que el falso positivo.
+func sinDependencias(repoRoot, rel, manifiesto string) bool {
+	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	if err != nil {
+		return false
+	}
+	switch manifiesto {
+	case "go.mod":
+		return goModSinRequires(raw)
+	case "package.json":
+		return packageJSONSinDeps(raw)
+	}
+	return false
+}
+
+// goModSinRequires: un go.mod sin ninguna directiva require sólo usa la
+// biblioteca estándar, y `go mod tidy` no genera go.sum para él.
+func goModSinRequires(raw []byte) bool {
+	enBloque := false
+	for _, linea := range strings.Split(string(raw), "\n") {
+		l := strings.TrimSpace(linea)
+		if i := strings.Index(l, "//"); i >= 0 {
+			l = strings.TrimSpace(l[:i])
+		}
+		if l == "" {
+			continue
+		}
+		if enBloque {
+			if l == ")" {
+				enBloque = false
+				continue
+			}
+			return false // una entrada dentro de require ( … )
+		}
+		resto, esRequire := strings.CutPrefix(l, "require")
+		if !esRequire {
+			continue
+		}
+		switch resto = strings.TrimSpace(resto); {
+		case resto == "(":
+			enBloque = true
+		case resto != "":
+			return false // require en una línea
+		}
+	}
+	return true
+}
+
+// packageJSONSinDeps: un package.json que sólo trae scripts o metadatos no
+// tiene nada que fijar. Es el caso de los repos que usan npm como lanzador
+// de tareas y no como gestor de paquetes.
+func packageJSONSinDeps(raw []byte) bool {
+	var pkg struct {
+		Dependencies         map[string]any `json:"dependencies"`
+		DevDependencies      map[string]any `json:"devDependencies"`
+		PeerDependencies     map[string]any `json:"peerDependencies"`
+		OptionalDependencies map[string]any `json:"optionalDependencies"`
+	}
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		return false
+	}
+	return len(pkg.Dependencies)+len(pkg.DevDependencies)+
+		len(pkg.PeerDependencies)+len(pkg.OptionalDependencies) == 0
 }
 
 // LimiteCambioRevisable: por encima de este tamaño la calidad de la revisión

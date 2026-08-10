@@ -66,13 +66,21 @@ func reportCmd() *cobra.Command {
 			}
 			fmt.Printf("escaneando %d archivos…\n", len(files))
 
+			// La baseline se le PASA al pipeline, no sólo se cuenta: el informe
+			// afirma que sus hallazgos "impiden hacer commit", y un hallazgo
+			// baselineado no impide nada. Sin esto el informe mandaba al agente
+			// a corregir deuda ya aceptada, mezclada con lo que sí bloquea, y
+			// encima declaraba en el pie que la había suprimido.
+			supr := baseline.Load(repoRoot)
+
 			res, err := pipeline.Run(context.Background(), pipeline.Options{
-				Config:   cfg,
-				Diff:     &gitdiff.Diff{Files: files},
-				Secrets:  nil, // los secretos se atienden en el acto, no por informe
-				Engines:  daemon.Engines(cfg, false),
-				Rulepack: daemon.RulepackDir(repoRoot, cfg.Rulepack),
-				Timeout:  15 * time.Minute,
+				Config:       cfg,
+				Diff:         &gitdiff.Diff{Files: files},
+				Secrets:      nil, // los secretos se atienden en el acto, no por informe
+				Engines:      daemon.Engines(cfg, false),
+				Rulepack:     daemon.RulepackDir(repoRoot, cfg.Rulepack),
+				Timeout:      15 * time.Minute,
+				Suppressions: supr,
 			})
 			if err != nil {
 				return err
@@ -81,7 +89,6 @@ func reportCmd() *cobra.Command {
 			// clasificar
 			var bloq, avisos []finding.Finding
 			actuales := map[string]bool{}
-			supr := baseline.Load(repoRoot)
 			for _, f := range res.Findings {
 				actuales[f.Fingerprint] = true
 				if f.Blocking {
@@ -98,7 +105,10 @@ func reportCmd() *cobra.Command {
 			}
 			sort.Strings(resueltos)
 
-			md := construirInforme(cfg, res, bloq, avisos, resueltos, len(supr), incluirAvisos)
+			// res.Suppressed, no len(supr): lo que la baseline calló EN ESTE
+			// escaneo. El tamaño del archivo incluye fingerprints de código que
+			// ya no existe, así que anunciaba supresiones que no ocurrieron.
+			md := construirInforme(cfg, res, bloq, avisos, resueltos, res.Suppressed, incluirAvisos)
 			dest := filepath.Join(repoRoot, filepath.FromSlash(reportFile))
 			_ = os.MkdirAll(filepath.Dir(dest), 0o755) // best-effort: el WriteFile de abajo dará el error real
 			if err := os.WriteFile(dest, []byte(md), 0o644); err != nil {

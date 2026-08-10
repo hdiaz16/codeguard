@@ -34,7 +34,9 @@ func cambios(rutas ...string) []gitdiff.ChangedFile {
 }
 
 func TestLockfileAusenteBloquea(t *testing.T) {
-	cfg := repoTemporal(t, map[string]string{"package.json": `{"name":"x"}`})
+	// El fixture declara una dependencia real a propósito: sin ninguna, no hay
+	// nada que fijar y la regla ya no aplica (ver TestSinDependenciasNoExigeLockfile).
+	cfg := repoTemporal(t, map[string]string{"package.json": `{"name":"x","dependencies":{"left-pad":"^1.3.0"}}`})
 	fs := revisarLockfiles(cfg, cambios("package.json"))
 	if len(fs) != 1 {
 		t.Fatalf("se esperaba 1 hallazgo, hubo %d", len(fs))
@@ -44,6 +46,45 @@ func TestLockfileAusenteBloquea(t *testing.T) {
 	}
 	if fs[0].RuleKey != "lockfile-ausente" {
 		t.Errorf("regla %q", fs[0].RuleKey)
+	}
+}
+
+// Un manifiesto sin dependencias externas no puede tener lockfile: `go mod
+// tidy` corre limpio y no genera go.sum. Exigirlo era un bloqueo sin salida —
+// el dev cumple la instrucción, el hallazgo sigue ahí, y sólo le queda el
+// bypass. Sin dependencias tampoco hay riesgo: no hay versión que resolver.
+func TestSinDependenciasNoExigeLockfile(t *testing.T) {
+	casos := map[string]map[string]string{
+		"go.mod sólo stdlib":       {"go.mod": "module x/y\n\ngo 1.26.3\n"},
+		"package.json sin deps":    {"package.json": `{"name":"x","scripts":{"build":"tsc"}}`},
+		"package.json deps vacías": {"package.json": `{"name":"x","dependencies":{}}`},
+	}
+	for nombre, archivos := range casos {
+		cfg := repoTemporal(t, archivos)
+		var ruta string
+		for r := range archivos {
+			ruta = r
+		}
+		if fs := revisarLockfiles(cfg, cambios(ruta)); len(fs) != 0 {
+			t.Errorf("%s: no debía haber hallazgos, hubo %d: %s", nombre, len(fs), fs[0].Message)
+		}
+	}
+}
+
+// Pero un require sí exige go.sum: ahí la protección es real.
+func TestGoModConRequiresSiExigeLockfile(t *testing.T) {
+	casos := map[string]string{
+		"require en bloque": "module x\n\ngo 1.26.3\n\nrequire (\n\tgithub.com/spf13/cobra v1.10.2\n)\n",
+		"require en línea":  "module x\n\ngo 1.26.3\n\nrequire github.com/spf13/cobra v1.10.2\n",
+		"require comentado en bloque vacío": "module x\n\nrequire (\n\t// github.com/x/y v1.0.0\n)\n" +
+			"\nrequire github.com/spf13/cobra v1.10.2\n",
+	}
+	for nombre, contenido := range casos {
+		cfg := repoTemporal(t, map[string]string{"go.mod": contenido})
+		fs := revisarLockfiles(cfg, cambios("go.mod"))
+		if len(fs) != 1 || !fs[0].Blocking {
+			t.Errorf("%s: se esperaba 1 hallazgo bloqueante, hubo %d", nombre, len(fs))
+		}
 	}
 }
 

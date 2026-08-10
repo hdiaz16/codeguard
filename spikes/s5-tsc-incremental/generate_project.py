@@ -1,7 +1,8 @@
 """Genera un proyecto TS mediano (~300 archivos, con imports cruzados)
 para medir tsc --noEmit frio vs incremental caliente."""
-import os
+
 import json
+import os
 
 BASE = os.path.join(os.path.dirname(__file__), "tsproject")
 SRC = os.path.join(BASE, "src")
@@ -10,7 +11,11 @@ N_MODULES = 1500
 os.makedirs(SRC, exist_ok=True)
 
 for i in range(N_MODULES):
-    dep = f"import {{ value{(i + 1) % N_MODULES} }} from './mod{(i + 1) % N_MODULES}';\n" if i != N_MODULES - 1 else ""
+    dep = (
+        f"import {{ value{(i + 1) % N_MODULES} }} from './mod{(i + 1) % N_MODULES}';\n"
+        if i != N_MODULES - 1
+        else ""
+    )
     ref = f"value{(i + 1) % N_MODULES} +" if i != N_MODULES - 1 else ""
     content = f"""{dep}
 export interface Record{i} {{
@@ -29,7 +34,9 @@ export function describe{i}(r: Record{i}): string {{
   return `${{r.id}}#${{r.index}}`;
 }}
 """
-    with open(os.path.join(SRC, f"mod{i}.ts"), "w", encoding="utf-8", newline="\n") as f:
+    with open(
+        os.path.join(SRC, f"mod{i}.ts"), "w", encoding="utf-8", newline="\n"
+    ) as f:
         f.write(content)
 
 with open(os.path.join(SRC, "index.ts"), "w", encoding="utf-8", newline="\n") as f:
