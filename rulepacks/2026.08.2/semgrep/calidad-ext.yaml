@@ -61,6 +61,11 @@ rules:
       - pattern-not: _ = $F(...)      # llamada simple:  _ = fn()
       - pattern-not: _ = $X.$M(...)   # llamada con selector: _ = os.MkdirAll()
       - pattern-not: _ = <... $F(...) ...>  # la llamada envuelta en algo más
+      # Un literal de struct no es trabajo capturado que se tira: es una
+      # referencia en tiempo de compilación (`var _ = finding.Finding{}` sujeta
+      # el modelo del contrato). Sin esta línea la regla acusaba dos veces al
+      # propio agente, y ninguna era un error ignorado.
+      - pattern-not: _ = $T{...}
 
   - id: ts-promesa-sin-await
     languages: [javascript, typescript]

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,9 +59,57 @@ type sgResult struct {
 			} `json:"metadata"`
 		} `json:"extra"`
 	} `json:"results"`
-	Errors []struct {
-		Message string `json:"message"`
-	} `json:"errors"`
+	Errors []sgError `json:"errors"`
+}
+
+// sgError es un error del propio semgrep, no un hallazgo.
+//
+// El campo que decide es Type, NO Level: un "Rule parse error" también llega
+// con level "error" y sin embargo el escaneo corrió y sus resultados valen.
+type sgError struct {
+	Code    int    `json:"code"`
+	Level   string `json:"level"`
+	Type    string `json:"type"`
+	RuleID  string `json:"rule_id"`
+	Message string `json:"message"`
+}
+
+// tipoFatal marca los errores en los que semgrep no analizó lo que se le pidió
+// —una raíz de escaneo inválida, una config ilegible— y devuelve un JSON
+// perfectamente válido con cero resultados.
+//
+// Ese silencio fue el peor fallo del agente: `codeguard report` anunciaba
+// "0 bloqueantes · COMPLETADO" mientras 28 hallazgos reales existían, porque un
+// archivo de documentación con acentos en el nombre invalidaba el escaneo
+// entero. Cero hallazgos y "no pude mirar" son cosas opuestas, y hasta aquí se
+// contaban como la misma.
+const tipoFatal = "SemgrepError"
+
+// fatal devuelve el primer error que invalida el escaneo completo.
+//
+// Se comprueba aunque haya resultados: si una raíz fue inválida, lo analizado
+// es un subconjunto desconocido, y presentarlo como cobertura completa es
+// exactamente la mentira que esto viene a impedir.
+func (r sgResult) fatal() *sgError {
+	for i := range r.Errors {
+		if r.Errors[i].Type == tipoFatal {
+			return &r.Errors[i]
+		}
+	}
+	return nil
+}
+
+// reglasRotas lista las reglas del pack que no compilan. No invalidan el
+// escaneo —las demás corrieron— pero cada una es cobertura perdida en silencio,
+// aquí y en el CI por igual, así que se registran.
+func (r sgResult) reglasRotas() []string {
+	var ids []string
+	for _, e := range r.Errors {
+		if e.Type == "Rule parse error" && e.RuleID != "" {
+			ids = append(ids, shortRuleID(e.RuleID))
+		}
+	}
+	return ids
 }
 
 func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
@@ -106,6 +155,16 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	var res sgResult
 	if err := json.Unmarshal(out, &res); err != nil {
 		return nil, fmt.Errorf("salida de semgrep ilegible: %v", err)
+	}
+	// Antes de mirar un solo hallazgo: ¿llegó semgrep a analizar? Un JSON válido
+	// con cero resultados es indistinguible de un repo limpio salvo por aquí.
+	if e := res.fatal(); e != nil {
+		return nil, fmt.Errorf("semgrep no llegó a analizar (%s): %s",
+			e.Type, truncar(e.Message, 300))
+	}
+	if rotas := res.reglasRotas(); len(rotas) > 0 {
+		log.Printf("semgrep: %d regla(s) del rulepack no compilan y no se aplicaron: %s",
+			len(rotas), strings.Join(rotas, ", "))
 	}
 
 	findings := make([]finding.Finding, 0, len(res.Results))
@@ -154,6 +213,16 @@ func shortRuleID(checkID string) string {
 		return checkID[i+1:]
 	}
 	return checkID
+}
+
+// truncar acota el mensaje del proveedor: un "Rule parse error" trae el patrón
+// entero y llenaría la terminal del dev en el peor momento.
+func truncar(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func firstLine(s string) string {

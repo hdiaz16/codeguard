@@ -4,8 +4,23 @@ rulepack: "2026.08.2"
 languages: [go, javascript, python]
 
 paths:
-  exclude: ["**/*.db", "**/*.exe", "**/*.log", "bin/**"]
+  # Además de lo binario, tres exclusiones que se ganaron a pulso analizando
+  # este propio repo:
+  #   rulepacks/**  — las reglas se encuentran a SÍ MISMAS en sus ejemplos
+  #                   (todo-sin-ticket disparaba 10 veces sobre los YAML).
+  #   spikes/**     — código de exploración de la fase 0, ya cumplido; y
+  #                   generate_testrepo.py PLANTA vulnerabilidades falsas a
+  #                   propósito, así que sus hallazgos son los señuelos.
+  #   3d-force-graph.js — librería vendoreada de 1.1 MB: agotaba el tiempo de
+  #                   semgrep en cada análisis sin aportar nada.
+  exclude: ["**/*.db", "**/*.exe", "**/*.log", "bin/**",
+            "rulepacks/**", "spikes/**", "**/3d-force-graph.js"]
   migrations: ["migrations/*.sql"]
+  # SQLite, no Postgres: internal/store/store.go abre la BD con el driver
+  # sqlite y ejecuta este DDL embebido dentro de una transacción. Squawk
+  # exigía aquí CREATE INDEX CONCURRENTLY — sintaxis que SQLite no tiene y
+  # que ninguna base acepta dentro de una transacción.
+  migrations_dialect: sqlite
   sensitive: []          # marca aquí rutas de auth/pagos/PII: suben el riesgo
   generated: []
 

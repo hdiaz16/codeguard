@@ -179,16 +179,13 @@ func goEdges(repoRoot string) (map[string]bool, error) {
 var importRe = regexp.MustCompile(`(?m)(?:from\s+|require\()\s*['"]((?:\.{1,2}|@)/[^'"]+)['"]`)
 
 func tsEdges(repoRoot string) (map[string]bool, error) {
-	c := exec.Command("git", "ls-files", "*.ts", "*.tsx", "*.js", "*.jsx")
-	c.Dir = repoRoot
-	outB, err := c.Output()
+	rutas, err := gitdiff.Rastreados(repoRoot, "*.ts", "*.tsx", "*.js", "*.jsx")
 	if err != nil {
 		return nil, err
 	}
 	edges := map[string]bool{}
-	for _, rel := range strings.Split(strings.TrimSpace(string(outB)), "\n") {
-		rel = filepath.ToSlash(strings.TrimSpace(rel))
-		if rel == "" || strings.Contains(rel, "node_modules/") {
+	for _, rel := range rutas {
+		if strings.Contains(rel, "node_modules/") {
 			continue
 		}
 		raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))

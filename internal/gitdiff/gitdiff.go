@@ -96,6 +96,37 @@ func read(repoRoot string, rangeArgs []string) (*Diff, error) {
 	return d, nil
 }
 
+// Rastreados lista las rutas que git tiene rastreadas, relativas a la raíz.
+//
+// Los dos argumentos raros son el punto de la función. Por defecto `git
+// ls-files` ENTRECOMILLA y escapa en octal cualquier ruta con caracteres no
+// ASCII —"docs/obsidian/Telemetr\303\255a y calibraci\303\263n.md"— y quien
+// consumía esa salida tal cual acababa pasándole a los motores una ruta que no
+// existe. Semgrep, ante una raíz inválida, no se queja de ese archivo: aborta
+// el escaneo COMPLETO y devuelve cero hallazgos en un JSON perfectamente
+// válido. El informe de este repo decía "0 bloqueantes · COMPLETADO" mientras
+// había 28 hallazgos reales, por un único archivo de documentación con acentos
+// en el nombre.
+//
+// El separador NUL (-z) cubre además el nombre con salto de línea, que partir
+// por "\n" rompería igual de silenciosamente.
+func Rastreados(repoRoot string, patrones ...string) ([]string, error) {
+	args := append([]string{"-c", "core.quotePath=false", "ls-files", "-z"}, patrones...)
+	out, err := run(repoRoot, args...)
+	if err != nil {
+		return nil, err
+	}
+	// Sin TrimSpace: con -z las entradas son exactas, y un nombre puede
+	// llevar espacios al principio o al final de forma legítima.
+	var rutas []string
+	for _, r := range strings.Split(string(out), "\x00") {
+		if r != "" {
+			rutas = append(rutas, filepath.ToSlash(r))
+		}
+	}
+	return rutas, nil
+}
+
 // RepoRoot devuelve la raíz del repo que contiene dir.
 func RepoRoot(dir string) (string, error) {
 	out, err := run(dir, "rev-parse", "--show-toplevel")

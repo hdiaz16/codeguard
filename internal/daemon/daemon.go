@@ -46,12 +46,14 @@ type Server struct {
 // Engines arma la lista de motores de la etapa 2. Compartida con `codeguard ci`.
 func Engines(cfg *config.Config, inCI bool) []engines.Engine {
 	var migGlobs []string
+	var migDialecto string
 	if cfg != nil {
 		migGlobs = cfg.Paths.Migrations
+		migDialecto = cfg.Paths.DialectoMigraciones()
 	}
 	return []engines.Engine{
 		&sgengine.Engine{},
-		&sqengine.Engine{MigrationGlobs: migGlobs},
+		&sqengine.Engine{MigrationGlobs: migGlobs, Dialect: migDialecto},
 		// Política §7: CVE crítico advierte en local, bloquea en CI.
 		&tvengine.Engine{BlockCritical: inCI, SkipDBUpdate: !inCI},
 		linters.GoFmt{},

@@ -7,8 +7,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/rawbytes"
@@ -18,8 +20,41 @@ import (
 type Paths struct {
 	Exclude    []string `koanf:"exclude"`
 	Migrations []string `koanf:"migrations"`
-	Sensitive  []string `koanf:"sensitive"`
-	Generated  []string `koanf:"generated"`
+	// MigrationsDialect es el motor al que van estas migraciones. Squawk, el
+	// único linter del pilar datos, parsea exclusivamente PostgreSQL: contra
+	// otro dialecto sus hallazgos no son ruido inofensivo sino consejo dañino
+	// —CREATE INDEX CONCURRENTLY no existe en SQLite— y además BLOQUEAN, así
+	// que el dev queda sin salida. Declarar el dialecto real lo desactiva.
+	MigrationsDialect string   `koanf:"migrations_dialect"`
+	Sensitive         []string `koanf:"sensitive"`
+	Generated         []string `koanf:"generated"`
+}
+
+// DialectoMigraciones normaliza paths.migrations_dialect a un identificador
+// único (postgres, sqlite, mysql, sqlserver, oracle...).
+//
+// Vacío = postgres a propósito: el default tiene que preservar lo que hoy
+// protege a los repos que sí usan Postgres. Apagar el pilar datos por omisión
+// sería quitarles cobertura en silencio, que es peor que el falso positivo
+// que este campo viene a resolver.
+func (p Paths) DialectoMigraciones() string {
+	d := strings.ToLower(strings.TrimSpace(p.MigrationsDialect))
+	switch d {
+	case "", "postgres", "postgresql", "psql", "pg":
+		return "postgres"
+	case "sqlite", "sqlite3":
+		return "sqlite"
+	case "mysql", "mariadb":
+		return "mysql"
+	case "sqlserver", "mssql", "tsql":
+		return "sqlserver"
+	}
+	return d
+}
+
+// MigracionesEnPostgres dice si el pilar datos (squawk) aplica a este repo.
+func (p Paths) MigracionesEnPostgres() bool {
+	return p.DialectoMigraciones() == "postgres"
 }
 
 type Gates struct {
@@ -73,15 +108,44 @@ type LLM struct {
 	PriceOutPerMTok float64 `koanf:"price_out_per_mtok"`
 }
 
+// ConsumoTokens es el desglose de una llamada tal como lo reporta el proveedor.
+//
+// PromptTokens es el resto NO cacheado, no el tamaño total del prompt: los
+// tokens servidos desde caché viajan aparte. Es un struct y no cuatro enteros
+// posicionales a propósito — invertir dos de ellos saldría gratis y falsearía
+// el costo en silencio.
+type ConsumoTokens struct {
+	PromptTokens        int
+	CompletionTokens    int
+	CacheReadTokens     int
+	CacheCreationTokens int
+}
+
+// Multiplicadores sobre el precio de ENTRADA. Leer de caché es ~10 veces más
+// barato que procesar el token; escribirla cuesta un 25% más. Ignorar ambos
+// dejaba el costo corto en cada llamada con caché.
+const (
+	factorLecturaCache   = 0.1
+	factorEscrituraCache = 1.25
+)
+
 // CostoMicros convierte un consumo de tokens a millonésimas de dólar.
 // Devuelve 0 y false cuando no hay tarifas configuradas.
-func (l LLM) CostoMicros(promptTokens, completionTokens int) (int64, bool) {
+func (l LLM) CostoMicros(c ConsumoTokens) (int64, bool) {
 	if l.PriceInPerMTok <= 0 && l.PriceOutPerMTok <= 0 {
 		return 0, false
 	}
-	usd := float64(promptTokens)/1e6*l.PriceInPerMTok +
-		float64(completionTokens)/1e6*l.PriceOutPerMTok
-	return int64(usd * 1e6), true
+	entrada := float64(c.PromptTokens) +
+		float64(c.CacheReadTokens)*factorLecturaCache +
+		float64(c.CacheCreationTokens)*factorEscrituraCache
+	usd := entrada/1e6*l.PriceInPerMTok +
+		float64(c.CompletionTokens)/1e6*l.PriceOutPerMTok
+	// math.Round y no la conversión directa: int64(x) trunca hacia cero, y
+	// truncar en cada llamada sesga el gasto acumulado siempre a la baja —
+	// justo en la cifra contra la que se compara el tope mensual. El importe
+	// perdido es minúsculo; el sesgo sistemático en una compuerta de gasto no
+	// es una propiedad que convenga tener.
+	return int64(math.Round(usd * 1e6)), true
 }
 
 // ModelFor devuelve el modelo del pilar: override si existe, default si no.

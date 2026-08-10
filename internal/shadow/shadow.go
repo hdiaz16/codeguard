@@ -169,7 +169,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 			_ = r.Store.UpdateRunLLM(req.RunID, risk, false)
 			return
 		}
-		if _, hayTarifas := cfg.LLM.CostoMicros(1, 1); !hayTarifas {
+		if _, hayTarifas := cfg.LLM.CostoMicros(config.ConsumoTokens{PromptTokens: 1, CompletionTokens: 1}); !hayTarifas {
 			log.Println("sombra: monthly_budget_usd configurado pero sin price_in_per_mtok/price_out_per_mtok: " +
 				"el gasto no se puede calcular y el tope no se aplicará")
 		}
@@ -229,7 +229,12 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 			call.PromptTokens = res.Usage.PromptTokens
 			call.CompletionTokens = res.Usage.CompletionTokens
 			call.LatencyMs = res.LatencyMs
-			call.CostMicros, _ = cfg.LLM.CostoMicros(res.Usage.PromptTokens, res.Usage.CompletionTokens)
+			call.CostMicros, _ = cfg.LLM.CostoMicros(config.ConsumoTokens{
+				PromptTokens:        res.Usage.PromptTokens,
+				CompletionTokens:    res.Usage.CompletionTokens,
+				CacheReadTokens:     res.Usage.CacheReadTokens,
+				CacheCreationTokens: res.Usage.CacheCreationTokens,
+			})
 
 			// ── Etapa 6: verificación determinista de cada hallazgo ──
 			ok, rejected := verify(req, pillar, res.Content, deterministic)

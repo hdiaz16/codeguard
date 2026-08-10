@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/gobwas/glob"
 
@@ -20,9 +21,23 @@ type Engine struct {
 	Binary string // vacío = buscar en PATH
 	// MigrationGlobs viene de paths.migrations de la config.
 	MigrationGlobs []string
+	// Dialect viene de paths.migrations_dialect, ya normalizado. Squawk sólo
+	// entiende PostgreSQL; contra otro motor no se corre. Vacío = postgres.
+	Dialect string
 }
 
 func (e *Engine) Name() string { return "squawk" }
+
+// aplicaDialecto: squawk parsea el dialecto de PostgreSQL y nada más. Correrlo
+// sobre SQLite o MySQL no produce falsos positivos benignos: produce hallazgos
+// BLOQUEANTES cuyo arreglo rompe el esquema. El caso que lo destapó fue el
+// propio repo de CodeGuard —un esquema SQLite ejecutado con go:embed dentro de
+// una transacción— al que squawk exigía CREATE INDEX CONCURRENTLY: sintaxis
+// inexistente en SQLite, e ilegal dentro de una transacción en cualquier motor.
+func (e *Engine) aplicaDialecto() bool {
+	d := strings.ToLower(strings.TrimSpace(e.Dialect))
+	return d == "" || d == "postgres"
+}
 
 func (e *Engine) migrationFiles(in engines.Input) []string {
 	var globs []glob.Glob
@@ -46,7 +61,9 @@ func (e *Engine) migrationFiles(in engines.Input) []string {
 	return out
 }
 
-func (e *Engine) Applies(in engines.Input) bool { return len(e.migrationFiles(in)) > 0 }
+func (e *Engine) Applies(in engines.Input) bool {
+	return e.aplicaDialecto() && len(e.migrationFiles(in)) > 0
+}
 
 type violation struct {
 	File    string `json:"file"`

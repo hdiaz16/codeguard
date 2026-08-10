@@ -26,6 +26,32 @@ rulepack: "2026.08.2"
 languages: [go]
 `
 
+// El dialecto decide si corre squawk (sólo entiende PostgreSQL). Omitirlo
+// tiene que seguir significando postgres: apagar el pilar datos por defecto
+// le quitaría cobertura, sin avisar, a todos los repos ya enrolados.
+func TestDialectoMigracionesNormaliza(t *testing.T) {
+	for entrada, esperado := range map[string]string{
+		"":           "postgres",
+		"  ":         "postgres",
+		"postgres":   "postgres",
+		"PostgreSQL": "postgres",
+		"pg":         "postgres",
+		"sqlite3":    "sqlite",
+		"SQLite":     "sqlite",
+		"mariadb":    "mysql",
+		"mssql":      "sqlserver",
+		"duckdb":     "duckdb", // desconocido: se respeta, y no es postgres
+	} {
+		p := Paths{MigrationsDialect: entrada}
+		if got := p.DialectoMigraciones(); got != esperado {
+			t.Errorf("%q → %q, esperaba %q", entrada, got, esperado)
+		}
+		if got := p.MigracionesEnPostgres(); got != (esperado == "postgres") {
+			t.Errorf("%q: MigracionesEnPostgres=%v", entrada, got)
+		}
+	}
+}
+
 // Sin config no hay enrolamiento, y eso NO es un error: es la etapa 0 del
 // embudo. Devolver error aquí haría fallar el hook en cada repo ajeno.
 func TestSinConfigNoEsError(t *testing.T) {
@@ -182,17 +208,54 @@ func TestUnaAnulacionRotaNoRompeNada(t *testing.T) {
 
 func TestCostoMicros(t *testing.T) {
 	sinTarifas := LLM{}
-	if _, ok := sinTarifas.CostoMicros(1000, 1000); ok {
+	if _, ok := sinTarifas.CostoMicros(ConsumoTokens{PromptTokens: 1000, CompletionTokens: 1000}); ok {
 		t.Error("sin tarifas no se puede calcular costo: el tope quedaría inventado")
 	}
 
 	l := LLM{PriceInPerMTok: 2.0, PriceOutPerMTok: 10.0}
-	micros, ok := l.CostoMicros(1_000_000, 500_000)
+	micros, ok := l.CostoMicros(ConsumoTokens{PromptTokens: 1_000_000, CompletionTokens: 500_000})
 	if !ok {
 		t.Fatal("con tarifas debe calcular")
 	}
 	// 1M de entrada a $2/M + 0.5M de salida a $10/M = $7 = 7,000,000 micros
 	if micros != 7_000_000 {
 		t.Errorf("costo: %d micros, se esperaban 7,000,000", micros)
+	}
+}
+
+// Los tokens de caché se cobran a tarifas distintas de la entrada normal.
+// Omitirlos —como se hacía— no infla el costo: lo deja CORTO, porque
+// PromptTokens cuenta sólo el resto no cacheado. Con un tope mensual eso
+// significa gastar más de lo autorizado antes de que la compuerta salte.
+func TestCostoMicrosCuentaLaCache(t *testing.T) {
+	l := LLM{PriceInPerMTok: 2.0, PriceOutPerMTok: 10.0}
+
+	// 1M leído de caché a 0.1x de $2/M = $0.20
+	soloLectura, _ := l.CostoMicros(ConsumoTokens{CacheReadTokens: 1_000_000})
+	if soloLectura != 200_000 {
+		t.Errorf("lectura de caché: %d micros, se esperaban 200,000", soloLectura)
+	}
+
+	// 1M escrito en caché a 1.25x de $2/M = $2.50
+	soloEscritura, _ := l.CostoMicros(ConsumoTokens{CacheCreationTokens: 1_000_000})
+	if soloEscritura != 2_500_000 {
+		t.Errorf("escritura de caché: %d micros, se esperaban 2,500,000", soloEscritura)
+	}
+
+	// Y el desglose completo suma: $2 + $0.20 + $2.50 + $5 = $9.70
+	completo, _ := l.CostoMicros(ConsumoTokens{
+		PromptTokens:        1_000_000,
+		CompletionTokens:    500_000,
+		CacheReadTokens:     1_000_000,
+		CacheCreationTokens: 1_000_000,
+	})
+	if completo != 9_700_000 {
+		t.Errorf("desglose completo: %d micros, se esperaban 9,700,000", completo)
+	}
+
+	// El caso que motivó el cambio: una llamada servida enteramente desde
+	// caché costaba 0 y ahora cuesta lo que cuesta.
+	if antes, _ := l.CostoMicros(ConsumoTokens{PromptTokens: 0, CacheReadTokens: 500_000}); antes == 0 {
+		t.Error("una llamada servida desde caché no es gratis")
 	}
 }

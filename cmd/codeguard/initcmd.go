@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -42,18 +41,14 @@ func initCmd() *cobra.Command {
 			}
 
 			// ── detección sobre los archivos rastreados ──
-			out, err := exec.Command("git", "-C", repoRoot, "ls-files").Output()
+			rutas, err := gitdiff.Rastreados(repoRoot)
 			if err != nil {
 				return err
 			}
 			langCount := map[string]int{}
 			migrationDirs := map[string]bool{}
 			hasNode, hasDotnet := false, false
-			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				p := filepath.ToSlash(strings.TrimSpace(line))
-				if p == "" {
-					continue
-				}
+			for _, p := range rutas {
 				if lang, ok := extToLang[strings.ToLower(path.Ext(p))]; ok {
 					langCount[lang]++
 				}
@@ -95,6 +90,20 @@ func initCmd() *cobra.Command {
 			}
 			sort.Strings(migrations)
 
+			// El dialecto no se adivina: el esquema de este mismo repo es SQLite
+			// y su DDL no tiene una sola marca que lo delate (ni AUTOINCREMENT ni
+			// PRAGMA) — la pista real vivía en el driver de Go, no en el .sql.
+			// Un detector acertaría a veces y erraría callado el resto, así que
+			// se escribe el default y se pregunta explícitamente.
+			migBlock := fmt.Sprintf("  migrations: [%s]", quoteList(migrations))
+			if len(migrations) > 0 {
+				migBlock += `
+  # Motor de esas migraciones: el pilar datos (squawk) sólo analiza PostgreSQL.
+  # Si aquí dice postgres y no lo es, vas a recibir bloqueos cuyo arreglo NO
+  # aplica a tu motor. Valores: postgres | sqlite | mysql | sqlserver
+  migrations_dialect: postgres`
+			}
+
 			excludes := []string{"**/*.log", "**/*.db", "**/*.exe", "bin/**"}
 			if hasNode {
 				excludes = append(excludes, "**/node_modules/**", "**/.next/**", "**/dist/**")
@@ -120,7 +129,7 @@ languages: [%s]
 
 paths:
   exclude: [%s]
-  migrations: [%s]
+%s
   sensitive: []          # marca aquí rutas de auth/pagos/PII: suben el riesgo
   generated: []
 
@@ -158,7 +167,7 @@ ui:
 %s
 
 max_diff_lines: 2000
-`, strings.Join(langs, ", "), quoteList(excludes), quoteList(migrations), llmBlock)
+`, strings.Join(langs, ", "), quoteList(excludes), migBlock, llmBlock)
 
 			if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 				return err

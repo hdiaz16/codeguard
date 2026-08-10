@@ -77,7 +77,7 @@ func revisarRepo(root string) int {
 	}
 
 	checks := map[string]chequeo{}
-	orden := []string{"config", "hooks", "hooksPath", "binpath", "rulepack", "baseline", "informe"}
+	orden := []string{"config", "hooks", "hooksPath", "binpath", "rulepack", "datos", "baseline", "informe"}
 
 	// 1. config del repo
 	cfg, err := config.Load(root)
@@ -138,7 +138,24 @@ func revisarRepo(root string) int {
 		}
 	}
 
-	// 6. baseline
+	// 6. pilar datos: squawk sólo entiende PostgreSQL, así que el dialecto
+	// decide si corre. Se muestra siempre que haya migraciones configuradas —
+	// un motor apagado en silencio se confunde con un motor que no encuentra
+	// nada, y son cosas muy distintas para quien confía en la cobertura.
+	if cfg != nil && len(cfg.Paths.Migrations) > 0 {
+		if cfg.Paths.MigracionesEnPostgres() {
+			nota := "postgres · squawk activo"
+			if strings.TrimSpace(cfg.Paths.MigrationsDialect) == "" {
+				nota = "postgres por defecto · squawk activo (si no es Postgres, declara paths.migrations_dialect)"
+			}
+			checks["datos"] = chequeo{true, nota}
+		} else {
+			checks["datos"] = chequeo{true, cfg.Paths.DialectoMigraciones() +
+				" · squawk no aplica (sólo analiza PostgreSQL)"}
+		}
+	}
+
+	// 7. baseline
 	if n := len(baseline.Load(root)); n > 0 {
 		checks["baseline"] = chequeo{true, fmt.Sprintf("%d hallazgos preexistentes suprimidos", n)}
 	} else if cfg != nil {

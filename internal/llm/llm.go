@@ -122,6 +122,14 @@ func pistaDeError(cuerpo string) string {
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	// Desglose de caché del dialecto de Anthropic. Los rellena ese adaptador;
+	// el de OpenAI los deja en cero.
+	//
+	// Hacen falta porque PromptTokens (input_tokens) cuenta SÓLO el resto no
+	// cacheado: sin estos dos, lo servido desde caché no se cobra en absoluto
+	// y el costo sale corto, así que el tope mensual se alcanzaría tarde.
+	CacheReadTokens     int `json:"-"`
+	CacheCreationTokens int `json:"-"`
 }
 
 type Result struct {

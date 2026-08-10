@@ -2,13 +2,12 @@ package codegraph
 
 import (
 	"os"
-	"os/exec"
-
-	"codeguard/internal/engines/proc"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"codeguard/internal/gitdiff"
 )
 
 // Extractor de TypeScript/JavaScript a nivel de función. Sin tree-sitter:
@@ -42,9 +41,9 @@ var noSonLlamadas = map[string]bool{
 
 // BuildTS arma el grafo función→función y función→consulta de un repo TS/JS.
 func BuildTS(root string) (*Graph, error) {
-	cmd := exec.Command("git", "-C", root, "ls-files", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs")
-	proc.SinVentana(cmd) // el daemon no tiene consola: sin esto, git abre la suya
-	out, err := cmd.Output()
+	// Rastreados ya se encarga de SinVentana (el daemon no tiene consola) y de
+	// las rutas con caracteres no ASCII, que git entrecomilla por defecto.
+	rutas, err := gitdiff.Rastreados(root, "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs")
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +56,8 @@ func BuildTS(root string) (*Graph, error) {
 	}
 	var cuerpos []cuerpo
 
-	for _, rel := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		rel = filepath.ToSlash(strings.TrimSpace(rel))
-		if rel == "" || strings.Contains(rel, "node_modules/") ||
+	for _, rel := range rutas {
+		if strings.Contains(rel, "node_modules/") ||
 			strings.HasSuffix(rel, ".d.ts") || strings.Contains(rel, ".next/") {
 			continue
 		}

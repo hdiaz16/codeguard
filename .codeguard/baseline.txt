@@ -11,3 +11,22 @@ af732c5640a2df29003481e74c037f7747b2e1fd357e9fcc298ce0547f2f85dd  # prefer-robus
 c0d3801ddf9676033d20c67614c8684db2bb9f46f86088131e735e2c4b250cda  # gofmt spikes/s3-foundry/main.go:1
 db32d603512220cfea072244ebaade0d8d8441c91314dc96cd00733c36c35b5b  # prefer-bigint-over-int migrations/001_init.sql:16
 e3386511ff42e250ae91e2129854b7be692721d54088025c54352245fc7e2187  # ruff-format spikes/s1-semgrep/generate_testrepo.py:1
+
+# ── Añadido a mano, con reserva — DECISIÓN PENDIENTE DE UN HUMANO ────────────
+# go-dinero-float sobre PriceInPerMTok / PriceOutPerMTok (un solo fingerprint
+# cubre las dos líneas).
+#
+# Por qué no se corrigió: no son importes, son TARIFAS que el equipo escribe a
+# mano en el YAML ("2.0" dólares por millón de tokens). Participan en una única
+# multiplicación cuyo resultado se cuantiza de inmediato a int64 en micros, que
+# es lo que se acumula y lo que se guarda. El riesgo de redondeo que la regla
+# persigue —acumular dinero en float— no se da aquí.
+#
+# Por qué queda anotado y no cerrado: pasarlas a enteros obligaría al equipo a
+# escribir "2000000" en vez de "2.0" en config.yaml y en dist/org-llm.yaml. Es
+# un cambio del contrato público de configuración, y esa es tu decisión, no la
+# mía. Si decides convertirlas, borra esta entrada.
+#
+# (De paso: el truncamiento de int64(usd*1e6) sí se corrigió a math.Round —
+# sesgaba el gasto acumulado a la baja en la misma cifra que vigila el tope.)
+8fa0e32f56246937c62118ae648ed1adf99e1293d3512c7b7b48de230e16d550  # go-dinero-float internal/config/config.go:107-108

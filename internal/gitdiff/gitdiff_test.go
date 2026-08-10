@@ -52,6 +52,65 @@ func git(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// El fallo mas caro del proyecto entro por aqui. `git ls-files` entrecomilla y
+// escapa en octal cualquier ruta no ASCII ("docs/Telemetr\303\255a.md"), y quien
+// consumia esa salida tal cual le pasaba a los motores una ruta inexistente.
+// Semgrep, ante una raiz invalida, aborta el escaneo COMPLETO y devuelve cero
+// hallazgos en un JSON valido: el informe de este repo decia "0 bloqueantes"
+// mientras habia 28 reales, por un unico archivo de documentacion con acentos.
+func TestRastreadosDevuelveRutasUsablesConAcentos(t *testing.T) {
+	dir := repoDePrueba(t)
+	const conAcentos = "docs/Telemetría y calibración.md"
+	escribir(t, dir, conAcentos, "# notas\n")
+	escribir(t, dir, "simple.go", "package p\n")
+	git(t, dir, "add", "-A")
+
+	rutas, err := Rastreados(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var encontrada bool
+	for _, r := range rutas {
+		if r == conAcentos {
+			encontrada = true
+		}
+		// Lo que rompia: la ruta llegaba entrecomillada y con escapes octales.
+		if strings.HasPrefix(r, `"`) || strings.Contains(r, `\3`) {
+			t.Errorf("ruta escapada por git, inservible como target: %q", r)
+		}
+		// Y tiene que existir en disco: es el contrato real con los motores.
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(r))); err != nil {
+			t.Errorf("ruta que no existe en disco: %q (%v)", r, err)
+		}
+	}
+	if !encontrada {
+		t.Errorf("no se devolvio %q; se obtuvo: %v", conAcentos, rutas)
+	}
+}
+
+// Los patrones se pasan tal cual a git, para no leer el repo entero cuando solo
+// interesa un lenguaje (el grafo de TS lo usa asi).
+func TestRastreadosFiltraPorPatron(t *testing.T) {
+	dir := repoDePrueba(t)
+	escribir(t, dir, "a.ts", "export const a = 1\n")
+	escribir(t, dir, "b.go", "package p\n")
+	git(t, dir, "add", "-A")
+
+	rutas, err := Rastreados(dir, "*.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rutas {
+		if !strings.HasSuffix(r, ".ts") {
+			t.Errorf("el patron *.ts no filtro: %q", r)
+		}
+	}
+	if len(rutas) != 1 {
+		t.Errorf("se esperaba 1 archivo .ts, hubo %d: %v", len(rutas), rutas)
+	}
+}
+
 func TestStagedDetectaAltasModificacionesYBajas(t *testing.T) {
 	dir := repoDePrueba(t)
 	escribir(t, dir, "nuevo.go", "package p\n\nfunc Nuevo() {}\n")

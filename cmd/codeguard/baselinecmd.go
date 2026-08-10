@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,16 +33,13 @@ func baselineCmd() *cobra.Command {
 			}
 
 			// Todos los archivos rastreados como si estuvieran modificados.
-			out, err := exec.Command("git", "-C", repoRoot, "ls-files").Output()
+			rutas, err := gitdiff.Rastreados(repoRoot)
 			if err != nil {
 				return err
 			}
 			var files []gitdiff.ChangedFile
-			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				if line == "" {
-					continue
-				}
-				files = append(files, gitdiff.ChangedFile{Path: filepath.ToSlash(line), Status: "M"})
+			for _, r := range rutas {
+				files = append(files, gitdiff.ChangedFile{Path: r, Status: "M"})
 			}
 			fmt.Printf("escaneando %d archivos con la capa determinista completa…\n", len(files))
 

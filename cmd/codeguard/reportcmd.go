@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -54,15 +53,13 @@ func reportCmd() *cobra.Command {
 			// hallazgos previos (para saber cuáles se resolvieron)
 			previos := leerFingerprintsPrevios(filepath.Join(repoRoot, filepath.FromSlash(reportFile)))
 
-			out, err := exec.Command("git", "-C", repoRoot, "ls-files").Output()
+			rutas, err := gitdiff.Rastreados(repoRoot)
 			if err != nil {
 				return err
 			}
 			var files []gitdiff.ChangedFile
-			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				if line != "" {
-					files = append(files, gitdiff.ChangedFile{Path: filepath.ToSlash(line), Status: "M"})
-				}
+			for _, r := range rutas {
+				files = append(files, gitdiff.ChangedFile{Path: r, Status: "M"})
 			}
 			fmt.Printf("escaneando %d archivos…\n", len(files))
 
