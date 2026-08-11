@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/proc"
@@ -40,6 +41,10 @@ type Engine struct {
 	// cuando cambian las dependencias (go.mod/go.sum) — el momento en que la
 	// alcanzabilidad suele cambiar. El CI corre con cualquier .go tocado.
 	SoloManifiestos bool
+	// Cache: módulo sin cambios = mismos hallazgos, sin re-analizar. La clave
+	// lleva el día UTC porque el análisis consulta la base de vulnerabilidades
+	// del día: un acierto de ayer escondería los CVEs publicados hoy.
+	Cache engines.Cache
 }
 
 func (e *Engine) Name() string { return "govulncheck" }
@@ -137,13 +142,39 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	}
 	var out []finding.Finding
 	for _, dir := range e.modulos(in) {
+		clave := e.claveModulo(in.RepoRoot, dir)
+		if e.Cache != nil && clave != "" {
+			if fs, ok := e.Cache.Leer([]string{clave})[clave]; ok {
+				out = append(out, fs...)
+				continue
+			}
+		}
 		fs, err := e.correrModulo(ctx, bin, in.RepoRoot, dir)
 		if err != nil {
 			return nil, err
 		}
+		if e.Cache != nil && clave != "" {
+			e.Cache.Guardar(map[string][]finding.Finding{clave: fs})
+		}
 		out = append(out, fs...)
 	}
 	return out, nil
+}
+
+// claveModulo identifica un análisis completo: el contenido del módulo (los
+// .go y manifiestos rastreados) más el día UTC — la frescura de la base de
+// vulnerabilidades es parte del resultado. Vacía = no cacheable.
+func (e *Engine) claveModulo(repoRoot, dir string) string {
+	huella := engines.HuellaModulo(repoRoot, dir, esGoOManifiesto)
+	if huella == "" {
+		return ""
+	}
+	return "govulncheck:" + huella + ":" + time.Now().UTC().Format("2006-01-02")
+}
+
+func esGoOManifiesto(rel string) bool {
+	base := strings.ToLower(path.Base(rel))
+	return base == "go.mod" || base == "go.sum" || strings.HasSuffix(base, ".go")
 }
 
 func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string) ([]finding.Finding, error) {

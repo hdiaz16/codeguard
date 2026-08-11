@@ -1,9 +1,17 @@
 package semgrep
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"codeguard/internal/engines"
+	"codeguard/internal/finding"
+	"codeguard/internal/gitdiff"
 )
 
 // Los tres payloads de abajo son salidas REALES de semgrep 1.x capturadas
@@ -226,5 +234,187 @@ func TestShortRuleID(t *testing.T) {
 		if got := shortRuleID(entrada); got != esperado {
 			t.Errorf("shortRuleID(%q) = %q, se esperaba %q", entrada, got, esperado)
 		}
+	}
+}
+
+// ── caché por archivo ────────────────────────────────────────────────────────
+
+type cacheDePrueba struct {
+	entradas  map[string][]finding.Finding
+	guardados map[string][]finding.Finding
+}
+
+func (c *cacheDePrueba) Leer(shas []string) map[string][]finding.Finding {
+	out := map[string][]finding.Finding{}
+	for _, sha := range shas {
+		if fs, ok := c.entradas[sha]; ok {
+			out[sha] = fs
+		}
+	}
+	return out
+}
+
+func (c *cacheDePrueba) Guardar(porSHA map[string][]finding.Finding) {
+	c.guardados = porSHA
+}
+
+func dirConReglas(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "semgrep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// Con TODOS los archivos en caché, semgrep no se ejecuta: el binario apunta a
+// un nombre que no existe y Run aun así responde. Esa es la promesa entera
+// del caché — y de paso prueba la reescritura de ruta: dos archivos con el
+// mismo contenido comparten entrada, pero cada hallazgo sale con SU ruta y
+// SU fingerprint.
+func TestCacheTotalNoEjecutaSemgrep(t *testing.T) {
+	guardado := finding.Finding{
+		Engine: "semgrep", RuleKey: "python-eval", File: "original.py", Line: 3,
+		LineContent: "eval(x)", Message: "eval",
+	}
+	guardado.ComputeFingerprint()
+
+	cache := &cacheDePrueba{entradas: map[string][]finding.Finding{
+		"sha-a": {guardado},
+		"sha-b": {},
+	}}
+	e := &Engine{Binary: "semgrep-que-no-existe.exe", Cache: cache}
+	fs, err := e.Run(context.Background(), engines.Input{
+		RepoRoot:    t.TempDir(),
+		RulepackDir: dirConReglas(t),
+		Files: []gitdiff.ChangedFile{
+			{Path: "original.py", Status: "M", SHA256: "sha-a"},
+			{Path: "copia/duplicado.py", Status: "A", SHA256: "sha-a"},
+			{Path: "limpio.py", Status: "M", SHA256: "sha-b"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("con caché total no hay nada que ejecutar, pero Run falló: %v", err)
+	}
+	if len(fs) != 2 {
+		t.Fatalf("esperaba 2 hallazgos (uno por copia del contenido), hay %d: %+v", len(fs), fs)
+	}
+	rutas := map[string]string{} // ruta → fingerprint
+	for _, f := range fs {
+		rutas[f.File] = f.Fingerprint
+	}
+	if _, ok := rutas["original.py"]; !ok {
+		t.Error("falta el hallazgo del archivo original")
+	}
+	if _, ok := rutas["copia/duplicado.py"]; !ok {
+		t.Error("falta el hallazgo del duplicado: la entrada es por contenido y debe servir a ambas rutas")
+	}
+	if rutas["original.py"] == rutas["copia/duplicado.py"] {
+		t.Error("rutas distintas deben producir fingerprints distintos (la ruta es parte de la huella)")
+	}
+}
+
+// Un archivo sin huella jamás pasa por el caché: ni acierta ni se guarda.
+func TestSinHuellaNoHayCache(t *testing.T) {
+	cache := &cacheDePrueba{entradas: map[string][]finding.Finding{}}
+	e := &Engine{Binary: "semgrep-que-no-existe.exe", Cache: cache}
+	_, err := e.Run(context.Background(), engines.Input{
+		RepoRoot:    t.TempDir(),
+		RulepackDir: dirConReglas(t),
+		Files:       []gitdiff.ChangedFile{{Path: "x.py", Status: "M"}}, // sin SHA256
+	})
+	if err == nil {
+		t.Fatal("sin huella el archivo debía ir a semgrep (que aquí no existe): Run debió fallar")
+	}
+}
+
+// porArchivo atribuye por ruta y garantiza la entrada vacía del archivo limpio.
+func TestPorArchivoAtribuyeYRegistraLimpios(t *testing.T) {
+	analizados := []objetivo{
+		{rel: "a.py", sha: "sha-a"},
+		{rel: "b.py", sha: "sha-b"},
+		{rel: "sin-huella.py", sha: ""},
+	}
+	fs := []finding.Finding{
+		{File: "a.py", RuleKey: "r1"},
+		{File: "a.py", RuleKey: "r2"},
+		{File: "sin-huella.py", RuleKey: "r3"},
+	}
+	m := porArchivo(fs, analizados)
+	if len(m) != 2 {
+		t.Fatalf("esperaba 2 entradas (a y b; sin-huella no es cacheable): %v", m)
+	}
+	if len(m["sha-a"]) != 2 {
+		t.Errorf("a.py debía aportar 2 hallazgos: %v", m["sha-a"])
+	}
+	if fs, ok := m["sha-b"]; !ok || len(fs) != 0 {
+		t.Errorf("b.py se analizó y quedó limpio: su entrada vacía ES el resultado: %v", m)
+	}
+}
+
+// Ciclo completo con el semgrep real: la primera corrida puebla el caché (el
+// limpio con lista vacía), la segunda —con el binario roto— sirve lo mismo
+// desde el caché. Es el contrato de F2a de punta a punta.
+func TestCacheCicloCompletoConSemgrepReal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integración: ejecuta semgrep real")
+	}
+	if _, err := exec.LookPath("semgrep"); err != nil {
+		t.Skip("semgrep no está en PATH")
+	}
+	rulepack := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(rulepack, "semgrep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	regla := `rules:
+  - id: python-eval
+    languages: [python]
+    severity: ERROR
+    message: "eval prohibido"
+    pattern: "eval(...)"
+`
+	if err := os.WriteFile(filepath.Join(rulepack, "semgrep", "regla.yaml"), []byte(regla), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "malo.py"), []byte("eval(entrada)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "limpio.py"), []byte("x = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := []gitdiff.ChangedFile{
+		{Path: "malo.py", Status: "M", SHA256: gitdiff.SHA256De(repo, "malo.py")},
+		{Path: "limpio.py", Status: "M", SHA256: gitdiff.SHA256De(repo, "limpio.py")},
+	}
+
+	cache := &cacheDePrueba{entradas: map[string][]finding.Finding{}}
+	primera, err := (&Engine{Cache: cache}).Run(context.Background(),
+		engines.Input{RepoRoot: repo, RulepackDir: rulepack, Files: files})
+	if err != nil {
+		t.Fatalf("primera corrida: %v", err)
+	}
+	if len(primera) != 1 || primera[0].File != "malo.py" {
+		t.Fatalf("esperaba exactamente el eval de malo.py: %+v", primera)
+	}
+	if cache.guardados == nil {
+		t.Fatal("la corrida limpia debió poblar el caché")
+	}
+	if fs, ok := cache.guardados[files[1].SHA256]; !ok || len(fs) != 0 {
+		t.Fatalf("limpio.py debió guardarse con lista vacía: %v", cache.guardados)
+	}
+	if len(cache.guardados[files[0].SHA256]) != 1 {
+		t.Fatalf("malo.py debió guardarse con su hallazgo: %v", cache.guardados)
+	}
+
+	// Segunda corrida: binario roto + caché poblado = mismos hallazgos.
+	cache.entradas = cache.guardados
+	segunda, err := (&Engine{Binary: "semgrep-que-no-existe.exe", Cache: cache}).Run(context.Background(),
+		engines.Input{RepoRoot: repo, RulepackDir: rulepack, Files: files})
+	if err != nil {
+		t.Fatalf("segunda corrida (todo cacheado): %v", err)
+	}
+	if len(segunda) != 1 || segunda[0].Fingerprint != primera[0].Fingerprint {
+		t.Fatalf("el caché debe reproducir el resultado exacto:\n primera: %+v\n segunda: %+v", primera, segunda)
 	}
 }

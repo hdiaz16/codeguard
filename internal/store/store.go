@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -273,6 +274,81 @@ func (s *Store) DiffCachePut(repoID, diffSHA, rulepack, configHash, model, resul
 		ON CONFLICT (repo_id, diff_sha256, rulepack_ver, config_hash, model)
 		DO UPDATE SET result_json = excluded.result_json, created_at = excluded.created_at`,
 		NewULID(), repoID, diffSHA, rulepack, configHash, model, resultJSON, nowISO())
+	return err
+}
+
+// FileCacheGet / FileCachePut / FileCachePrune: caché de resultados
+// deterministas por archivo (§9, tabla file_cache). La clave es el sha256 del
+// contenido normalizado a LF más el rulepack y el hash de la config: mismo
+// contenido + mismas reglas = mismos hallazgos, sin volver a correr nada.
+
+// FileCacheGet devuelve, de los shas pedidos, los que tienen resultado
+// cacheado (sha → result_json). Los que no aparecen son misses.
+//
+// Los shas viajan como UN parámetro JSON y json_each los expande dentro de
+// SQLite: la consulta queda estática (la primera versión concatenaba "?" por
+// sha y el propio go-sql-concat-en-variable del rulepack la bloqueó — con
+// razón: una consulta que se arma con + es una consulta que otro editará mal)
+// y de paso desaparece el troceo por el tope de parámetros.
+func (s *Store) FileCacheGet(repoID, rulepack, configHash string, shas []string) (map[string]string, error) {
+	if len(shas) == 0 {
+		return map[string]string{}, nil
+	}
+	lista, err := json.Marshal(shas)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT file_sha256, result_json FROM file_cache
+		WHERE repo_id=? AND rulepack_ver=? AND config_hash=?
+		  AND file_sha256 IN (SELECT value FROM json_each(?))`,
+		repoID, rulepack, configHash, string(lista))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var sha, js string
+		if err := rows.Scan(&sha, &js); err != nil {
+			return nil, err
+		}
+		out[sha] = js
+	}
+	return out, rows.Err()
+}
+
+// FileCachePut guarda los resultados por sha. La lista vacía también se
+// guarda: "analizado y limpio" es el resultado que más veces se reutiliza.
+func (s *Store) FileCachePut(repoID, rulepack, configHash string, porSHA map[string]string) error {
+	if len(porSHA) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for sha, js := range porSHA {
+		if _, err := tx.Exec(`INSERT INTO file_cache
+			(id, repo_id, file_sha256, rulepack_ver, config_hash, result_json, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (repo_id, file_sha256, rulepack_ver, config_hash)
+			DO UPDATE SET result_json = excluded.result_json, created_at = excluded.created_at`,
+			NewULID(), repoID, sha, rulepack, configHash, js, nowISO()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// FileCachePrune borra, de UN repo, lo que ya no puede acertar: entradas de
+// otros rulepacks (el repo pinnea uno) y entradas más viejas que edadMax. Es
+// por repo a propósito: otros repos de la máquina pinnean otras versiones.
+func (s *Store) FileCachePrune(repoID, rulepackVigente string, edadMax time.Duration) error {
+	corte := time.Now().UTC().Add(-edadMax).Format(time.RFC3339)
+	_, err := s.db.Exec(`DELETE FROM file_cache
+		WHERE repo_id = ? AND (rulepack_ver != ? OR created_at < ?)`,
+		repoID, rulepackVigente, corte)
 	return err
 }
 

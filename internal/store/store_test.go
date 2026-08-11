@@ -2,10 +2,12 @@ package store
 
 import (
 	"encoding/csv"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codeguard/internal/finding"
 	"codeguard/internal/pipeline"
@@ -247,5 +249,97 @@ func TestResumenSemanal(t *testing.T) {
 	}
 	if !strings.Contains(r, "1") {
 		t.Errorf("con un run limpio el resumen debe contarlo: %q", r)
+	}
+}
+
+// El caché por archivo (§9): mismo contenido + mismo rulepack + misma config
+// acierta; cambiar CUALQUIERA de las tres llaves es un miss. La poda respeta
+// a los demás repos de la máquina.
+func TestFileCache(t *testing.T) {
+	s := bd(t)
+	if err := s.UpsertRepo("r1", "", "uno"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertRepo("r2", "", "dos"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.FileCachePut("r1", "2026.08.2", "cfgA", map[string]string{
+		"sha-limpio":   "[]",
+		"sha-con-eval": `[{"rule_key":"python-eval"}]`,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	got, err := s.FileCacheGet("r1", "2026.08.2", "cfgA",
+		[]string{"sha-limpio", "sha-con-eval", "sha-desconocido"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got) != 2 || got["sha-limpio"] != "[]" || !strings.Contains(got["sha-con-eval"], "python-eval") {
+		t.Fatalf("aciertos inesperados: %v", got)
+	}
+
+	// Otra config u otro rulepack: cero aciertos — la clave es triple.
+	if m, _ := s.FileCacheGet("r1", "2026.08.2", "cfgB", []string{"sha-limpio"}); len(m) != 0 {
+		t.Errorf("otra config no puede acertar: %v", m)
+	}
+	if m, _ := s.FileCacheGet("r1", "2026.09.1", "cfgA", []string{"sha-limpio"}); len(m) != 0 {
+		t.Errorf("otro rulepack no puede acertar: %v", m)
+	}
+
+	// Upsert: el mismo sha se sobrescribe, no se duplica.
+	if err := s.FileCachePut("r1", "2026.08.2", "cfgA", map[string]string{"sha-limpio": `[{"rule_key":"x"}]`}); err != nil {
+		t.Fatalf("Put de nuevo: %v", err)
+	}
+	got, _ = s.FileCacheGet("r1", "2026.08.2", "cfgA", []string{"sha-limpio"})
+	if !strings.Contains(got["sha-limpio"], `"x"`) {
+		t.Errorf("el upsert no sobrescribió: %v", got)
+	}
+
+	// La poda barre entradas de rulepacks viejos del repo dado y NADA del vecino.
+	if err := s.FileCachePut("r1", "2026.07.9", "cfgA", map[string]string{"sha-viejo": "[]"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FileCachePut("r2", "2026.07.9", "cfgA", map[string]string{"sha-ajeno": "[]"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FileCachePrune("r1", "2026.08.2", 24*365*10*time.Hour); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if m, _ := s.FileCacheGet("r1", "2026.07.9", "cfgA", []string{"sha-viejo"}); len(m) != 0 {
+		t.Error("la poda debió barrer el rulepack viejo de r1")
+	}
+	if m, _ := s.FileCacheGet("r1", "2026.08.2", "cfgA", []string{"sha-con-eval"}); len(m) != 1 {
+		t.Error("la poda barrió el rulepack vigente de r1")
+	}
+	if m, _ := s.FileCacheGet("r2", "2026.07.9", "cfgA", []string{"sha-ajeno"}); len(m) != 1 {
+		t.Error("la poda tocó a otro repo: es POR REPO a propósito")
+	}
+}
+
+// Cientos de shas en una sola consulta: json_each los expande dentro de
+// SQLite sin concatenar SQL ni chocar con el tope de parámetros.
+func TestFileCacheGetPorTandas(t *testing.T) {
+	s := bd(t)
+	if err := s.UpsertRepo("r1", "", "uno"); err != nil {
+		t.Fatal(err)
+	}
+	lote := map[string]string{}
+	var shas []string
+	for i := 0; i < 950; i++ {
+		sha := fmt.Sprintf("sha-%04d", i)
+		lote[sha] = "[]"
+		shas = append(shas, sha)
+	}
+	if err := s.FileCachePut("r1", "v", "c", lote); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.FileCacheGet("r1", "v", "c", shas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 950 {
+		t.Fatalf("se perdieron aciertos entre tandas: %d de 950", len(got))
 	}
 }

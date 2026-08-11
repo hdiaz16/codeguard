@@ -20,6 +20,9 @@ import (
 
 type Engine struct {
 	Binary string // vacío = buscar en PATH
+	// Cache, si no es nil, evita correr semgrep sobre archivos cuyo contenido
+	// exacto ya se analizó con este rulepack y esta config (§9, file_cache).
+	Cache Cache
 }
 
 // ErrSinRulepack: el repo apunta a una versión de rulepack que no está
@@ -156,6 +159,17 @@ func (r sgResult) reglasRotas() []string {
 // y el resto de argumentos.
 const maxLineaComandos = 30000
 
+// Cache es el caché de resultados deterministas (§9). Aquí la clave es el
+// sha del contenido de CADA archivo — semgrep es por archivo; los motores de
+// módulo usan el mismo caché con su huella agregada.
+type Cache = engines.Cache
+
+// objetivo es un archivo a analizar: ruta absoluta para semgrep, relativa
+// para atribuir hallazgos, y la huella del contenido como clave de caché.
+type objetivo struct {
+	abs, rel, sha string
+}
+
 func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
 	bin := e.Binary
 	if bin == "" {
@@ -167,25 +181,68 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	}
 
 	// Solo archivos tocados (sección 5, etapa 2): targets explícitos.
-	var objetivos []string
+	var pendientes []objetivo
 	for _, f := range in.Files {
 		if f.Status == "D" {
 			continue
 		}
-		objetivos = append(objetivos, filepath.Join(in.RepoRoot, filepath.FromSlash(f.Path)))
+		pendientes = append(pendientes, objetivo{
+			abs: filepath.Join(in.RepoRoot, filepath.FromSlash(f.Path)),
+			rel: f.Path,
+			sha: f.SHA256,
+		})
 	}
-	if len(objetivos) == 0 {
+	if len(pendientes) == 0 {
 		return nil, nil
 	}
 
+	// ── Aciertos de caché: mismo contenido + mismas reglas = mismos hallazgos.
+	// El caché es direccionado por CONTENIDO: dos archivos idénticos comparten
+	// entrada, así que al reproducir un acierto se reescribe la ruta (y con
+	// ella el fingerprint) para el archivo concreto de esta corrida.
 	var findings []finding.Finding
+	if e.Cache != nil {
+		shas := make([]string, 0, len(pendientes))
+		for _, o := range pendientes {
+			if o.sha != "" {
+				shas = append(shas, o.sha)
+			}
+		}
+		aciertos := e.Cache.Leer(shas)
+		var quedan []objetivo
+		for _, o := range pendientes {
+			fs, ok := aciertos[o.sha]
+			if o.sha == "" || !ok {
+				quedan = append(quedan, o)
+				continue
+			}
+			for _, f := range fs { // copia: la entrada puede servir a dos rutas
+				if f.File != o.rel {
+					f.File = o.rel
+					f.ComputeFingerprint()
+				}
+				findings = append(findings, f)
+			}
+		}
+		pendientes = quedan
+	}
+	if len(pendientes) == 0 {
+		return findings, nil
+	}
+
+	objetivos := make([]string, len(pendientes))
+	for i, o := range pendientes {
+		objetivos[i] = o.abs
+	}
+
+	var nuevos []finding.Finding
 	rotasVistas := map[string]bool{}
 	for _, lote := range lotes(objetivos, maxLineaComandos) {
 		hallados, rotas, err := e.correrLote(ctx, bin, rules, in, lote)
 		if err != nil {
 			return nil, err
 		}
-		findings = append(findings, hallados...)
+		nuevos = append(nuevos, hallados...)
 		for _, r := range rotas {
 			rotasVistas[r] = true
 		}
@@ -200,7 +257,34 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 		log.Printf("semgrep: %d regla(s) del rulepack no compilan y no se aplicaron: %s",
 			len(ids), strings.Join(ids, ", "))
 	}
-	return findings, nil
+	// Con reglas rotas NO se cachea: el resultado es de un pack incompleto, y
+	// servirlo mañana —cuando las reglas ya compilen— sería cobertura perdida
+	// que además parece un acierto.
+	if e.Cache != nil && len(rotasVistas) == 0 {
+		e.Cache.Guardar(porArchivo(nuevos, pendientes))
+	}
+	return append(findings, nuevos...), nil
+}
+
+// porArchivo atribuye los hallazgos recién producidos a su archivo y devuelve
+// sha → hallazgos, listo para el caché. Los archivos analizados SIN hallazgos
+// entran con lista vacía. Los archivos sin huella quedan fuera (no cacheables).
+func porArchivo(fs []finding.Finding, analizados []objetivo) map[string][]finding.Finding {
+	shaPorRel := make(map[string]string, len(analizados))
+	out := make(map[string][]finding.Finding, len(analizados))
+	for _, o := range analizados {
+		if o.sha == "" {
+			continue
+		}
+		shaPorRel[o.rel] = o.sha
+		out[o.sha] = []finding.Finding{}
+	}
+	for _, f := range fs {
+		if sha, ok := shaPorRel[f.File]; ok {
+			out[sha] = append(out[sha], f)
+		}
+	}
+	return out
 }
 
 // lotes reparte los objetivos en grupos cuya longitud sumada cabe en el límite.

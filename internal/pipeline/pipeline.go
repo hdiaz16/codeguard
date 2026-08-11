@@ -121,7 +121,12 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 				continue
 			}
 			g.Go(func() error {
+				t0 := time.Now()
 				fs, err := eng.Run(gctx, in)
+				// El desglose por motor es la única forma de saber quién se
+				// come el presupuesto: el total ya lo dice ElapsedMs, pero un
+				// total gordo sin desglose obliga a adivinar.
+				log.Printf("%s: %d hallazgo(s) en %dms", eng.Name(), len(fs), time.Since(t0).Milliseconds())
 				if err != nil {
 					failures[i] = err // no bloquea: se degrada (sección 14)
 					return nil

@@ -81,10 +81,7 @@ func read(repoRoot string, rangeArgs []string) (*Diff, error) {
 		path := parts[len(parts)-1] // en renames (R100\told\tnew) el destino es el último campo
 		cf := ChangedFile{Path: filepath.ToSlash(path), Status: status}
 		if status != "D" {
-			if raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(path))); err == nil {
-				sum := sha256.Sum256(normalizeLF(raw))
-				cf.SHA256 = hex.EncodeToString(sum[:])
-			}
+			cf.SHA256 = SHA256De(repoRoot, path)
 		}
 		d.Files = append(d.Files, cf)
 	}
@@ -94,6 +91,20 @@ func read(repoRoot string, rangeArgs []string) (*Diff, error) {
 		}
 	}
 	return d, nil
+}
+
+// SHA256De calcula la huella del contenido de un archivo del repo normalizado
+// a LF — la MISMA huella que llevan los ChangedFile de un diff. Es la clave
+// del caché por archivo (§9): si el hook y `codeguard report` no comparten
+// esta definición, cada uno llena su propio caché y ninguno acierta en el del
+// otro. Devuelve vacío si el archivo no se puede leer (vacío = no cacheable).
+func SHA256De(repoRoot, rel string) string {
+	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(normalizeLF(raw))
+	return hex.EncodeToString(sum[:])
 }
 
 // Rastreados lista las rutas que git tiene rastreadas, relativas a la raíz.
