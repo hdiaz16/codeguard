@@ -614,8 +614,12 @@ rules:
 # ---------------------------------------------------------------------------
 # CORS  (CWE-942) — cors-wildcard extendido y subido cuando hay credenciales
 # ---------------------------------------------------------------------------
+  # curación: era UNA regla para seis lenguajes, pero los objetos literales
+  # sólo parsean en js/ts y semgrep exige que cada patrón parsee en TODOS los
+  # lenguajes listados: llevaba muerta desde el primer día. Partida por
+  # framework, que es donde vive cada forma del mismo error.
   - id: cors-wildcard-con-credenciales
-    languages: [javascript, typescript, python, go, java, csharp]
+    languages: [javascript, typescript]
     severity: ERROR
     message: >-
       Origen comodín junto a credenciales. La combinación es inválida y suele
@@ -624,8 +628,26 @@ rules:
     pattern-either:
       - pattern: "{..., origin: true, credentials: true, ...}"
       - pattern: '{..., origin: "*", credentials: true, ...}'
-      - pattern: $X.AllowAnyOrigin().AllowCredentials()
-      - pattern: $C.setAllowedOrigins(Arrays.asList("*"))
+
+  - id: cors-wildcard-con-credenciales-net
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      Origen comodín junto a credenciales (AllowAnyOrigin + AllowCredentials).
+      La combinación es inválida y suele resolverse reflejando el Origin, que
+      anula la política del navegador.
+    metadata: { pilar: seguridad, cwe: "CWE-942", owasp: "A05:2021" }
+    pattern: $X.AllowAnyOrigin().AllowCredentials()
+
+  - id: cors-wildcard-con-credenciales-java
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Origen comodín en la configuración CORS. Combinado con credenciales la
+      política es inválida y suele resolverse reflejando el Origin, que anula
+      la protección del navegador.
+    metadata: { pilar: seguridad, cwe: "CWE-942", owasp: "A05:2021" }
+    pattern: $C.setAllowedOrigins(Arrays.asList("*"))
 
 # ---------------------------------------------------------------------------
 # CADENAS DE CONEXIÓN Y SECRETOS EN CÓDIGO  (CWE-798)

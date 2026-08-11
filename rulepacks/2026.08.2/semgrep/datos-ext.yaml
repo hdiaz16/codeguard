@@ -141,18 +141,40 @@ rules:
       backups y proveedores externos, y suelen quedar fuera del alcance del
       borrado. Enmascara en el logger, no en cada llamada.
     metadata: { pilar: datos, cwe: "CWE-532", owasp: "A09:2021" }
+    # curación: los patrones de f-string (sólo Python) y template literal
+    # (sólo JS/TS) no parseaban en los demás lenguajes listados y la regla
+    # ENTERA llevaba muerta desde el primer día — semgrep exige que cada
+    # patrón parsee en todos los lenguajes de la regla. Además eran
+    # redundantes: $VAR liga también el literal completo como argumento, y la
+    # metavariable-regex inspecciona su TEXTO fuente, así que
+    # log.info(f"pwd {password}") ya cae por el patrón genérico.
     patterns:
       - pattern-either:
           - pattern: $LOG.$LEVEL(..., $VAR, ...)
-          - pattern: $LOG.$LEVEL(f"...{$VAR}...")
-          - pattern: $LOG.$LEVEL(`...${$VAR}...`)
           - pattern: console.$LEVEL(..., $VAR, ...)
+      # $LOG y $LEVEL restringidos a lo que PARECE un logger haciendo logging.
+      # Medido al resucitar la regla contra este mismo repo: sin restringir,
+      # disparaba sobre fmt.Println("...token restringido...") — salida de
+      # consola de un CLI —, sobre t.Error("...compuerta de secretos") en los
+      # tests, y sobre Sentry.setUser({email}). Doce bloqueos, doce falsos.
+      # El vector real es un LOGGER recibiendo un dato sensible, no cualquier
+      # objeto recibiendo prosa que menciona la palabra "token".
+      - metavariable-regex:
+          metavariable: $LOG
+          regex: (?i)(^|\.)(log|logger|logging|slog|zap|logrus|winston|pino|bunyan)$
+      - metavariable-regex:
+          metavariable: $LEVEL
+          regex: ^(debug|info|warn|warning|error|err|critical|fatal|trace|log|exception|Printf|Println|Print|Debug|Info|Warn|Error|Fatal)$
       - metavariable-regex:
           metavariable: $VAR
           regex: (?i).*(password|passwd|pwd|secret|token|api_?key|authorization|cookie|session|ssn|curp|rfc|credit_?card|card_?number|cvv|iban|clabe|email|phone|telefono|address|direccion|birth|nacimiento|dni|passport).*
 
   - id: pii-en-telemetria
-    languages: [python, javascript, typescript, go, java, csharp]
+    # curación: los objetos literales de abajo sólo parsean en python/js/ts, y
+    # listar go/java/csharp mataba la regla ENTERA en todos. Esos tres nunca
+    # estuvieron cubiertos de verdad: sus SDKs de telemetría tienen otra forma
+    # y estos patrones jamás los habrían cazado. La lista ahora dice la verdad.
+    languages: [python, javascript, typescript]
     severity: ERROR
     message: >-
       PII enviada a un proveedor de telemetría o analítica. Es una
@@ -184,8 +206,13 @@ rules:
 # ---------------------------------------------------------------------------
 # INTEGRIDAD TRANSACCIONAL
 # ---------------------------------------------------------------------------
+  # curación: era UNA regla para python/js/ts/go, pero el `with` del
+  # not-inside sólo parsea en Python y el `:=` sólo en Go — y semgrep exige
+  # que cada patrón parsee en TODOS los lenguajes de la regla, así que llevaba
+  # muerta desde el primer día en los cuatro. Partida en tres, cada una con la
+  # forma idiomática de "esto ya está en una transacción" de su lenguaje.
   - id: escrituras-sin-transaccion
-    languages: [python, javascript, typescript, go]
+    languages: [python]
     severity: WARNING
     message: >-
       Varias escrituras consecutivas fuera de una transacción. Si la segunda
@@ -203,14 +230,76 @@ rules:
       - metavariable-regex:
           metavariable: $M2
           regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      # $CTX y no $DB a propósito: en Django la transacción es
+      # transaction.atomic() y las escrituras van por OTRO objeto; unificar
+      # receptores dejaba la exclusión fuera justo en el idioma más común.
       - pattern-not-inside: |
-          with $DB.transaction(...):
+          with $CTX.transaction(...):
             ...
       - pattern-not-inside: |
-          $DB.transaction(...)
+          with $CTX.atomic(...):
+            ...
       - pattern-not-inside: |
-          $TX := $DB.Begin()
+          $CTX.transaction(...)
+
+  - id: escrituras-sin-transaccion-ts
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Varias escrituras consecutivas fuera de una transacción. Si la segunda
+      falla, la primera queda aplicada y los datos quedan inconsistentes.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $DB.$M1(...)
+              ...
+              $DB.$M2(...)
+      - metavariable-regex:
+          metavariable: $M1
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      - metavariable-regex:
+          metavariable: $M2
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      # $ORM y no $DB: sequelize.transaction(async t => { t.create(...) })
+      # cambia el receptor a t dentro del callback; unificar receptores
+      # convertía el idioma correcto en falso positivo.
+      - pattern-not-inside: |
+          $ORM.transaction(...)
+      - pattern-not-inside: |
+          $ORM.$TRANSACTION(async ($TX) => { ... })
+
+  - id: escrituras-sin-transaccion-go
+    languages: [go]
+    severity: WARNING
+    message: >-
+      Varias escrituras consecutivas fuera de una transacción. Si la segunda
+      falla, la primera queda aplicada y los datos quedan inconsistentes.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $DB.$M1(...)
+              ...
+              $DB.$M2(...)
+      - metavariable-regex:
+          metavariable: $M1
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      - metavariable-regex:
+          metavariable: $M2
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      # $CONN y no $DB: tras tx := db.Begin() las escrituras van por tx, no
+      # por db. La unificación de metavariables exigía el MISMO receptor y el
+      # idioma correcto de Go salía señalado como falso positivo (medido en el
+      # caso de prueba: la función CON Begin() disparaba igual que la que no).
+      - pattern-not-inside: |
+          $TX := $CONN.Begin()
           ...
+      - pattern-not-inside: |
+          $TX, $ERR := $CONN.Begin()
+          ...
+      - pattern-not-inside: |
+          $CONN.Transaction(...)
 
   - id: sql-truncate-o-drop
     languages: [generic]

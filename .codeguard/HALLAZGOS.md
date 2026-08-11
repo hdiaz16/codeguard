@@ -2,7 +2,7 @@
 
 > ## ✅ COMPLETADO — no quedan hallazgos bloqueantes
 >
-> Generado el 2026-08-11 10:01 · rulepack `2026.08.2`
+> Generado el 2026-08-11 10:22 · rulepack `2026.08.2`
 
 ## Instrucciones para el agente de código
 
@@ -22,6 +22,18 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
    no tu impresión de haber terminado.
 6. Si un hallazgo te parece un falso positivo, **no lo silencies**: anótalo en la
    sección "Discrepancias" al final y sigue con los demás.
+
+---
+
+## ✅ Resueltos desde el informe anterior (7)
+
+- [x] 10. `log-dato-sensible` — internal/engines/identidad/identidad_test.go:19
+- [x] 11. `log-dato-sensible` — internal/engines/proc/entorno_test.go:98
+- [x] 12. `log-dato-sensible` — internal/pipeline/pipeline_test.go:75
+- [x] 3. `log-dato-sensible` — cmd/codeguard/configcmd.go:113
+- [x] 6. `log-dato-sensible` — cmd/codeguard/enginescmd.go:77
+- [x] 7. `log-dato-sensible` — cmd/codeguard/install.go:178
+- [x] 8. `log-dato-sensible` — cmd/codeguard/rulescmd.go:114
 
 ---
 

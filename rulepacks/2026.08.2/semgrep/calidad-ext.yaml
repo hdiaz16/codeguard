@@ -244,7 +244,11 @@ rules:
                       ...
 
   - id: anidamiento-profundo-ts
-    languages: [javascript, typescript, go]
+    # curación: listar go mataba la regla entera — `if ($A)` con paréntesis no
+    # parsea en Go, y semgrep exige que el patrón parsee en todos los lenguajes
+    # de la regla. El anidamiento en Go ya lo vigila la complejidad ciclomática
+    # del playbook, que no depende de la forma sintáctica.
+    languages: [javascript, typescript]
     severity: WARNING
     message: "Cuatro niveles de anidamiento. Extrae a función o usa cláusulas de guarda."
     metadata: { pilar: calidad }

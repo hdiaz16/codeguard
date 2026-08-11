@@ -40,6 +40,22 @@ jobs:
           pip install semgrep
           echo "$(go env GOPATH)\bin" >> $env:GITHUB_PATH
 
+      # Este paso SÍ tumba el job, a diferencia del análisis en sombra: una
+      # regla que no compila no es un hallazgo discutible, es cobertura
+      # perdida en silencio. Cinco reglas del pack (log-dato-sensible,
+      # pii-en-telemetria, escrituras-sin-transaccion, anidamiento-profundo-ts,
+      # cors-wildcard-con-credenciales) vivieron muertas desde su creación
+      # porque nada las validaba: mezclaban sintaxis de un lenguaje en reglas
+      # multi-lenguaje y semgrep las descartaba completas, aquí y en cada
+      # máquina, sin que nadie lo viera.
+      - name: Validar el rulepack (las reglas rotas no viajan)
+        shell: pwsh
+        run: |
+          foreach ($pack in Get-ChildItem rulepacks -Directory) {
+            semgrep scan --validate --config "$($pack.FullName)\semgrep" --metrics=off --disable-version-check
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
       # El commit base no siempre existe: en el primer push de un repo
       # github.event.before son ceros, y tras un push forzado apunta a un
       # commit que ya no está. En ambos casos `git diff base..head` falla y se
