@@ -90,9 +90,66 @@ func firstLine(s string) string {
 	return s
 }
 
-// WarmAll recalienta tsc en cada repo recordado. Llamar en goroutine al
-// arrancar el daemon; nunca está en el camino de ningún commit.
+// WarmSemgrep paga el arranque en frío de semgrep fuera del camino del commit.
+//
+// Semgrep es un CLI de Python: intérprete + imports + parseo del rulepack
+// suman 4-6 s la primera vez, contra un presupuesto de hook de ~5 s. El
+// resultado era que el PRIMER commit de la sesión decía "capas no revisadas:
+// semgrep:error" y pasaba sin las 112 reglas de la casa — justo el commit de
+// buenos días. Un análisis mínimo aquí deja caliente el intérprete, los
+// módulos y las reglas en la caché de archivos del sistema.
+func WarmSemgrep(ctx context.Context) {
+	if _, err := exec.LookPath("semgrep"); err != nil {
+		return // no instalado: nada que calentar
+	}
+	// El rulepack que reparte el instalador vive junto a los binarios; se usa
+	// la versión más nueva presente. Calentar con las reglas REALES importa:
+	// su parseo es la mitad del costo frío.
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	versiones := RulepacksInstalados(filepath.Dir(exe))
+	if len(versiones) == 0 {
+		return
+	}
+	rules := filepath.Join(filepath.Dir(exe), "rulepacks", versiones[0], "semgrep")
+	if _, err := os.Stat(rules); err != nil {
+		return
+	}
+
+	// Un objetivo mínimo de cada lenguaje del pack: suficiente para forzar la
+	// carga de los parsers sin analizar nada de verdad.
+	dir, err := os.MkdirTemp("", "codeguard-warm-*")
+	if err != nil {
+		return
+	}
+	defer os.RemoveAll(dir)
+	for nombre, contenido := range map[string]string{
+		"w.go": "package w\n", "w.py": "x = 1\n", "w.ts": "export const x = 1\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, nombre), []byte(contenido), 0o644); err != nil {
+			return
+		}
+	}
+
+	start := time.Now()
+	wctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(wctx, "semgrep", "scan", "--config", rules,
+		"--json", "--metrics=off", "--quiet", "--disable-version-check", dir)
+	proc.SinVentana(cmd)
+	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
+	_ = cmd.Run() // el exit code no importa: sólo queremos la caché caliente
+	log.Printf("precalentado semgrep (%.1f s)", time.Since(start).Seconds())
+}
+
+// WarmAll recalienta los motores fríos. Llamar en goroutine al arrancar el
+// daemon; nunca está en el camino de ningún commit.
 func WarmAll(ctx context.Context) {
+	// Semgrep primero: es la capa que compite con el presupuesto del hook.
+	// La DB de trivy puede tardar minutos y no bloquea a nadie.
+	WarmSemgrep(ctx)
 	WarmTrivyDB(ctx)
 	f, err := os.Open(warmListPath())
 	if err != nil {
