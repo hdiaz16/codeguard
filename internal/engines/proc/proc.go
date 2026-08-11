@@ -88,6 +88,15 @@ func Correr(ctx context.Context, c *exec.Cmd, tope int64) (Salida, error) {
 	}
 
 	err := c.Wait()
+	// Al vencer el plazo pasan dos cosas a la vez: el goroutine de arriba
+	// cierra el job (y KILL_ON_JOB_CLOSE mata el árbol) y el Cancel de
+	// exec.CommandContext intenta TerminateProcess sobre un proceso que el job
+	// ya está matando. El error resultante era "canceling Cmd: TerminateProcess:
+	// Access is denied" — ruido que enmascaraba la única causa que importa: se
+	// agotó el tiempo. Aquí se dice eso.
+	if ctx.Err() != nil && err != nil {
+		err = fmt.Errorf("plazo agotado: el motor no terminó a tiempo (%v)", ctx.Err())
+	}
 	s := Salida{Stdout: so.buf.Bytes(), Stderr: se.buf.Bytes(), Recortada: so.recortada || se.recortada}
 	if s.Recortada && err == nil {
 		err = fmt.Errorf("la salida superó el tope de %d MB y se recortó", tope>>20)

@@ -24,7 +24,18 @@ import (
 	"codeguard/internal/store"
 )
 
-const hookDeadline = 5 * time.Second
+// hookDeadline es un TOPE, no una espera: un commit cuyos motores terminan en
+// 3 segundos tarda 3 segundos, valga el tope 5 o 15. Sólo acota el peor caso.
+//
+// Eran 5 s, y semgrep —un CLI de Python que paga intérprete + imports + parseo
+// de 118 reglas en CADA invocación— tarda 4-8 s incluso caliente y con dos
+// archivos (medido). Con 5 s cada commit era un volado: a veces entraba, a
+// veces el hook decía "capas no revisadas: semgrep:error" y ese commit pasaba
+// sin las reglas de la casa. Eso rompe la promesa central (si pasa aquí, pasa
+// allá) de forma intermitente, que es la peor forma: el CI sí corre semgrep.
+// 15 s cubre el p95 medido con margen; los motores corren en paralelo, así
+// que el tiempo típico de commit sigue siendo el del más lento (~5-8 s).
+const hookDeadline = 15 * time.Second
 
 func hookCmd() *cobra.Command {
 	cmd := &cobra.Command{
