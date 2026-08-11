@@ -18,6 +18,7 @@ import (
 	"codeguard/internal/baseline"
 	"codeguard/internal/config"
 	"codeguard/internal/engines"
+	gvengine "codeguard/internal/engines/govulncheck"
 	"codeguard/internal/engines/linters"
 	sgengine "codeguard/internal/engines/semgrep"
 	sqengine "codeguard/internal/engines/squawk"
@@ -56,6 +57,11 @@ func Engines(cfg *config.Config, inCI bool) []engines.Engine {
 		&sqengine.Engine{MigrationGlobs: migGlobs, Dialect: migDialecto},
 		// Política §7: CVE crítico advierte en local, bloquea en CI.
 		&tvengine.Engine{BlockCritical: inCI, SkipDBUpdate: !inCI},
+		// Alcanzabilidad: trivy dice "el CVE está en tu go.sum"; govulncheck
+		// demuestra si el código lo llama. Misma política local/CI que trivy,
+		// y en el hook sólo corre cuando cambian las dependencias — recorre el
+		// módulo entero y el presupuesto del hook no está para eso.
+		&gvengine.Engine{BlockReachable: inCI, SoloManifiestos: !inCI},
 		linters.GoFmt{},
 		linters.GoVet{},
 		linters.Ruff{},

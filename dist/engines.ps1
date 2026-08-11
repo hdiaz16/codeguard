@@ -199,3 +199,29 @@ if ($userPath -notlike "*$pyScripts*") {
     [Environment]::SetEnvironmentVariable("PATH", "$pyScripts;$userPath", "User")
     Ok "PATH de usuario: + $pyScripts"
 }
+
+# ── motores Go (govulncheck) ─────────────────────────────────────────────────
+# govulncheck no entra en motores.json: lo construye el toolchain de Go del
+# usuario desde el fuente y GOSUMDB verifica las sumas, igual que pip verifica
+# los motores de Python. Se instala en $EnginesDir (via GOBIN) para que se
+# encuentre por el mismo PATH que gitleaks y trivy.
+#
+# Sin toolchain de Go no se instala y no es un error: un repo Go siempre viene
+# con su toolchain, y en un repo sin Go el motor jamas aplica.
+Step "Motores Go (govulncheck)"
+$goBin = Get-Command go -ErrorAction SilentlyContinue
+if (-not $goBin) {
+    Ok "no hay toolchain de Go - se omite (el motor solo aplica a repos Go)"
+} else {
+    $previoGobin = $env:GOBIN
+    $env:GOBIN = $EnginesDir
+    try {
+        $gv = Correr "go" @("install", "golang.org/x/vuln/cmd/govulncheck@latest")
+        if ($gv.Codigo -ne 0) {
+            throw "go install govulncheck fallo (codigo $($gv.Codigo)):`n$($gv.Salida)"
+        }
+        Ok "govulncheck instalado en $EnginesDir"
+    } finally {
+        $env:GOBIN = $previoGobin
+    }
+}

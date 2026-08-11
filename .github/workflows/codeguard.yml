@@ -37,6 +37,7 @@ jobs:
       - name: Instalar motores
         run: |
           go install github.com/zricethezav/gitleaks/v8@latest
+          go install golang.org/x/vuln/cmd/govulncheck@latest
           pip install semgrep
           echo "$(go env GOPATH)\bin" >> $env:GITHUB_PATH
 
@@ -62,6 +63,42 @@ jobs:
           foreach ($pack in Get-ChildItem rulepacks -Directory) {
             semgrep scan --validate --config "$($pack.FullName)\semgrep" --metrics=off --disable-version-check
             if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
+      # --validate prueba que las reglas COMPILAN; este paso prueba que CAZAN.
+      # El corpus (rulepacks/<ver>/testdata, hermano de semgrep/ porque un yaml
+      # de fixture dentro del --config se parsearía como regla) anota con
+      # "ruleid:" dónde debe matchear cada regla y con "ok:" dónde no. Una
+      # regla que deja de cazar su propio ejemplo, o que caza el negativo, es
+      # una regresión de cobertura — y las 5 reglas muertas de agosto y los 12
+      # falsos positivos de log-dato-sensible habrían caído aquí, no en
+      # producción. La segunda mitad exige además que NINGUNA regla viva sin
+      # test: cobertura que no se exige se erosiona.
+      - name: Probar el rulepack (cada regla demuestra que caza lo que promete)
+        shell: pwsh
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
+        run: |
+          foreach ($pack in Get-ChildItem rulepacks -Directory) {
+            $tests = Join-Path $pack.FullName "testdata"
+            if (-not (Test-Path $tests)) {
+              Write-Host "::error::$($pack.Name) no tiene corpus de pruebas (testdata/)"
+              exit 1
+            }
+            semgrep scan --test --config "$($pack.FullName)\semgrep" $tests --metrics=off --disable-version-check
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+
+            $ids = Select-String -Path "$($pack.FullName)\semgrep\*.yaml" -Pattern '^\s*- id:\s*(\S+)' |
+              ForEach-Object { $_.Matches[0].Groups[1].Value } | Sort-Object -Unique
+            $conTest = Select-String -Path "$tests\*" -Pattern '(?<!todo)ruleid:\s*([\w.-]+)' -AllMatches |
+              ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+            $sinTest = @($ids | Where-Object { $_ -notin $conTest })
+            if ($sinTest.Count -gt 0) {
+              Write-Host "::error::reglas de $($pack.Name) sin caso positivo en el corpus: $($sinTest -join ', ')"
+              exit 1
+            }
+            Write-Host "$($pack.Name): $($ids.Count) reglas, todas con test"
           }
 
       # El commit base no siempre existe: en el primer push de un repo
