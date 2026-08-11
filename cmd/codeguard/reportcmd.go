@@ -31,7 +31,7 @@ const reportFile = ".codeguard/HALLAZGOS.md"
 var fpRe = regexp.MustCompile(`<!--\s*fp:([0-9a-f]{64})\s*-->`)
 
 func reportCmd() *cobra.Command {
-	var incluirAvisos bool
+	var incluirAvisos, incluirDeuda bool
 	cmd := &cobra.Command{
 		Use:   "report",
 		Short: "Genera .codeguard/HALLAZGOS.md para que un agente de código los resuelva",
@@ -65,34 +65,40 @@ func reportCmd() *cobra.Command {
 			}
 			fmt.Printf("escaneando %d archivos…\n", len(files))
 
-			// La baseline se le PASA al pipeline, no sólo se cuenta: el informe
-			// afirma que sus hallazgos "impiden hacer commit", y un hallazgo
-			// baselineado no impide nada. Sin esto el informe mandaba al agente
-			// a corregir deuda ya aceptada, mezclada con lo que sí bloquea, y
-			// encima declaraba en el pie que la había suprimido.
+			// La baseline NO se le pasa al pipeline: el informe la aplica él
+			// mismo, porque necesita las dos mitades. Los hallazgos nuevos van
+			// a "bloqueantes" (impiden commitear, el agente los corrige); los
+			// baselineados son deuda aceptada — no bloquean, pero el agente los
+			// ENCONTRÓ, y hasta ahora no existía ninguna superficie donde un
+			// humano pudiera revisarlos: quedaban como fingerprints en
+			// baseline.txt, hallados pero invisibles.
 			supr := baseline.Load(repoRoot)
 
 			res, err := pipeline.Run(context.Background(), pipeline.Options{
-				Config:       cfg,
-				Diff:         &gitdiff.Diff{Files: files},
-				Secrets:      nil, // los secretos se atienden en el acto, no por informe
-				Engines:      daemon.Engines(cfg, false),
-				Rulepack:     daemon.RulepackDir(repoRoot, cfg.Rulepack),
-				Timeout:      15 * time.Minute,
-				Suppressions: supr,
+				Config:   cfg,
+				Diff:     &gitdiff.Diff{Files: files},
+				Secrets:  nil, // los secretos se atienden en el acto, no por informe
+				Engines:  daemon.Engines(cfg, false),
+				Rulepack: daemon.RulepackDir(repoRoot, cfg.Rulepack),
+				Timeout:  15 * time.Minute,
 			})
 			if err != nil {
 				return err
 			}
 
-			// clasificar
-			var bloq, avisos []finding.Finding
+			// clasificar: nuevo-bloqueante / nuevo-aviso / deuda baselineada.
+			// "actuales" incluye TAMBIÉN la deuda: un hallazgo baselineado que
+			// desaparece del código cuenta como resuelto, no como fantasma.
+			var bloq, avisos, deuda []finding.Finding
 			actuales := map[string]bool{}
 			for _, f := range res.Findings {
 				actuales[f.Fingerprint] = true
-				if f.Blocking {
+				switch {
+				case supr[f.Fingerprint]:
+					deuda = append(deuda, f)
+				case f.Blocking:
 					bloq = append(bloq, f)
-				} else if incluirAvisos {
+				case incluirAvisos:
 					avisos = append(avisos, f)
 				}
 			}
@@ -104,10 +110,7 @@ func reportCmd() *cobra.Command {
 			}
 			sort.Strings(resueltos)
 
-			// res.Suppressed, no len(supr): lo que la baseline calló EN ESTE
-			// escaneo. El tamaño del archivo incluye fingerprints de código que
-			// ya no existe, así que anunciaba supresiones que no ocurrieron.
-			md := construirInforme(cfg, res, bloq, avisos, resueltos, res.Suppressed, incluirAvisos, discrepancias)
+			md := construirInforme(cfg, res, bloq, avisos, resueltos, deuda, incluirAvisos, incluirDeuda, discrepancias)
 			dest := filepath.Join(repoRoot, filepath.FromSlash(reportFile))
 			_ = os.MkdirAll(filepath.Dir(dest), 0o755) // best-effort: el WriteFile de abajo dará el error real
 			if err := os.WriteFile(dest, []byte(md), 0o644); err != nil {
@@ -118,6 +121,13 @@ func reportCmd() *cobra.Command {
 			fmt.Printf("  bloqueantes pendientes: %d\n", len(bloq))
 			if incluirAvisos {
 				fmt.Printf("  avisos: %d\n", len(avisos))
+			}
+			if len(deuda) > 0 {
+				if incluirDeuda {
+					fmt.Printf("  deuda aceptada (baseline): %d — detallada en el informe\n", len(deuda))
+				} else {
+					fmt.Printf("  deuda aceptada (baseline): %d — revísala con `codeguard report --deuda`\n", len(deuda))
+				}
 			}
 			if len(resueltos) > 0 {
 				fmt.Printf("  RESUELTOS desde el informe anterior: %d\n", len(resueltos))
@@ -131,6 +141,7 @@ func reportCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&incluirAvisos, "avisos", false, "incluir también los hallazgos no bloqueantes")
+	cmd.Flags().BoolVar(&incluirDeuda, "deuda", false, "detallar la deuda aceptada por la baseline (hallada pero suprimida)")
 	return cmd
 }
 
@@ -190,7 +201,7 @@ func leerFingerprintsPrevios(path string) map[string]string {
 }
 
 func construirInforme(cfg *config.Config, res *pipeline.Result, bloq, avisos []finding.Finding,
-	resueltos []string, supr int, incluirAvisos bool, discrepancias string) string {
+	resueltos []string, deuda []finding.Finding, incluirAvisos, incluirDeuda bool, discrepancias string) string {
 
 	var b strings.Builder
 	fecha := time.Now().Format("2006-01-02 15:04")
@@ -248,6 +259,30 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 		b.WriteString("\n")
 	}
 
+	// La deuda aceptada, cuando se pide: el agente la ENCONTRÓ y la baseline la
+	// calla en el commit —correcto: sólo lo nuevo bloquea—, pero sin esta
+	// sección no existía superficie donde un humano pudiera revisarla. Quedaba
+	// como fingerprints en baseline.txt: hallada pero invisible.
+	if incluirDeuda && len(deuda) > 0 {
+		ordenada := make([]finding.Finding, len(deuda))
+		copy(ordenada, deuda)
+		sort.Slice(ordenada, func(i, j int) bool {
+			if ordenada[i].File != ordenada[j].File {
+				return ordenada[i].File < ordenada[j].File
+			}
+			return ordenada[i].Line < ordenada[j].Line
+		})
+		fmt.Fprintf(&b, "---\n\n## 📋 Deuda aceptada por la baseline (%d) — no bloquea\n\n", len(ordenada))
+		b.WriteString("Hallazgos que ya existían al enrolar el repo. Se revisan al ritmo del equipo;\n" +
+			"al corregir uno, quita su línea de `.codeguard/baseline.txt` (o regenera la\n" +
+			"baseline) para que vuelva a vigilarse como nuevo.\n\n")
+		for _, f := range ordenada {
+			fmt.Fprintf(&b, "- `%s` — `%s:%d` · %s <!-- fp:%s -->\n",
+				f.RuleKey, f.File, f.Line, f.Message, f.Fingerprint)
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("---\n\n## Discrepancias\n\n")
 	if discrepancias != "" {
 		// Lo anotado sobrevive a la regeneración: el informe le pide al agente
@@ -259,14 +294,18 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 			"     Un humano decide después: corregir la regla o aceptar el hallazgo. -->\n\n")
 	}
 
+	pistaDeuda := ""
+	if !incluirDeuda && len(deuda) > 0 {
+		pistaDeuda = " — detállala con `codeguard report --deuda`"
+	}
 	fmt.Fprintf(&b, `---
 
 ## Contexto
 
-- Deuda preexistente suprimida por la baseline: **%d** (no bloquea; solo lo nuevo bloquea)
+- Deuda preexistente suprimida por la baseline: **%d** (no bloquea; solo lo nuevo bloquea)%s
 - Capas que no corrieron en este escaneo: %s
 - Este informe lo genera `+"`codeguard report`"+` y se versiona con el repo.
-`, supr, listaOVacio(res.Degraded))
+`, len(deuda), pistaDeuda, listaOVacio(res.Degraded))
 
 	return b.String()
 }
