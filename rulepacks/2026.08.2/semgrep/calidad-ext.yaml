@@ -74,6 +74,11 @@ rules:
       Promesa sin await ni catch. Es el fallo silencioso número uno en Node:
       el rechazo no se ve y el proceso puede morir sin traza.
     metadata: { pilar: calidad }
+    # curación 2026-08-11: pattern-not sólo descarta matches de rango IGUAL, y
+    # el .then() positivo es un sub-rango del encadenado con .catch() — esos
+    # pattern-not jamás suprimieron nada y el idioma .then().catch() era falso
+    # positivo desde el nacimiento de la regla (lo destapó el corpus de --test).
+    # pattern-not-inside sí excluye por contención.
     patterns:
       - pattern-either:
           - pattern: |
@@ -81,8 +86,8 @@ rules:
               ...
               $F(...);
           - pattern: $OBJ.$M(...).then(...)
-      - pattern-not: await $OBJ.$M(...)
-      - pattern-not: $OBJ.$M(...).then(...).catch(...)
+      - pattern-not-inside: $OBJ.$M(...).then(...).catch(...)
+      - pattern-not-inside: await $EXPR
       - pattern-not: void $OBJ.$M(...)
 
   - id: python-except-broad

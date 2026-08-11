@@ -34,17 +34,25 @@ rules:
       SQL construido por interpolación. Usa placeholders ($1, ?) y pasa los
       valores como segundo argumento.
     metadata: { pilar: seguridad, cwe: "CWE-89", owasp: "A03:2021" }
+    # curación 2026-08-11 (lo destapó el corpus de --test): la metavariable-
+    # regex de $M en AND mataba las alternativas que no ligan $M (las de
+    # query/execute/raw explícitos y la concatenación con +), y el pattern-not
+    # con `...` matcheaba también plantillas CON interpolación, anulando la
+    # forma query sin argumentos extra. Cada alternativa lleva ahora su propio
+    # filtro de $M; la llamada parametrizada sana (plantilla sin ${}) no
+    # matchea el patrón positivo, así que no necesita exención.
     patterns:
       - pattern-either:
-          - pattern: $DB.query(`...${$X}...`)
-          - pattern: $DB.query("..." + $X)
-          - pattern: $DB.execute(`...${$X}...`)
-          - pattern: $DB.raw(`...${$X}...`)
-          - pattern: $DB.$M(`...${$X}...`, ...)
-      - metavariable-regex:
-          metavariable: $M
-          regex: ^(query|execute|raw|unsafe)$
-      - pattern-not: $DB.query(`...`, ...)
+          - patterns:
+              - pattern: $DB.$M(`...${$X}...`, ...)
+              - metavariable-regex:
+                  metavariable: $M
+                  regex: ^(query|execute|raw|unsafe)$
+          - patterns:
+              - pattern: $DB.$M("..." + $X, ...)
+              - metavariable-regex:
+                  metavariable: $M
+                  regex: ^(query|execute|raw|unsafe)$
 
   - id: java-sql-concat
     languages: [java]

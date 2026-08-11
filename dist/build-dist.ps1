@@ -13,6 +13,9 @@ Write-Host "==> copiando rulepack" -ForegroundColor Cyan
 # que un rulepack retirado seguiria viajando en el instalador para siempre.
 if (Test-Path dist\rulepacks) { Remove-Item dist\rulepacks -Recurse -Force }
 Copy-Item rulepacks dist\ -Recurse -Force
+# El corpus de pruebas de las reglas (testdata/) es del CI, no del usuario:
+# son fixtures con codigo deliberadamente malo que nadie necesita instalado.
+Get-ChildItem dist\rulepacks -Directory -Recurse -Filter testdata | Remove-Item -Recurse -Force
 
 # motores.json: fuente de verdad de hashes, compartida con engines.ps1 y el
 # setup. Se copia desde el agente para que nunca diverjan.

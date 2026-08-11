@@ -25,7 +25,12 @@ rules:
           regex: (?i).*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|sueldo|pago|payment|refund|descuento|discount).*
 
   - id: ts-dinero-float
-    languages: [javascript, typescript]
+    # curación 2026-08-11: '$VAR: number' suelto no parsea como ninguna
+    # construcción real de TS y la regla nació muerta (0 matches en cualquier
+    # forma del lenguaje; lo descubrió el corpus de --test). Las anotaciones de
+    # tipo sólo se cazan dentro de una construcción anfitriona: declaración,
+    # parámetro o arrow. Sólo TS: en JS puro no hay anotaciones de tipo.
+    languages: [typescript]
     severity: ERROR
     message: >-
       Importe monetario en number. Usa enteros en centavos, o una librería
@@ -33,8 +38,11 @@ rules:
     metadata: { pilar: datos }
     patterns:
       - pattern-either:
-          - pattern: '$VAR: number'
-          - pattern: "$VAR: number = ..."
+          - pattern: 'const $VAR: number = $X'
+          - pattern: 'let $VAR: number = $X'
+          - pattern: 'var $VAR: number = $X'
+          - pattern: 'function $F(..., $VAR: number, ...) { ... }'
+          - pattern: '($VAR: number) => $BODY'
       - metavariable-regex:
           metavariable: $VAR
           regex: (?i)^(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|sueldo|pago|payment|refund|descuento|discount).*
@@ -174,7 +182,12 @@ rules:
     # listar go/java/csharp mataba la regla ENTERA en todos. Esos tres nunca
     # estuvieron cubiertos de verdad: sus SDKs de telemetría tienen otra forma
     # y estos patrones jamás los habrían cazado. La lista ahora dice la verdad.
-    languages: [python, javascript, typescript]
+    #
+    # curación 2026-08-11: python TAMBIÉN estaba muerto en la combinación
+    # multi-lenguaje (0 matches; la misma regla en solo-python sí caza — lo
+    # destapó el corpus de --test). Python vive ahora en pii-en-telemetria-py,
+    # con los patrones en su dialecto (sentry_sdk, claves como string).
+    languages: [javascript, typescript]
     severity: ERROR
     message: >-
       PII enviada a un proveedor de telemetría o analítica. Es una
@@ -189,6 +202,28 @@ rules:
           - pattern: '$MIX.track(..., {..., $KEY: $VAR, ...})'
           - pattern: 'posthog.capture(..., {..., $KEY: $VAR, ...})'
           - pattern: '$DD.addUserAction(..., {..., $KEY: $VAR, ...})'
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(email|phone|telefono|ssn|curp|rfc|address|direccion|name|nombre|birth|card|iban|clabe|dni).*
+
+  - id: pii-en-telemetria-py
+    # La pata python de pii-en-telemetria, en regla propia: en la combinación
+    # multi-lenguaje estos patrones producían 0 matches en python (el mismo
+    # fenómeno de des-unificación que partió escrituras-sin-transaccion). Los
+    # SDKs además difieren: en python es sentry_sdk.set_user, no $S.setUser.
+    languages: [python]
+    severity: ERROR
+    message: >-
+      PII enviada a un proveedor de telemetría o analítica. Es una
+      transferencia a un tercero: requiere base legal y aparecer en el aviso
+      de privacidad.
+    metadata: { pilar: datos, cwe: "CWE-359" }
+    patterns:
+      - pattern-either:
+          - pattern: 'sentry_sdk.set_user({..., $KEY: $VAR, ...})'
+          - pattern: 'analytics.track(..., {..., $KEY: $VAR, ...})'
+          - pattern: '$MIX.track(..., {..., $KEY: $VAR, ...})'
+          - pattern: 'posthog.capture(..., {..., $KEY: $VAR, ...})'
       - metavariable-regex:
           metavariable: $KEY
           regex: (?i).*(email|phone|telefono|ssn|curp|rfc|address|direccion|name|nombre|birth|card|iban|clabe|dni).*

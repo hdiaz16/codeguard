@@ -105,7 +105,11 @@ rules:
       pillar: quality
       why: "El error desaparece en silencio; depurarlo después cuesta horas."
       fix_hint: "Captura la excepción específica y al menos registra qué pasó."
-    patterns:
+    # curación 2026-08-11: esto eran dos `- pattern:` hermanos bajo `patterns:`,
+    # que en semgrep es AND — un except no puede ser a la vez pelón y tipado,
+    # así que la regla nació muerta y jamás matcheó nada. La descubrió el
+    # corpus de --test, no un incidente. OR explícito y la variante con alias.
+    pattern-either:
       - pattern: |
           try:
               ...
@@ -115,6 +119,11 @@ rules:
           try:
               ...
           except $E:
+              pass
+      - pattern: |
+          try:
+              ...
+          except $E as $ALIAS:
               pass
 
 # (todo-sin-ticket migró a calidad-ext.yaml — cubre también FIXME/HACK/XXX)
