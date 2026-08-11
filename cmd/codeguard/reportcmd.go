@@ -50,8 +50,10 @@ func reportCmd() *cobra.Command {
 				return fmt.Errorf("el repo no está enrolado: corre `codeguard init`")
 			}
 
-			// hallazgos previos (para saber cuáles se resolvieron)
+			// hallazgos previos (para saber cuáles se resolvieron) y las
+			// discrepancias anotadas, que sobreviven a la regeneración
 			previos := leerFingerprintsPrevios(filepath.Join(repoRoot, filepath.FromSlash(reportFile)))
+			discrepancias := leerDiscrepanciasPrevias(filepath.Join(repoRoot, filepath.FromSlash(reportFile)))
 
 			rutas, err := gitdiff.Rastreados(repoRoot)
 			if err != nil {
@@ -105,7 +107,7 @@ func reportCmd() *cobra.Command {
 			// res.Suppressed, no len(supr): lo que la baseline calló EN ESTE
 			// escaneo. El tamaño del archivo incluye fingerprints de código que
 			// ya no existe, así que anunciaba supresiones que no ocurrieron.
-			md := construirInforme(cfg, res, bloq, avisos, resueltos, res.Suppressed, incluirAvisos)
+			md := construirInforme(cfg, res, bloq, avisos, resueltos, res.Suppressed, incluirAvisos, discrepancias)
 			dest := filepath.Join(repoRoot, filepath.FromSlash(reportFile))
 			_ = os.MkdirAll(filepath.Dir(dest), 0o755) // best-effort: el WriteFile de abajo dará el error real
 			if err := os.WriteFile(dest, []byte(md), 0o644); err != nil {
@@ -132,6 +134,39 @@ func reportCmd() *cobra.Command {
 	return cmd
 }
 
+// leerDiscrepanciasPrevias rescata lo que el agente anotó en la sección
+// "Discrepancias" del informe anterior.
+//
+// El informe INSTRUYE al agente a anotar ahí los falsos positivos "para que
+// un humano decida después" — y acto seguido cada `codeguard report`
+// reconstruía el archivo entero y borraba la anotación antes de que ningún
+// humano la viera. Las dos mitades del contrato se contradecían.
+func leerDiscrepanciasPrevias(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	texto := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	const marca = "\n## Discrepancias\n"
+	inicio := strings.Index(texto, marca)
+	if inicio < 0 {
+		return ""
+	}
+	cuerpo := texto[inicio+len(marca):]
+	if fin := strings.Index(cuerpo, "\n---"); fin >= 0 {
+		cuerpo = cuerpo[:fin]
+	}
+	cuerpo = strings.TrimSpace(cuerpo)
+	// El comentario-guía de la plantilla no es una anotación: se descarta para
+	// no acumular copias de sí mismo en cada regeneración.
+	if strings.HasPrefix(cuerpo, "<!--") {
+		if cierre := strings.Index(cuerpo, "-->"); cierre >= 0 {
+			cuerpo = strings.TrimSpace(cuerpo[cierre+3:])
+		}
+	}
+	return cuerpo
+}
+
 func leerFingerprintsPrevios(path string) map[string]string {
 	out := map[string]string{}
 	f, err := os.Open(path)
@@ -155,7 +190,7 @@ func leerFingerprintsPrevios(path string) map[string]string {
 }
 
 func construirInforme(cfg *config.Config, res *pipeline.Result, bloq, avisos []finding.Finding,
-	resueltos []string, supr int, incluirAvisos bool) string {
+	resueltos []string, supr int, incluirAvisos bool, discrepancias string) string {
 
 	var b strings.Builder
 	fecha := time.Now().Format("2006-01-02 15:04")
@@ -213,14 +248,18 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 		b.WriteString("\n")
 	}
 
+	b.WriteString("---\n\n## Discrepancias\n\n")
+	if discrepancias != "" {
+		// Lo anotado sobrevive a la regeneración: el informe le pide al agente
+		// escribir aquí sus falsos positivos "para que un humano decida", y la
+		// versión anterior los borraba en la siguiente corrida.
+		b.WriteString(discrepancias + "\n\n")
+	} else {
+		b.WriteString("<!-- El agente anota aquí lo que considere falso positivo, con su razón.\n" +
+			"     Un humano decide después: corregir la regla o aceptar el hallazgo. -->\n\n")
+	}
+
 	fmt.Fprintf(&b, `---
-
-## Discrepancias
-
-<!-- El agente anota aquí lo que considere falso positivo, con su razón.
-     Un humano decide después: corregir la regla o aceptar el hallazgo. -->
-
----
 
 ## Contexto
 

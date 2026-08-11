@@ -2,9 +2,12 @@ package squawk
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"codeguard/internal/engines"
+	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
 )
 
@@ -67,6 +70,60 @@ func TestSinMigracionesNoAplica(t *testing.T) {
 	e := &Engine{MigrationGlobs: []string{"migrations/*.sql"}, Dialect: "postgres"}
 	if e.Applies(in) {
 		t.Error("no hay .sql en el diff: squawk no debería aplicar")
+	}
+}
+
+// El fingerprint de squawk usaba el nombre de la regla como contenido, así
+// que TODAS las ocurrencias de una regla en un archivo colapsaban en un solo
+// hash: baselinear un índice inseguro suprimía también los futuros del mismo
+// archivo. En un repo Postgres real eso es un agujero en "sólo lo nuevo
+// bloquea" justo en la capa que protege producción. Ahora el contenido es la
+// línea REAL del SQL.
+func TestFingerprintDistingueOcurrenciasEnElMismoArchivo(t *testing.T) {
+	dir := t.TempDir()
+	sql := "CREATE TABLE usuarios (id int);\n" +
+		"CREATE INDEX idx_a ON usuarios (nombre);\n" +
+		"CREATE INDEX idx_b ON usuarios (correo);\n"
+	if err := os.WriteFile(filepath.Join(dir, "001.sql"), []byte(sql), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cache := map[string][]string{}
+	hacer := func(linea int) finding.Finding {
+		f := finding.Finding{
+			Engine: "squawk", RuleKey: "require-concurrent-index-creation",
+			File: "001.sql", Line: linea + 1,
+			LineContent: lineaSQL(dir, "001.sql", linea, cache),
+		}
+		f.ComputeFingerprint()
+		return f
+	}
+
+	a, b := hacer(1), hacer(2) // las dos CREATE INDEX
+	if a.Fingerprint == b.Fingerprint {
+		t.Error("dos índices inseguros distintos no pueden compartir fingerprint: " +
+			"baselinear el primero suprimiría el segundo")
+	}
+
+	// Y la estabilidad que el fingerprint promete se conserva: la MISMA línea
+	// desplazada a otro número de línea sigue dando el mismo hash.
+	sqlCorrido := "-- comentario nuevo arriba\n" + sql
+	if err := os.WriteFile(filepath.Join(dir, "001.sql"), []byte(sqlCorrido), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a2 := finding.Finding{
+		Engine: "squawk", RuleKey: "require-concurrent-index-creation",
+		File: "001.sql", Line: 3,
+		LineContent: lineaSQL(dir, "001.sql", 2, map[string][]string{}),
+	}
+	a2.ComputeFingerprint()
+	if a2.Fingerprint != a.Fingerprint {
+		t.Error("la misma línea desplazada debe conservar su fingerprint: es la clave de supresión")
+	}
+
+	// Archivo ilegible: no revienta, cae al marcador estable.
+	if got := lineaSQL(dir, "no-existe.sql", 5, map[string][]string{}); got != "sin-contenido-de-linea" {
+		t.Errorf("fallback inesperado: %q", got)
 	}
 }
 

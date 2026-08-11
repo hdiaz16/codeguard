@@ -2,7 +2,7 @@
 
 > ## ✅ COMPLETADO — no quedan hallazgos bloqueantes
 >
-> Generado el 2026-08-10 15:44 · rulepack `2026.08.2`
+> Generado el 2026-08-11 10:01 · rulepack `2026.08.2`
 
 ## Instrucciones para el agente de código
 
@@ -25,16 +25,9 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 ---
 
-## ✅ Resueltos desde el informe anterior (1)
-
-- [x] 2. `go-dinero-float` — internal/config/config.go:108
-
----
-
 ## Discrepancias
 
-<!-- El agente anota aquí lo que considere falso positivo, con su razón.
-     Un humano decide después: corregir la regla o aceptar el hallazgo. -->
+- go-dinero-float sobre PriceInPerMTok/PriceOutPerMTok: son tarifas que escribe un humano, no dinero acumulado; la acumulacion ya es int64. Decision pendiente del equipo (ver baseline.txt).
 
 ---
 

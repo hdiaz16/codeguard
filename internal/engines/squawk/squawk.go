@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -117,6 +118,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	}
 
 	findings := make([]finding.Finding, 0, len(violations))
+	lineas := map[string][]string{} // archivo → sus líneas, leído una sola vez
 	for _, v := range violations {
 		blocking := v.Level == "Error" || blockingRules[v.Rule]
 		sev := finding.Warning
@@ -141,11 +143,36 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 			FixHint:  arreglo,
 			Verified: true,
 			Source:   finding.Deterministic,
-			// El SQL de la línea puede no estar disponible; el fingerprint usa regla+ruta.
-			LineContent: v.Rule,
+			// El SQL REAL de la línea, leído del archivo. Antes iba el nombre
+			// de la regla, y como el fingerprint es regla+ruta+contenido, TODAS
+			// las ocurrencias de una regla en un archivo colapsaban en un solo
+			// hash: baselinear un índice inseguro suprimía también los futuros
+			// del mismo archivo — un agujero en "sólo lo nuevo bloquea", justo
+			// en la capa que protege producción.
+			LineContent: lineaSQL(in.RepoRoot, v.File, v.Line, lineas),
 		}
 		f.ComputeFingerprint()
 		findings = append(findings, f)
 	}
 	return findings, nil
+}
+
+// lineaSQL devuelve la línea (base 0) del archivo, leyendo cada archivo una
+// sola vez por análisis. Si el archivo no se puede leer o la línea no existe,
+// devuelve un marcador estable: en ese caso raro las ocurrencias de una regla
+// en ese archivo siguen colapsando en un fingerprint — inevitable sin
+// contenido — pero deja de ser la norma para pasar a ser la excepción.
+func lineaSQL(repoRoot, rel string, linea int, cache map[string][]string) string {
+	ls, ok := cache[rel]
+	if !ok {
+		raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
+		if err == nil {
+			ls = strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+		}
+		cache[rel] = ls // también el fallo: no reintentar por cada violación
+	}
+	if linea < 0 || linea >= len(ls) || strings.TrimSpace(ls[linea]) == "" {
+		return "sin-contenido-de-linea"
+	}
+	return ls[linea]
 }
