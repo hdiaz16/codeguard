@@ -5,6 +5,16 @@
 #   log : %TEMP%\codeguard-motores.log   (el asistente muestra la ultima linea)
 #   done: %TEMP%\codeguard-motores.done  (contenido = codigo de salida)
 # =============================================================================
+# PowerShell 7 inyecta sus rutas de modulos en el PSModulePath del sistema, y
+# Windows PowerShell 5.1 las hereda al ser lanzado como proceso hijo: acaba
+# cargando el Microsoft.PowerShell.Utility de la 7 y perdiendo cmdlets propios.
+# Se fija aqui tambien, no solo en engines.ps1, porque este script usa
+# Get-CimInstance y Stop-Process antes de invocarlo.
+$env:PSModulePath = @(
+    (Join-Path $env:ProgramFiles "WindowsPowerShell\Modules"),
+    (Join-Path $env:SystemRoot "system32\WindowsPowerShell\v1.0\Modules")
+) -join ';'
+
 # Un solo runner a la vez: si quedo uno huerfano de un setup anterior
 # (asistente cerrado a la mitad), se retira antes de empezar. Dos runners
 # descargando el mismo zip se corrompen entre si.
