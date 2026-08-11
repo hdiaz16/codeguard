@@ -50,6 +50,14 @@ jobs:
       # máquina, sin que nadie lo viera.
       - name: Validar el rulepack (las reglas rotas no viajan)
         shell: pwsh
+        # PYTHONUTF8: sin él, semgrep lee los YAML con la página de códigos
+        # regional de Windows (cp1252) y los comentarios con acentos lo tumban
+        # con UnicodeDecodeError. Es la MISMA lección que semgrep.go ya aplica
+        # al invocar el motor — este paso cayó en su primera corrida por no
+        # aplicarla también aquí.
+        env:
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: utf-8
         run: |
           foreach ($pack in Get-ChildItem rulepacks -Directory) {
             semgrep scan --validate --config "$($pack.FullName)\semgrep" --metrics=off --disable-version-check
