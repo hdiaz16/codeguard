@@ -34,10 +34,16 @@ func graphCmd() *cobra.Command {
 				return err
 			}
 
+			// La detección es por archivos rastreados, igual que en el
+			// explorador del daemon: mirar manifiestos en la raíz dejaba fuera
+			// a los monorepos (backend/go.mod + frontend/package.json), que
+			// son el layout corporativo más común.
+			dirsGo, hayTS := stacksDe(repoRoot)
+
 			// ── modo profundo: función→función, función→consulta, WebGL ──
 			if deep {
-				if !fileExistsIn(repoRoot, "go.mod") && !fileExistsIn(repoRoot, "package.json") {
-					return fmt.Errorf("el modo --deep soporta Go y TypeScript/JS (busqué go.mod o package.json)")
+				if len(dirsGo) == 0 && !hayTS {
+					return fmt.Errorf("el modo --deep soporta Go y TypeScript/JS y no encontré archivos de ninguno")
 				}
 				// Primero se le pide al agente que lo abra en SU ventana:
 				// el explorador vive en el escritorio, no en un navegador.
@@ -64,23 +70,37 @@ func graphCmd() *cobra.Command {
 				return nil
 			}
 
-			var edges map[string]bool
-			var mode, regen string
-			switch {
-			case fileExistsIn(repoRoot, "go.mod"):
-				mode = "Go (go list)"
-				regen = "codeguard graph  (usa go list bajo el capó)"
-				edges, err = goEdges(repoRoot)
-			case fileExistsIn(repoRoot, "package.json"):
-				mode = "TypeScript/JavaScript (imports)"
-				regen = "codeguard graph  (parsea los imports relativos)"
-				edges, err = tsEdges(repoRoot)
-			default:
-				return fmt.Errorf("no reconocí el stack (busqué go.mod o package.json)")
+			// Un monorepo aporta TODOS sus stacks al mismo grafo: cada módulo
+			// Go por su go.mod (esté donde esté) más los imports de TS/JS.
+			edges := map[string]bool{}
+			var modos []string
+			for _, dir := range dirsGo {
+				e, gerr := goEdges(repoRoot, dir)
+				if gerr != nil {
+					return gerr
+				}
+				for k := range e {
+					edges[k] = true
+				}
 			}
-			if err != nil {
-				return err
+			if len(dirsGo) > 0 {
+				modos = append(modos, "Go (go list)")
 			}
+			if hayTS {
+				e, terr := tsEdges(repoRoot)
+				if terr != nil {
+					return terr
+				}
+				for k := range e {
+					edges[k] = true
+				}
+				modos = append(modos, "TypeScript/JavaScript (imports)")
+			}
+			if len(modos) == 0 {
+				return fmt.Errorf("no reconocí el stack: no hay archivos Go ni TS/JS rastreados")
+			}
+			mode := strings.Join(modos, " + ")
+			regen := "codeguard graph"
 			if len(edges) == 0 {
 				return fmt.Errorf("no encontré dependencias internas que graficar")
 			}
@@ -136,9 +156,36 @@ func graphCmd() *cobra.Command {
 	return cmd
 }
 
+// stacksDe detecta los stacks del repo por sus ARCHIVOS RASTREADOS, no por
+// manifiestos en la raíz. Devuelve los directorios que contienen un go.mod
+// (relativos a la raíz; "." si es la propia raíz) y si hay código TS/JS.
+func stacksDe(repoRoot string) (dirsGo []string, hayTS bool) {
+	rutas, err := gitdiff.Rastreados(repoRoot)
+	if err != nil {
+		return nil, false
+	}
+	for _, r := range rutas {
+		switch {
+		case path.Base(r) == "go.mod" && !strings.Contains(r, "spikes/"):
+			dirsGo = append(dirsGo, path.Dir(r))
+		case strings.Contains(r, "node_modules/"):
+			// vendorizado: no cuenta como stack propio
+		case strings.HasSuffix(r, ".ts") || strings.HasSuffix(r, ".tsx") ||
+			strings.HasSuffix(r, ".js") || strings.HasSuffix(r, ".jsx"):
+			hayTS = true
+		}
+	}
+	sort.Strings(dirsGo)
+	return dirsGo, hayTS
+}
+
 // ── Go: la verdad del compilador ────────────────────────────────────────────
-func goEdges(repoRoot string) (map[string]bool, error) {
-	raw, err := os.ReadFile(filepath.Join(repoRoot, "go.mod"))
+// dir es el directorio del go.mod, relativo a la raíz ("." si es la raíz):
+// en un monorepo cada módulo aporta sus aristas, prefijadas con su carpeta
+// para que backend/internal y frontend/internal no se confundan.
+func goEdges(repoRoot, dir string) (map[string]bool, error) {
+	moduloDir := filepath.Join(repoRoot, filepath.FromSlash(dir))
+	raw, err := os.ReadFile(filepath.Join(moduloDir, "go.mod"))
 	if err != nil {
 		return nil, err
 	}
@@ -150,10 +197,16 @@ func goEdges(repoRoot string) (map[string]bool, error) {
 		}
 	}
 	c := exec.Command("go", "list", "-f", "{{.ImportPath}}: {{range .Imports}}{{.}} {{end}}", "./...")
-	c.Dir = repoRoot
+	c.Dir = moduloDir
 	outB, err := c.Output()
 	if err != nil {
-		return nil, fmt.Errorf("go list falló: %w", err)
+		return nil, fmt.Errorf("go list falló en %s: %w", dir, err)
+	}
+	prefijar := func(rel string) string {
+		if dir == "." {
+			return shorten(rel)
+		}
+		return shorten(path.Join(dir, rel))
 	}
 	edges := map[string]bool{}
 	for _, line := range strings.Split(string(outB), "\n") {
@@ -161,12 +214,12 @@ func goEdges(repoRoot string) (map[string]bool, error) {
 		if !ok || !strings.HasPrefix(from, module) {
 			continue
 		}
-		fromShort := shorten(strings.TrimPrefix(strings.TrimPrefix(from, module), "/"))
+		fromShort := prefijar(strings.TrimPrefix(strings.TrimPrefix(from, module), "/"))
 		for _, dep := range strings.Fields(deps) {
 			if !strings.HasPrefix(dep, module+"/") {
 				continue
 			}
-			toShort := shorten(strings.TrimPrefix(dep, module+"/"))
+			toShort := prefijar(strings.TrimPrefix(dep, module+"/"))
 			if fromShort != toShort && fromShort != "" && toShort != "" {
 				edges[fromShort+"|"+toShort] = true
 			}
@@ -231,10 +284,6 @@ var idClean = regexp.MustCompile(`[^a-zA-Z0-9]`)
 
 func nodeID(s string) string { return "n_" + idClean.ReplaceAllString(s, "_") }
 
-func fileExistsIn(root, rel string) bool {
-	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
-	return err == nil
-}
 func dirExistsIn(root, rel string) bool {
 	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
 	return err == nil && st.IsDir()
