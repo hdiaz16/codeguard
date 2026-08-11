@@ -167,12 +167,43 @@ func moduloDe(rel string) string {
 }
 
 // Build elige el extractor según el stack del repo.
+//
+// La detección es por ARCHIVOS RASTREADOS, no por manifiestos en la raíz. El
+// layout corporativo más común es el monorepo —backend/go.mod +
+// frontend/package.json— y ahí la raíz no tiene ninguno de los dos: el
+// explorador decía "no encontré funciones que mapear" con cuatrocientos
+// archivos de código enfrente (pasó con bds.portal). Los extractores siempre
+// recorrieron el árbol completo; sólo la puerta de entrada miraba la raíz.
+//
+// Y un monorepo con ambos stacks obtiene AMBOS grafos, fusionados: los IDs
+// van namespaceados por paquete (Go) o carpeta (TS), así que no chocan, y un
+// hallazgo del frontend tiene dónde anclarse igual que uno del backend.
 func Build(root string) (*Graph, error) {
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+	hayGo := tieneRastreados(root, "*.go")
+	hayTS := tieneRastreados(root, "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs")
+	switch {
+	case hayGo && hayTS:
+		g, err := BuildGo(root)
+		if err != nil {
+			return BuildTS(root) // medio grafo es mejor que ninguno
+		}
+		t, err := BuildTS(root)
+		if err != nil {
+			return g, nil
+		}
+		g.Nodes = append(g.Nodes, t.Nodes...)
+		g.Edges = append(g.Edges, t.Edges...)
+		g.Lang = "go + typescript"
+		return g, nil
+	case hayGo:
 		return BuildGo(root)
-	}
-	if _, err := os.Stat(filepath.Join(root, "package.json")); err == nil {
+	case hayTS:
 		return BuildTS(root)
 	}
 	return &Graph{Lang: "?", Root: filepath.ToSlash(root)}, nil
+}
+
+func tieneRastreados(root string, patrones ...string) bool {
+	rutas, err := gitdiff.Rastreados(root, patrones...)
+	return err == nil && len(rutas) > 0
 }

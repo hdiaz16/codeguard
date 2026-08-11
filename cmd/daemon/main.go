@@ -599,8 +599,8 @@ func main() {
 				motivo = "No pude leer el código de este proyecto: " + err.Error()
 			case cg == nil || len(cg.Nodes) == 0:
 				motivo = "No encontré funciones que mapear en " + nombre + ".\n\n" +
-					"El explorador entiende Go (por go.mod) y TypeScript/JavaScript " +
-					"(por package.json). Si este proyecto usa otro lenguaje, todavía no está cubierto."
+					"El explorador entiende Go y TypeScript/JavaScript, estén donde estén " +
+					"en el repo. Si este proyecto usa otro lenguaje, todavía no está cubierto."
 			}
 			if motivo != "" {
 				log.Printf("grafo de %s no disponible: %s", nombre, strings.SplitN(motivo, "\n", 2)[0])
