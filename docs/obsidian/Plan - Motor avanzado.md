@@ -4,7 +4,7 @@ El veredicto del que nace este plan: detección **estándar** sólida, montada s
 
 > **Regla de avance**: una fase no se abre hasta que la anterior cierra al 100% —criterio de cierre cumplido y verificado, no "casi". Es el mismo método de la semana de estabilización (F0–F5), que funcionó.
 
-**Estado**: 🔵 F1 en curso — arrancó el 2026-08-11
+**Estado**: 🔵 F1 ejecutada el 2026-08-11 — pendiente sólo la confirmación del CI en verde
 
 ---
 
@@ -12,15 +12,18 @@ El veredicto del que nace este plan: detección **estándar** sólida, montada s
 
 **Objetivo**: dos piezas baratas que suben la detección un escalón, y un candado para que ninguna regla vuelva a vivir muerta —o a cazar de más— sin que el CI lo grite.
 
-- [ ] **F1a** Corpus `semgrep --test`: cada una de las 118 reglas con ≥1 caso positivo (`ruleid:`) y ≥1 negativo (`ok:`) en `rulepacks/<ver>/semgrep/tests/`
-- [ ] **F1a** Paso de CI que corre `--test` y tumba el job (junto al `--validate` existente)
-- [ ] **F1a** Excepciones documentadas (reglas no testeables por `paths:` u otra limitación del framework) — meta: 0
-- [ ] **F1b** Motor govulncheck (análisis de alcanzabilidad: sólo CVEs cuyo código vulnerable de verdad se llama): adaptador + tests con payload real capturado
-- [ ] **F1b** Cableado en `daemon.Engines` — política como trivy: aviso en local, bloquea en CI
-- [ ] **F1b** `engines.ps1` lo instala si hay toolchain de Go (sin toolchain no hay repos Go que analizar)
-- [ ] **F1b** El CI lo instala en "Instalar motores"
+- [x] **F1a** Corpus `semgrep --test`: cada regla con ≥1 caso positivo (`ruleid:`) y ≥1 negativo (`ok:`) en `rulepacks/<ver>/testdata/` — **119/119** (118 + una nacida del split de curación)
+- [x] **F1a** Paso de CI que corre `--test` y tumba el job (junto al `--validate` existente), más verificación de cobertura: ninguna regla sin caso positivo
+- [x] **F1a** Excepciones documentadas — **0** (las 2 reglas no testeables estaban *muertas*; se curaron en vez de exceptuarse)
+- [x] **F1b** Motor govulncheck: adaptador + tests con payload real capturado + integración de punta a punta bajo el sandbox
+- [x] **F1b** Cableado en `daemon.Engines` — política como trivy: aviso en local, bloquea en CI; en el hook sólo corre al cambiar go.mod/go.sum
+- [x] **F1b** `engines.ps1` lo instala si hay toolchain de Go (vía GOBIN al dir de motores)
+- [x] **F1b** El CI lo instala en "Instalar motores"
 
-**Criterio de cierre**: `semgrep scan --test` verde cubriendo todas las reglas; govulncheck reporta un hallazgo alcanzable en un fixture vulnerable y calla en uno sano; `go test ./...` verde; CI verde.
+**Criterio de cierre**: `semgrep scan --test` verde cubriendo todas las reglas ✓ (91/91 checks, 119/119 con positivo); govulncheck reporta un hallazgo alcanzable en un fixture vulnerable y calla en uno sano ✓ (GO-2021-0113 presente, GO-2022-1059 filtrada); `go test ./...` verde ✓; CI verde ⏳.
+
+**Botín inesperado de F1a** — el corpus destapó 5 defectos de reglas antes de estrenarse, todos curados y con test:
+`python-except-pass` (AND imposible, muerta de nacimiento), `ts-dinero-float` (patrón que no parsea nada, muerta), `pii-en-telemetria` (pata python muerta → split `-py`), `ts-promesa-sin-await` (`pattern-not` que jamás suprimió: `.then().catch()` era falso positivo de fábrica), `ts-sql-concat` (concatenación con `+` y plantilla en `query` anuladas por el AND del regex y un `pattern-not` ancho).
 
 ## F2 — Velocidad y semántica
 
@@ -60,3 +63,4 @@ Motor de análisis propio (orquestar los mejores motores **es** la arquitectura 
 ## Bitácora
 
 - **2026-08-11** — Plan creado. F1 arranca: corpus de pruebas + govulncheck.
+- **2026-08-11** — F1 ejecutada en el día. govulncheck es el décimo motor (`ddd3979`): sólo hallazgos de nivel símbolo (alcanzabilidad probada), integración real bajo el sandbox. Corpus `--test` completo (`993797d`): 119/119 reglas con positivo y negativo, escrito por tres agentes en paralelo y consolidado; el CI ahora corre `--validate` + `--test` + cobertura obligatoria. El corpus pagó antes de nacer: 2 reglas muertas de nacimiento y 3 con defectos de fábrica, las cinco curadas y probadas. Lecciones de infraestructura: los fixtures viven en `testdata/` hermano de `semgrep/` (un yaml dentro del `--config` se parsea como reglas), los fixtures YAML se llaman `<stem>.test.yaml`, y el modo test ignora los filtros `paths:`. Falta: CI en verde para cerrar la fase.
