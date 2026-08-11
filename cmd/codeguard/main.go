@@ -17,6 +17,7 @@ import (
 	"codeguard/internal/config"
 	"codeguard/internal/daemon"
 	glengine "codeguard/internal/engines/gitleaks"
+	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/pipeline"
@@ -27,6 +28,13 @@ import (
 var version = "0.1.0-fase1"
 
 func main() {
+	// Lo primero: el PATH del registro puede traer motores que este proceso no
+	// ve. Un hook lanzado desde una terminal o un editor que arrancaron antes
+	// de instalar el agente no encuentra gitleaks, y la compuerta de secretos
+	// es fail-closed: BLOQUEA el commit pidiendo que se instale algo que ya
+	// está instalado.
+	proc.RefrescarPATH()
+
 	root := &cobra.Command{
 		Use:           "codeguard",
 		Short:         "Análisis de código pre-commit con paridad hacia el CI",

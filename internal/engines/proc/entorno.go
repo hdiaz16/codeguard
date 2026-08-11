@@ -47,6 +47,31 @@ var permitidas = map[string]bool{
 	"NODE_EXTRA_CA_CERTS": true,
 }
 
+// RefrescarPATH añade al PATH de ESTE proceso lo que el registro tenga ahora.
+//
+// Tiene que actuar sobre el proceso, no sólo sobre el entorno que se pasa a
+// cada motor: exec.LookPath y exec.Command resuelven el ejecutable con el PATH
+// del proceso e ignoran por completo el cmd.Env que se les prepare. Arreglar
+// sólo Entorno no serviría de nada.
+//
+// Se llama al arrancar la CLI y el daemon. Es idempotente: si el registro no
+// aporta nada nuevo, el PATH queda como estaba.
+func RefrescarPATH() {
+	vigente := pathVigente()
+	if vigente == "" {
+		return
+	}
+	actual := os.Getenv("PATH")
+	// Se antepone lo del registro sin tirar lo heredado: así se suma lo que el
+	// instalador añadió sin perder lo propio de esta sesión (un venv activo,
+	// una cadena de herramientas puesta a mano).
+	if actual == "" {
+		_ = os.Setenv("PATH", vigente)
+		return
+	}
+	_ = os.Setenv("PATH", vigente+string(os.PathListSeparator)+actual)
+}
+
 // Entorno arma el entorno de un motor: sólo lo permitido, más lo que se le
 // pase. Los extra van en la forma "CLAVE=valor" y siempre ganan.
 func Entorno(extra ...string) []string {

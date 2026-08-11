@@ -25,6 +25,7 @@ import (
 	"codeguard/internal/codegraph"
 	"codeguard/internal/config"
 	"codeguard/internal/daemon"
+	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 	"codeguard/internal/ipc"
 	"codeguard/internal/pipeline"
@@ -188,6 +189,12 @@ func (t *trayState) setPass(tooltip string) {
 }
 
 func main() {
+	// El PATH del registro antes que nada: el daemon lo lanza la clave Run al
+	// iniciar sesión, y si el agente se instaló DURANTE la sesión en curso su
+	// entorno no tiene los motores. Sin esto, la compuerta de secretos bloquea
+	// commits pidiendo un gitleaks que está instalado.
+	proc.RefrescarPATH()
+
 	// El daemon corre sin consola (-H windowsgui): sin este log, cualquier
 	// fallo es invisible. Vive junto a la BD del usuario.
 	if base := os.Getenv("LOCALAPPDATA"); base != "" {
@@ -449,6 +456,20 @@ func main() {
 	listaProyectos := func(activeRoot string) []string {
 		stateMu.Lock()
 		defer stateMu.Unlock()
+		// El registro se relee AQUÍ, no sólo al arrancar. `codeguard init`
+		// escribe en repos.json el proyecto recién enrolado, pero el daemon ya
+		// estaba corriendo con su copia en memoria: el repo no aparecía en el
+		// panel hasta el primer commit, contradiciendo lo que init promete al
+		// terminar ("aparece en el panel sin esperar al primer commit"). Pasó
+		// al enrolar bds.portal.
+		for _, r := range registry.Load() {
+			root := filepath.ToSlash(r.Root)
+			if _, ya := repoState[root]; !ya {
+				repoState[root] = &panelPayload{
+					Repo: r.Nombre, RepoRoot: root, Verdict: "—", At: "sin análisis",
+				}
+			}
+		}
 		var out []string
 		for root, p := range repoState {
 			// Un proyecto cuya carpeta ya no existe no es un proyecto. El
