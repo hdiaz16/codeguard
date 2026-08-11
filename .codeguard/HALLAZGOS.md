@@ -1,8 +1,6 @@
 # Hallazgos de CodeGuard
 
-> ## ✅ COMPLETADO — no quedan hallazgos bloqueantes
->
-> Generado el 2026-08-11 10:22 · rulepack `2026.08.2`
+> **Estado: 2 bloqueante(s) pendiente(s)** · generado el 2026-08-11 14:52 · rulepack `2026.08.2`
 
 ## Instrucciones para el agente de código
 
@@ -25,15 +23,25 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 ---
 
-## ✅ Resueltos desde el informe anterior (7)
+## ⛔ Bloqueantes (2)
 
-- [x] 10. `log-dato-sensible` — internal/engines/identidad/identidad_test.go:19
-- [x] 11. `log-dato-sensible` — internal/engines/proc/entorno_test.go:98
-- [x] 12. `log-dato-sensible` — internal/pipeline/pipeline_test.go:75
-- [x] 3. `log-dato-sensible` — cmd/codeguard/configcmd.go:113
-- [x] 6. `log-dato-sensible` — cmd/codeguard/enginescmd.go:77
-- [x] 7. `log-dato-sensible` — cmd/codeguard/install.go:178
-- [x] 8. `log-dato-sensible` — cmd/codeguard/rulescmd.go:114
+### 1. `go-dinero-float` — internal/config/config.go:107
+<!-- fp: -->
+
+- [ ] **Pendiente** · pilar **calidad** · motor `semgrep` · severidad `error`
+
+**Qué detectó:** Importe monetario en float64. Usa int64 en centavos o shopspring/decimal.
+
+**Archivo:** `internal/config/config.go` · **línea:** 107
+
+### 2. `go-dinero-float` — internal/config/config.go:108
+<!-- fp: -->
+
+- [ ] **Pendiente** · pilar **calidad** · motor `semgrep` · severidad `error`
+
+**Qué detectó:** Importe monetario en float64. Usa int64 en centavos o shopspring/decimal.
+
+**Archivo:** `internal/config/config.go` · **línea:** 108
 
 ---
 
@@ -45,6 +53,6 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 
 ## Contexto
 
-- Deuda preexistente suprimida por la baseline: **2** (no bloquea; solo lo nuevo bloquea)
+- Deuda preexistente suprimida por la baseline: **0** (no bloquea; solo lo nuevo bloquea)
 - Capas que no corrieron en este escaneo: ninguna
 - Este informe lo genera `codeguard report` y se versiona con el repo.

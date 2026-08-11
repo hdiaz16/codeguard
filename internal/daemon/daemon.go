@@ -22,6 +22,7 @@ import (
 	"codeguard/internal/engines/linters"
 	sgengine "codeguard/internal/engines/semgrep"
 	sqengine "codeguard/internal/engines/squawk"
+	stengine "codeguard/internal/engines/staticcheck"
 	tvengine "codeguard/internal/engines/trivy"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/ipc"
@@ -44,8 +45,11 @@ type Server struct {
 	Shadow *shadow.Runner
 }
 
-// Engines arma la lista de motores de la etapa 2. Compartida con `codeguard ci`.
-func Engines(cfg *config.Config, inCI bool) []engines.Engine {
+// Engines arma la lista de motores de la etapa 2. Compartida con `codeguard
+// ci` (que pasa cache=nil: el runner es efímero y un caché ahí no acierta
+// nunca) y con report/baseline/hook, que pasan el caché por archivo si el
+// store abre.
+func Engines(cfg *config.Config, inCI bool, cache sgengine.Cache) []engines.Engine {
 	var migGlobs []string
 	var migDialecto string
 	if cfg != nil {
@@ -53,7 +57,7 @@ func Engines(cfg *config.Config, inCI bool) []engines.Engine {
 		migDialecto = cfg.Paths.DialectoMigraciones()
 	}
 	return []engines.Engine{
-		&sgengine.Engine{},
+		&sgengine.Engine{Cache: cache},
 		&sqengine.Engine{MigrationGlobs: migGlobs, Dialect: migDialecto},
 		// Política §7: CVE crítico advierte en local, bloquea en CI.
 		&tvengine.Engine{BlockCritical: inCI, SkipDBUpdate: !inCI},
@@ -61,7 +65,11 @@ func Engines(cfg *config.Config, inCI bool) []engines.Engine {
 		// demuestra si el código lo llama. Misma política local/CI que trivy,
 		// y en el hook sólo corre cuando cambian las dependencias — recorre el
 		// módulo entero y el presupuesto del hook no está para eso.
-		&gvengine.Engine{BlockReachable: inCI, SoloManifiestos: !inCI},
+		&gvengine.Engine{BlockReachable: inCI, SoloManifiestos: !inCI, Cache: cache},
+		// Semántica SSA sobre los paquetes tocados: bugs demostrables en el
+		// flujo real de valores, no patrones de texto. Lint de severidad
+		// error bloquea (§7), la misma política que govet.
+		&stengine.Engine{Cache: cache},
 		linters.GoFmt{},
 		linters.GoVet{},
 		linters.Ruff{},
@@ -251,14 +259,18 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		deadline = time.Second
 	}
 	var demoted map[string]bool
+	var cache sgengine.Cache
 	if s.Shadow != nil && s.Shadow.Store != nil {
 		demoted, _ = s.Shadow.Store.DemotedRules(req.RepoID, 5, 0.20)
+		// El caché por archivo brilla justo aquí: un commit bloqueado se
+		// reintenta con N-1 archivos idénticos, y esos ya no se re-analizan.
+		cache = CachePorArchivo(s.Shadow.Store, req.RepoID, "", filepath.Base(req.RepoRoot), cfg)
 	}
 	res, err := pipeline.Run(ctx, pipeline.Options{
 		Config:       cfg,
 		Diff:         &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified},
 		Secrets:      nil, // ya corrió en el hook
-		Engines:      Engines(cfg, false),
+		Engines:      Engines(cfg, false, cache),
 		Rulepack:     rulepack,
 		Timeout:      deadline,
 		Suppressions: baseline.Load(req.RepoRoot),

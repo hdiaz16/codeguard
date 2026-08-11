@@ -61,9 +61,22 @@ func reportCmd() *cobra.Command {
 			}
 			var files []gitdiff.ChangedFile
 			for _, r := range rutas {
+				// El informe no se analiza a sí mismo: cada corrida lo
+				// reescribe, y ese cambio perpetuo invalidaba su entrada de
+				// caché — semgrep pagaba su arranque completo en cada informe
+				// solo para mirar la salida del informe anterior.
+				if r == reportFile {
+					continue
+				}
 				files = append(files, gitdiff.ChangedFile{Path: r, Status: "M"})
 			}
+			files = conHuellas(repoRoot, files)
 			fmt.Printf("escaneando %d archivos…\n", len(files))
+
+			// El caché por archivo (§9) es lo que separa el primer informe
+			// (todo se analiza) del segundo (solo lo que cambió desde entonces).
+			cache, cerrarCache := abrirCache(repoRoot, cfg)
+			defer cerrarCache()
 
 			// La baseline NO se le pasa al pipeline: el informe la aplica él
 			// mismo, porque necesita las dos mitades. Los hallazgos nuevos van
@@ -78,7 +91,7 @@ func reportCmd() *cobra.Command {
 				Config:   cfg,
 				Diff:     &gitdiff.Diff{Files: files},
 				Secrets:  nil, // los secretos se atienden en el acto, no por informe
-				Engines:  daemon.Engines(cfg, false),
+				Engines:  daemon.Engines(cfg, false, cache),
 				Rulepack: daemon.RulepackDir(repoRoot, cfg.Rulepack),
 				Timeout:  15 * time.Minute,
 			})

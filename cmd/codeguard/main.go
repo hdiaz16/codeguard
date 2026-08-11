@@ -102,10 +102,11 @@ func ciCmd() *cobra.Command {
 
 			inCI := os.Getenv("GITHUB_ACTIONS") == "true"
 			res, err := pipeline.Run(context.Background(), pipeline.Options{
-				Config:       cfg,
-				Diff:         diff,
-				Secrets:      &glengine.Engine{Mode: "range", Base: base, Head: head},
-				Engines:      daemon.Engines(cfg, inCI),
+				Config:  cfg,
+				Diff:    diff,
+				Secrets: &glengine.Engine{Mode: "range", Base: base, Head: head},
+				// Sin caché: el runner del CI es efímero y nunca acertaría.
+				Engines:      daemon.Engines(cfg, inCI, nil),
 				Rulepack:     rulepack,
 				Timeout:      5 * time.Minute,
 				Suppressions: baseline.Load(repoRoot),

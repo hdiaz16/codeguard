@@ -164,11 +164,13 @@ func runPreCommit() error {
 		degraded = append(degraded, "daemon:offline")
 		ctx, cancel := context.WithTimeout(context.Background(), hookDeadline)
 		defer cancel()
+		cache, cerrarCache := abrirCache(repoRoot, cfg)
+		defer cerrarCache()
 		res, err = pipeline.Run(ctx, pipeline.Options{
 			Config:       cfg,
 			Diff:         diff,
 			Secrets:      nil, // ya corrió arriba
-			Engines:      daemon.Engines(cfg, false),
+			Engines:      daemon.Engines(cfg, false, cache),
 			Rulepack:     daemon.RulepackDir(repoRoot, cfg.Rulepack),
 			Timeout:      hookDeadline,
 			Suppressions: baseline.Load(repoRoot),

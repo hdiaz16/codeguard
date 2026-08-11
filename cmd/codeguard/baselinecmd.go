@@ -41,13 +41,17 @@ func baselineCmd() *cobra.Command {
 			for _, r := range rutas {
 				files = append(files, gitdiff.ChangedFile{Path: r, Status: "M"})
 			}
+			files = conHuellas(repoRoot, files)
 			fmt.Printf("escaneando %d archivos con la capa determinista completa…\n", len(files))
+
+			cache, cerrarCache := abrirCache(repoRoot, cfg)
+			defer cerrarCache()
 
 			res, err := pipeline.Run(context.Background(), pipeline.Options{
 				Config:   cfg,
 				Diff:     &gitdiff.Diff{Files: files},
 				Secrets:  nil, // los secretos no se baselinan jamás
-				Engines:  daemon.Engines(cfg, false),
+				Engines:  daemon.Engines(cfg, false, cache),
 				Rulepack: daemon.RulepackDir(repoRoot, cfg.Rulepack),
 				Timeout:  10 * time.Minute,
 			})

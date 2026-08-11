@@ -200,18 +200,18 @@ if ($userPath -notlike "*$pyScripts*") {
     Ok "PATH de usuario: + $pyScripts"
 }
 
-# ── motores Go (govulncheck) ─────────────────────────────────────────────────
-# govulncheck no entra en motores.json: lo construye el toolchain de Go del
-# usuario desde el fuente y GOSUMDB verifica las sumas, igual que pip verifica
-# los motores de Python. Se instala en $EnginesDir (via GOBIN) para que se
-# encuentre por el mismo PATH que gitleaks y trivy.
+# ── motores Go (govulncheck, staticcheck) ────────────────────────────────────
+# govulncheck y staticcheck no entran en motores.json: los construye el
+# toolchain de Go del usuario desde el fuente y GOSUMDB verifica las sumas,
+# igual que pip verifica los motores de Python. Se instalan en $EnginesDir
+# (via GOBIN) para que se encuentren por el mismo PATH que gitleaks y trivy.
 #
-# Sin toolchain de Go no se instala y no es un error: un repo Go siempre viene
-# con su toolchain, y en un repo sin Go el motor jamas aplica.
-Step "Motores Go (govulncheck)"
+# Sin toolchain de Go no se instalan y no es un error: un repo Go siempre
+# viene con su toolchain, y en un repo sin Go estos motores jamas aplican.
+Step "Motores Go (govulncheck, staticcheck)"
 $goBin = Get-Command go -ErrorAction SilentlyContinue
 if (-not $goBin) {
-    Ok "no hay toolchain de Go - se omite (el motor solo aplica a repos Go)"
+    Ok "no hay toolchain de Go - se omite (los motores solo aplican a repos Go)"
 } else {
     $previoGobin = $env:GOBIN
     $env:GOBIN = $EnginesDir
@@ -221,6 +221,11 @@ if (-not $goBin) {
             throw "go install govulncheck fallo (codigo $($gv.Codigo)):`n$($gv.Salida)"
         }
         Ok "govulncheck instalado en $EnginesDir"
+        $sc = Correr "go" @("install", "honnef.co/go/tools/cmd/staticcheck@latest")
+        if ($sc.Codigo -ne 0) {
+            throw "go install staticcheck fallo (codigo $($sc.Codigo)):`n$($sc.Salida)"
+        }
+        Ok "staticcheck instalado en $EnginesDir"
     } finally {
         $env:GOBIN = $previoGobin
     }

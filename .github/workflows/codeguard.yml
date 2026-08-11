@@ -38,6 +38,7 @@ jobs:
         run: |
           go install github.com/zricethezav/gitleaks/v8@latest
           go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install honnef.co/go/tools/cmd/staticcheck@latest
           pip install semgrep
           echo "$(go env GOPATH)\bin" >> $env:GITHUB_PATH
 
