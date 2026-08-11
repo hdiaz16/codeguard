@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"codeguard/internal/engines"
@@ -67,11 +68,40 @@ type sgResult struct {
 // El campo que decide es Type, NO Level: un "Rule parse error" también llega
 // con level "error" y sin embargo el escaneo corrió y sus resultados valen.
 type sgError struct {
-	Code    int    `json:"code"`
-	Level   string `json:"level"`
-	Type    string `json:"type"`
-	RuleID  string `json:"rule_id"`
-	Message string `json:"message"`
+	Code    int       `json:"code"`
+	Level   string    `json:"level"`
+	Type    tipoError `json:"type"`
+	RuleID  string    `json:"rule_id"`
+	Message string    `json:"message"`
+}
+
+// tipoError tolera las DOS formas con que semgrep serializa el tipo de un
+// error: un string plano ("Rule parse error") o, para las variantes con
+// argumentos, un arreglo cuyo primer elemento es el nombre —
+// ["PartialParsing", [ubicaciones…]].
+//
+// Declararlo string a secas hizo que UN archivo parcialmente parseado en
+// bds.portal tumbara el unmarshal del JSON completo, y con él la capa entera:
+// 45 hallazgos válidos descartados por no poder leer el tipo de un aviso.
+type tipoError string
+
+func (t *tipoError) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*t = tipoError(s)
+		return nil
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(b, &arr); err == nil && len(arr) > 0 {
+		if err := json.Unmarshal(arr[0], &s); err == nil {
+			*t = tipoError(s)
+			return nil
+		}
+	}
+	// Forma que no conocemos: el tipo es informativo, y perderlo no justifica
+	// invalidar un escaneo que sí corrió. El mensaje del error se conserva.
+	*t = ""
+	return nil
 }
 
 // tipoFatal marca los errores en los que semgrep no analizó lo que se le pidió
@@ -112,6 +142,20 @@ func (r sgResult) reglasRotas() []string {
 	return ids
 }
 
+// maxLineaComandos acota lo que se le pasa a semgrep de una sola vez.
+//
+// Windows corta CreateProcess a 32767 caracteres de línea de comandos, y este
+// motor pasa una ruta absoluta POR ARCHIVO. Un repo de 854 archivos genera
+// 105 000 caracteres: semgrep no llega a arrancar y las 112 reglas de la casa
+// quedan sin aplicar — en el análisis y, peor, en la baseline. El repo de
+// pruebas del propio agente tiene 156 archivos (16 000 caracteres) y por eso
+// nunca lo destapó.
+//
+// semgrep 1.172 no tiene ninguna opción para leer los objetivos de un archivo,
+// así que la salida es trocear. 30 000 deja margen para el binario, las reglas
+// y el resto de argumentos.
+const maxLineaComandos = 30000
+
 func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
 	bin := e.Binary
 	if bin == "" {
@@ -123,18 +167,69 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	}
 
 	// Solo archivos tocados (sección 5, etapa 2): targets explícitos.
-	args := []string{"scan", "--config", rules, "--json", "--metrics=off", "--quiet", "--disable-version-check"}
-	targets := 0
+	var objetivos []string
 	for _, f := range in.Files {
 		if f.Status == "D" {
 			continue
 		}
-		args = append(args, filepath.Join(in.RepoRoot, filepath.FromSlash(f.Path)))
-		targets++
+		objetivos = append(objetivos, filepath.Join(in.RepoRoot, filepath.FromSlash(f.Path)))
 	}
-	if targets == 0 {
+	if len(objetivos) == 0 {
 		return nil, nil
 	}
+
+	var findings []finding.Finding
+	rotasVistas := map[string]bool{}
+	for _, lote := range lotes(objetivos, maxLineaComandos) {
+		hallados, rotas, err := e.correrLote(ctx, bin, rules, in, lote)
+		if err != nil {
+			return nil, err
+		}
+		findings = append(findings, hallados...)
+		for _, r := range rotas {
+			rotasVistas[r] = true
+		}
+	}
+	// Las reglas rotas se reportan una vez, no una por lote.
+	if len(rotasVistas) > 0 {
+		ids := make([]string, 0, len(rotasVistas))
+		for r := range rotasVistas {
+			ids = append(ids, r)
+		}
+		sort.Strings(ids)
+		log.Printf("semgrep: %d regla(s) del rulepack no compilan y no se aplicaron: %s",
+			len(ids), strings.Join(ids, ", "))
+	}
+	return findings, nil
+}
+
+// lotes reparte los objetivos en grupos cuya longitud sumada cabe en el límite.
+// Un objetivo que por sí solo lo excediera va en su propio lote: recortarlo
+// sería dejar de analizar un archivo en silencio, que es justo lo que este
+// troceado viene a impedir.
+func lotes(objetivos []string, limite int) [][]string {
+	var out [][]string
+	actual := []string{}
+	largo := 0
+	for _, o := range objetivos {
+		coste := len(o) + 1 // +1 por el espacio separador
+		if len(actual) > 0 && largo+coste > limite {
+			out = append(out, actual)
+			actual, largo = []string{}, 0
+		}
+		actual = append(actual, o)
+		largo += coste
+	}
+	if len(actual) > 0 {
+		out = append(out, actual)
+	}
+	return out
+}
+
+// correrLote invoca semgrep una vez sobre los objetivos dados y devuelve sus
+// hallazgos y las reglas del pack que no compilaron.
+func (e *Engine) correrLote(ctx context.Context, bin, rules string, in engines.Input, objetivos []string) ([]finding.Finding, []string, error) {
+	args := append([]string{"scan", "--config", rules, "--json", "--metrics=off", "--quiet", "--disable-version-check"}, objetivos...)
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = in.RepoRoot
@@ -145,26 +240,22 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	out := salida.Stdout
 	// Semgrep sale con 1 cuando hay hallazgos bloqueantes; el JSON sigue siendo válido.
 	if runErr != nil && len(out) == 0 {
-		return nil, fmt.Errorf("semgrep no corrió: %v", runErr)
+		return nil, nil, fmt.Errorf("semgrep no corrió: %v", runErr)
 	}
 	// Un JSON recortado no se puede parsear; decirlo es mejor que un error de sintaxis.
 	if salida.Recortada {
-		return nil, fmt.Errorf("semgrep devolvió más de %d MB de salida; revisa el alcance de las reglas", proc.MaxSalida>>20)
+		return nil, nil, fmt.Errorf("semgrep devolvió más de %d MB de salida; revisa el alcance de las reglas", proc.MaxSalida>>20)
 	}
 
 	var res sgResult
 	if err := json.Unmarshal(out, &res); err != nil {
-		return nil, fmt.Errorf("salida de semgrep ilegible: %v", err)
+		return nil, nil, fmt.Errorf("salida de semgrep ilegible: %v", err)
 	}
 	// Antes de mirar un solo hallazgo: ¿llegó semgrep a analizar? Un JSON válido
 	// con cero resultados es indistinguible de un repo limpio salvo por aquí.
 	if e := res.fatal(); e != nil {
-		return nil, fmt.Errorf("semgrep no llegó a analizar (%s): %s",
+		return nil, nil, fmt.Errorf("semgrep no llegó a analizar (%s): %s",
 			e.Type, truncar(e.Message, 300))
-	}
-	if rotas := res.reglasRotas(); len(rotas) > 0 {
-		log.Printf("semgrep: %d regla(s) del rulepack no compilan y no se aplicaron: %s",
-			len(rotas), strings.Join(rotas, ", "))
 	}
 
 	findings := make([]finding.Finding, 0, len(res.Results))
@@ -204,7 +295,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 		f.ComputeFingerprint()
 		findings = append(findings, f)
 	}
-	return findings, nil
+	return findings, res.reglasRotas(), nil
 }
 
 // shortRuleID recorta el prefijo de ruta que semgrep antepone al id de la regla.

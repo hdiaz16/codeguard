@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os/exec"
 	"sort"
 	"strings"
@@ -147,6 +148,10 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 			} else if isMissingBinary(failures[i]) {
 				res.Degraded = append(res.Degraded, "falta:"+opt.Engines[i].Name())
 			} else {
+				// La etiqueta corta viaja al veredicto; el PORQUÉ va al log.
+				// Antes el mensaje del motor se tiraba aquí mismo y diagnosticar
+				// un "semgrep:error" exigía reproducirlo a mano con suerte.
+				log.Printf("%s degradado: %v", opt.Engines[i].Name(), failures[i])
 				res.Degraded = append(res.Degraded, opt.Engines[i].Name()+":error")
 			}
 		}
