@@ -194,10 +194,13 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 	}
 
 	// ── Etapa 5: fan-out concurrente, un prompt por pilar ──
-	timeout := time.Duration(cfg.LLM.TimeoutMs) * time.Millisecond
+	timeout := plazoSombra(cfg)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var verified []finding.Finding
+	// completo se pone en falso si CUALQUIER pilar no llegó a responder. De él
+	// depende que el resultado se pueda cachear (ver el final de esta función).
+	completo := true
 
 	for pillar, scope := range pillarScope {
 		wg.Add(1)
@@ -223,6 +226,9 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 				}
 				log.Printf("sombra %s: %v", pillar, err)
 				_ = r.Store.SaveLLMCall(call)
+				mu.Lock()
+				completo = false
+				mu.Unlock()
 				return
 			}
 			call.Status = "ok"
@@ -252,13 +258,51 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 		r.OnThinking("", "") // señal de fin: la UI apaga el hilo de pensamiento
 	}
 
+	// Los hallazgos que SÍ se obtuvieron se guardan siempre: son reales aunque
+	// otro pilar se haya caído.
 	if err := r.Store.SaveLLMFindings(req.RunID, verified); err != nil {
 		log.Println("sombra: no se pudieron guardar hallazgos:", err)
 	}
-	if payload, err := json.Marshal(verified); err == nil {
-		_ = r.Store.DiffCachePut(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model, string(payload))
+	// El caché, en cambio, sólo se escribe si los tres pilares respondieron.
+	//
+	// Antes se escribía siempre, y eso convertía un fallo pasajero en permanente:
+	// un pilar que se cae por plazo dejaba un resultado PARCIAL cacheado por el
+	// sha del diff, y la siguiente vez que apareciera ese mismo diff el caché
+	// acertaría y ya nunca se volvería a preguntar. Es la misma trampa que el
+	// caché de semgrep evita al no guardar cuando hay reglas rotas: un resultado
+	// incompleto con cara de acierto es peor que no tener caché.
+	if completo {
+		if payload, err := json.Marshal(verified); err == nil {
+			_ = r.Store.DiffCachePut(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model, string(payload))
+		}
+		log.Printf("sombra: %d hallazgos verificados registrados (shown=0)", len(verified))
+	} else {
+		log.Printf("sombra: %d hallazgos verificados registrados (shown=0); sin cachear porque no todos los pilares respondieron",
+			len(verified))
 	}
-	log.Printf("sombra: %d hallazgos verificados registrados (shown=0)", len(verified))
+}
+
+// plazoSombra devuelve el plazo de una llamada de la sombra, con un piso de un
+// minuto.
+//
+// timeout_ms lo pensó alguien para una espera INTERACTIVA (la pantalla de
+// configuración prueba la conexión y ahí 20 s es una eternidad razonable). La
+// sombra es lo contrario: corre DESPUÉS de responder al hook, desligada del
+// commit, y nadie la está esperando. Cortarla a los 20 s tira una llamada que
+// ya se pagó en tokens por ahorrar una espera que nadie sufre.
+//
+// El número sale de medir: seis pruebas contra el Azure real dieron 2.5-3.0 s
+// en cinco y 23.4 s en una —el atípico cayó justo mientras el instalador, el
+// arranque del daemon y el precalentado de semgrep competían por la máquina—.
+// O sea que la cola de latencia llega a diez veces la mediana, y un plazo de
+// 20 s la corta. Un minuto la cubre con margen sin dejar una llamada colgada
+// para siempre.
+func plazoSombra(cfg *config.Config) time.Duration {
+	plazo := time.Duration(cfg.LLM.TimeoutMs) * time.Millisecond
+	if minimo := time.Minute; plazo < minimo {
+		return minimo
+	}
+	return plazo
 }
 
 // verify implementa la etapa 6 (anti-alucinación, directo de RADAR).
