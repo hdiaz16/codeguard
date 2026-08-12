@@ -6,9 +6,9 @@ import (
 )
 
 // El daemon guarda la API key del modelo en su entorno. Pasarle os.Environ()
-// a cada motor se la entregaba entera a gitleaks, semgrep, trivy, squawk, tsc
-// y ruff — seis binarios de terceros que no tienen ningún motivo para verla.
-// Ninguno de ellos habla con el modelo.
+// a cada motor se la entregaba entera a gitleaks, semgrep, trivy, squawk, tsc,
+// ruff y mypy — siete binarios de terceros que no tienen ningún motivo para
+// verla. Ninguno de ellos habla con el modelo.
 //
 // Por eso el entorno se arma con una lista de lo permitido y no quitando lo
 // peligroso: una lista de prohibidos deja pasar la siguiente variable secreta
@@ -39,6 +39,11 @@ var permitidas = map[string]bool{
 	"JAVA_HOME":  true,
 	"PYTHONPATH": true, "PYTHONHOME": true, "VIRTUAL_ENV": true,
 	"PYTHONUTF8": true, "PYTHONIOENCODING": true,
+	// MYPYPATH es el PYTHONPATH de mypy: donde busca los stubs que no vienen
+	// con el paquete. Filtrarla haría que mypy no encontrara los stubs propios
+	// del equipo y llenara el informe de import-not-found que sólo existen
+	// porque le quitamos la variable.
+	"MYPYPATH": true,
 
 	// Redes corporativas con proxy: sin esto trivy no baja su base.
 	"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true,

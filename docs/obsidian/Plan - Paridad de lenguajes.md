@@ -10,13 +10,13 @@ Estado al 2026-08-12, después de P1 y P2:
 
 | | Go | C# | Python | TS/JS | Java |
 |---|---|---|---|---|---|
-| **Formato** | gofmt ✅ | dotnet format ✅ | ruff ✅ | eslint/biome ✅ | ❌ |
-| **Lint / AST** | govet + staticcheck ✅✅ | dotnetbuild ✅ | ruff ✅ | eslint/biome ✅ | ❌ |
-| **Tipos** | compilado ✅ | dotnetbuild ✅ | ⚪ mypy (opcional) | tsc ✅ | ❌ |
+| **Formato** | gofmt ✅ | dotnet format ✅ | ruff ✅ | eslint/biome ✅ | google-java-format ✅ |
+| **Lint / AST** | govet + staticcheck ✅✅ | dotnetbuild ✅ | ruff ✅ | eslint/biome ✅ | pmd ✅ |
+| **Tipos** | compilado ✅ | dotnetbuild ✅ | ⚪ mypy (opcional) | tsc ✅ | ❌ descartado |
 | **Dependencias (SCA)** | trivy + govulncheck ✅✅ | dotnetvuln ✅ | trivy ✅ | trivy ✅ | trivy ✅ |
 | **Reglas de la casa** | semgrep ✅ | semgrep ✅ | semgrep ✅ | semgrep ✅ | semgrep ✅ |
 
-Trece motores. Go sigue siendo el único con análisis de alcanzabilidad (govulncheck) y semántica SSA (staticcheck) — esa profundidad extra existe porque el toolchain de Go la regala; en los demás lenguajes su equivalente es de pago o no existe.
+Dieciséis motores. Go sigue siendo el único con análisis de alcanzabilidad (govulncheck) y semántica SSA (staticcheck) — esa profundidad extra existe porque el toolchain de Go la regala; en los demás lenguajes su equivalente es de pago o no existe.
 
 ## Lo que la medición cambió del plan original
 
@@ -34,7 +34,7 @@ Consecuencias, todas con dato detrás:
 
 - **`pip-audit`, `npm audit` y `owasp-dependency-check` NO se implementan.** Trivy ya cubre esos tres ecosistemas. Serían tres herramientas más que instalar, tres dependencias de red y hallazgos duplicados con otro nombre. Y el caso que trivy no cubre —manifiesto sin lockfile— ya lo señala la regla `lockfile-ausente` del playbook, que pide justamente el lockfile que habilita el escaneo. El sistema ya es coherente.
 - **`dotnet list package --vulnerable` SÍ se implementa**: es el único hueco real de SCA medido (un `.csproj` suelto es invisible para trivy, y en .NET el lockfile no es la norma).
-- **Java se aplaza, no se descarta.** No hay toolchain de Java en la máquina de desarrollo, ningún repo enrolado lo usa, y su SCA ya está cubierto por trivy. Construir `javac`/SpotBugs/`google-java-format` sin un repo Java donde probarlos sería construir sobre fe — la primera lección de este proyecto fue que los motores sin verificar real fallan en silencio. Se retoma cuando exista el repo.
+- **Java se aplazó hasta tener un JDK, y se hizo en cuanto lo hubo.** El motivo del aplazamiento nunca fue el diseño sino la verificación: construir motores sin un toolchain donde ejecutarlos era construir sobre fe, y la primera lección de este proyecto fue que los motores sin verificar real fallan en silencio. Con un JDK 21 en la máquina, P4 se hizo y se midió contra él (ver abajo).
 
 ## Fases
 
@@ -69,15 +69,26 @@ El hueco más grande del producto: TS/JS sólo tenía tipos (tsc) y reglas de la
 ### P3 — Python: tipos opcionales ⚪
 - [ ] `mypy` **opt-in por repo**: en código sin anotaciones es puro ruido, y sólo aporta donde el equipo ya invirtió en type hints. Ruff ya cubre formato y lint.
 
-### P4 — Java: cuando haya un repo Java 🔒
-- [ ] `google-java-format` (formato, el más barato)
-- [ ] SpotBugs o `javac -Xlint` (calidad; ojo: exige el classpath completo, o sea invocar Maven/Gradle)
-- [ ] SCA: **ya cubierto por trivy** (`pom.xml`, `build.gradle`) — no se añade nada
+### P4 — Java: formato y calidad 🟢
+- [x] `javafmt`: **google-java-format 1.36.1**, un jar que sólo mira el fuente (ni compila ni necesita classpath). Comprueba, nunca reescribe. Formato bloquea (§7)
+- [x] `javalint`: **PMD 7.26.0** con `rulesets/java/quickstart.xml` (124 reglas). Prioridad 1-2 → error bloqueante; 3-5 → aviso
+- [x] Los dos se instalan por el mismo mecanismo que gitleaks y trivy: versión fijada y SHA-256 en `motores.json`, verificado antes y después de instalar. Si no hay JDK el paso se omite sin fallar, como el de los motores de Go
+- [x] SCA: **ya cubierto por trivy** (`pom.xml`, `build.gradle`) — no se añade nada
+
+**SpotBugs descartado con razón, no por gusto**: analiza *bytecode*, o sea que exige un proyecto compilado — un `mvn compile` con red y minutos por delante, que no cabe en el camino del commit. PMD analiza el fuente: parsea cada archivo y evalúa las reglas sobre el AST. Por lo mismo se descartó `javac -Xlint` como compuerta de tipos: necesitaría el classpath completo, o sea invocar Maven o Gradle. Java se queda sin compuerta de tipos y eso está dicho en la matriz, no escondido.
+
+**Tres cosas que sólo se supieron midiendo:**
+- **PMD sale con 1 y aun así escribe un JSON válido con `"files": []`** cuando le pasas un archivo que no existe. Confiar en el JSON en vez de en el código de salida habría anunciado "proyecto limpio" sin analizar nada — el fallo de semgrep otra vez. Sólo 0, 4 y 5 significan "PMD miró"; el 5 (errores recuperables) trae además las violaciones de los demás archivos, así que no es un fallo.
+- **google-java-format conserva el final de línea dominante del archivo**, así que un archivo CRLF bien formateado ni aparece en `--dry-run`. Aun así hay segunda pasada por archivo señalado que compara normalizando a LF: es lo que garantiza que autocrlf no bloquee un commit, sin depender de que esa detección siga igual en la versión siguiente.
+- **No se invoca `pmd.bat`, se invoca `java` directo.** Dos motivos: el `.bat` pasa por `cmd.exe` y hereda su límite de 8191 caracteres (la avería de P1), y sin java en el PATH imprime "No java executable found" y sale con 2 — un fallo normal para Go, sin el centinela `exec.ErrNotFound`, así que el orquestador diría "pmd:error" en vez de "falta: pmd".
+
+**Límite honesto**: verificado contra un JDK 21.0.12 real sobre un proyecto de juguete con los tres casos (mal formateado, con violaciones, limpio), pero **no contra un repo Java real** — ninguno de los repos enrolados tiene Java. Y hoy no se puede usar el ruleset propio de un repo que ya tenga PMD cableado: correría quickstart igual, que contradiría la decisión de ese equipo. Es el primer sitio donde mirar cuando aparezca el repo.
 
 ## Fuera de alcance — con razón medida
 
-`pip-audit`, `npm audit`, `owasp-dependency-check` (duplican trivy, verificado con CVEs reales) · `-warnaserror` en C# (inundaría de bloqueantes un código existente) · imponer eslint/prettier donde el repo no los configuró.
+`pip-audit`, `npm audit`, `owasp-dependency-check` (duplican trivy, verificado con CVEs reales) · `-warnaserror` en C# (inundaría de bloqueantes un código existente) · imponer eslint/prettier donde el repo no los configuró · SpotBugs y `javac -Xlint` en Java (exigen compilar el proyecto, que no cabe en un pre-commit).
 
 ## Bitácora
 
 - **2026-08-12** — Plan creado a partir de la propuesta del usuario, ajustado con dos mediciones: la cobertura real de trivy por ecosistema (tres SCA propuestos resultaron redundantes, uno resultó hueco real) y la ausencia de toolchain Java. P1 y P2 arrancan en paralelo.
+- **2026-08-12** — P4 hecho en cuanto hubo un JDK 21 en la máquina: `javafmt` (google-java-format 1.36.1) y `javalint` (PMD 7.26.0), instalados con hash fijado como gitleaks y trivy. Java pasa de dos casillas a cuatro; la de tipos queda descartada con razón. Con esto la matriz sólo tiene un hueco abierto: los tipos de Python, que son opt-in por diseño.

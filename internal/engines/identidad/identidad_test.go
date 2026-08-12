@@ -77,3 +77,120 @@ func TestLosCriticosSeListanPrimero(t *testing.T) {
 		}
 	}
 }
+
+// ── motores que no son un .exe suelto ───────────────────────────────────────
+
+// google-java-format se instala como el .jar publicado tal cual. Sin el campo
+// "instalado", Verificar lo buscaría como google-java-format.exe y diría "no
+// instalado" con la herramienta funcionando — una mentira justo en el sitio
+// donde se mira si los motores son los que publicaron sus autores.
+func TestJarInstaladoSeVerificaPorSuNombreReal(t *testing.T) {
+	dir := t.TempDir()
+	v := VersionesConocidas("google-java-format")[0]
+	if v.Instalado == "" {
+		t.Fatal("la versión debe declarar con qué nombre queda instalada")
+	}
+	// Un jar cualquiera: el hash no puede coincidir con el publicado.
+	if err := os.WriteFile(filepath.Join(dir, v.Instalado), []byte("PK falso"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := buscar(t, Verificar(dir), "google-java-format")
+	if r.Estado != Desconocido {
+		t.Errorf("un jar alterado debe quedar como %q, quedó como %q (%s)", Desconocido, r.Estado, r.Detalle)
+	}
+	if r.SHA256 == "" {
+		t.Error("hay que poder enseñar el hash de lo que sí está instalado")
+	}
+}
+
+// PMD no es un ejecutable sino un árbol de jars: la huella cubre el árbol
+// ENTERO. Verificar sólo el lanzador dejaría sin comprobar el jar donde viven
+// las reglas de Java, que es lo único que de verdad hay que proteger — un jar
+// de reglas alterado calla los hallazgos sin que nada parezca roto.
+func TestArbolInstaladoSeVerificaEntero(t *testing.T) {
+	dir := t.TempDir()
+	v := VersionesConocidas("pmd")[0]
+	home := filepath.Join(dir, v.Instalado)
+	if err := os.MkdirAll(filepath.Join(home, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for ruta, cuerpo := range map[string]string{
+		"bin/pmd.bat":  "@echo off\n",
+		"lib/pmd.jar":  "jar-de-mentira",
+		"lib/otro.jar": "otro",
+	} {
+		abs := filepath.Join(home, filepath.FromSlash(ruta))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(abs, []byte(cuerpo), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	antes, err := HuellaArbol(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := buscar(t, Verificar(dir), "pmd"); r.Estado != Desconocido || r.SHA256 != antes {
+		t.Errorf("un árbol que no es el publicado debe quedar como %q con su huella; quedó %q/%s",
+			Desconocido, r.Estado, r.SHA256)
+	}
+
+	// Tocar UN archivo de dentro tiene que cambiar la huella: si no, la
+	// verificación no serviría para lo que existe.
+	if err := os.WriteFile(filepath.Join(home, "lib", "otro.jar"), []byte("manipulado"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	despues, err := HuellaArbol(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if despues == antes {
+		t.Error("cambiar un jar de dentro debe cambiar la huella del árbol")
+	}
+}
+
+// La huella no puede depender de fechas ni del orden en que se recorra el
+// disco: dos extracciones del mismo artefacto en dos máquinas tienen que dar el
+// mismo hash, o el instalador acusaría de manipulación a una instalación sana.
+func TestHuellaArbolSoloDependeDelContenido(t *testing.T) {
+	crear := func(t *testing.T) string {
+		t.Helper()
+		raiz := t.TempDir()
+		for ruta, cuerpo := range map[string]string{
+			"a/uno.txt": "uno", "b/dos.txt": "dos", "raiz.txt": "tres",
+		} {
+			abs := filepath.Join(raiz, filepath.FromSlash(ruta))
+			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(abs, []byte(cuerpo), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return raiz
+	}
+	uno, dos := crear(t), crear(t)
+	h1, err := HuellaArbol(uno)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2, err := HuellaArbol(dos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h1 != h2 {
+		t.Errorf("dos árboles con el mismo contenido deben dar la misma huella: %s vs %s", h1, h2)
+	}
+}
+
+func buscar(t *testing.T, res []Resultado, motor string) Resultado {
+	t.Helper()
+	for _, r := range res {
+		if r.Motor == motor {
+			return r
+		}
+	}
+	t.Fatalf("Verificar no reportó %s", motor)
+	return Resultado{}
+}

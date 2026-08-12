@@ -741,11 +741,13 @@ func rutaRepoJS(repoRoot, dir, p string) string {
 	}
 	limpia := strings.ReplaceAll(p, `\`, "/")
 	if esAbsolutaJS(limpia) {
-		raiz := strings.ReplaceAll(repoRoot, `\`, "/")
-		if rel, err := filepath.Rel(raiz, limpia); err == nil {
-			return filepath.ToSlash(rel)
-		}
-		return limpia // fuera del repo: mejor la ruta cruda que una mentira
+		// relTo comprueba que el resultado caiga DENTRO de la raíz y reintenta
+		// con la raíz canónica si no. Antes se usaba filepath.Rel a secas, y
+		// Rel "tiene éxito" devolviendo `../../..` cuando las dos rutas son del
+		// mismo disco pero apuntan a sitios distintos — el hallazgo salía con
+		// una ruta que ningún editor abre, que no casa con la baseline y que no
+		// coincide con ningún archivo del diff: desaparecía en silencio.
+		return relTo(repoRoot, filepath.FromSlash(limpia))
 	}
 	if dir != "." && dir != "" {
 		return path.Join(dir, limpia)

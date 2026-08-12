@@ -37,13 +37,34 @@ jobs:
       - name: Construir CodeGuard
         run: go build -o codeguard.exe ./cmd/codeguard
 
-      - name: Instalar motores
+      # Las versiones salen de motores.json, la MISMA fuente que lee el
+      # instalador. Antes decia @latest, y sin version en pip: el CI instalaba
+      # gitleaks@latest mientras cada maquina tenia la 8.30.0 fijada por hash.
+      # O sea que la compuerta local y la del CI eran binarios distintos, y eso
+      # erosiona en silencio la promesa central del producto -"si el commit pasa
+      # aqui, pasa alla"- de la peor manera: intermitente, y meses despues,
+      # cuando una regla cambia de comportamiento entre dos versiones.
+      #
+      # mypy viaja junto a semgrep para que el CI tenga el MISMO juego de
+      # motores que una maquina de desarrollo: si un .py con configuracion de
+      # tipos entra al repo, la compuerta corre aqui igual y no aparece como
+      # capa degradada por un binario ausente.
+      - name: Instalar motores (versiones fijadas en motores.json)
+        shell: pwsh
         run: |
-          go install github.com/zricethezav/gitleaks/v8@latest
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          go install honnef.co/go/tools/cmd/staticcheck@latest
-          pip install semgrep
-          echo "$(go env GOPATH)\bin" >> $env:GITHUB_PATH
+          $m = Get-Content internal/engines/identidad/motores.json -Raw | ConvertFrom-Json
+          foreach ($n in @("gitleaks", "govulncheck", "staticcheck")) {
+            $spec = $m.paquetes.go.$n
+            Write-Host "go install $($spec.modulo)@$($spec.version)"
+            go install "$($spec.modulo)@$($spec.version)"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          $pins = @()
+          foreach ($q in $m.paquetes.pip.PSObject.Properties) { $pins += "$($q.Name)==$($q.Value)" }
+          Write-Host "pip install $($pins -join ' ')"
+          pip install @pins
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          echo "$(go env GOPATH)/bin" >> $env:GITHUB_PATH
 
       # Este paso SÍ tumba el job, a diferencia del análisis en sombra: una
       # regla que no compila no es un hallazgo discutible, es cobertura

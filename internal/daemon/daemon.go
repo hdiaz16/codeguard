@@ -74,6 +74,14 @@ func Engines(cfg *config.Config, inCI bool, cache sgengine.Cache) []engines.Engi
 		linters.GoFmt{},
 		linters.GoVet{},
 		linters.Ruff{},
+		// Tipos en Python, la última casilla que le faltaba al lenguaje: ruff ve
+		// formato y lint, nadie veía los tipos. Sólo aplica si el repo YA
+		// configuró mypy (mypy.ini, [mypy] en setup.cfg o [tool.mypy] en
+		// pyproject.toml), por la misma razón que eslint: imponer comprobación
+		// de tipos a un equipo que no la eligió sería puro ruido. El caché es
+		// por proyecto —mypy sigue los imports, no analiza archivos sueltos— y
+		// lleva dentro qué archivos se le pasaron.
+		linters.Mypy{Cache: cache},
 		// tsc compila el proyecto entero por cambio de un archivo: sin caché,
 		// cada informe de un monorepo con frontend pagaría la compilación.
 		linters.Tsc{Cache: cache},
@@ -94,6 +102,20 @@ func Engines(cfg *config.Config, inCI bool, cache sgengine.Cache) []engines.Engi
 		// trivy y govulncheck, y en el hook sólo cuando cambian los manifiestos
 		// — este comando sí restaura y sí va a la red.
 		linters.DotnetVuln{BlockCritical: inCI, SoloManifiestos: !inCI, Cache: cache},
+		// Formato de Java, que hasta aquí no tenía NADA: el lenguaje sólo contaba
+		// con las reglas de la casa (semgrep) y las dependencias (trivy), así que
+		// la discusión sobre dónde va la llave se pagaba entera en la revisión.
+		// google-java-format sólo mira el fuente —no compila ni necesita
+		// classpath—, que es lo que lo hace apto para el camino del commit.
+		// Caché por archivo: el formateador no tiene configuración, así que el
+		// mismo contenido da siempre el mismo veredicto.
+		linters.JavaFmt{Cache: cache},
+		// Calidad de Java sobre el AST, el govet/staticcheck del otro lado. PMD y
+		// no SpotBugs porque SpotBugs analiza bytecode y exigiría compilar el
+		// proyecto, que no cabe en el presupuesto del hook. Caché por archivo, no
+		// por proyecto como tsc o dotnet-build: PMD evalúa cada archivo por su
+		// cuenta, así que tocar 1 de 200 cuesta 1.
+		linters.JavaLint{Cache: cache},
 	}
 }
 

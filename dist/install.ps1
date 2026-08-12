@@ -33,10 +33,12 @@ if (Test-Path (Join-Path $Src "rulepacks")) {
 }
 Ok "binarios y rulepack copiados"
 
-# ── 2-3. motores (gitleaks, trivy, semgrep, squawk, ruff) ────────────────────
-# La descarga con hash fijado y los motores Python viven en engines.ps1,
-# compartido con el setup de Inno. Los hashes salen de motores.json (copiada
-# por build-dist desde internal/engines/identidad/motores.json).
+# ── 2-3. motores ─────────────────────────────────────────────────────────────
+# gitleaks, trivy, semgrep, squawk, ruff, mypy, y -si hay JDK- google-java-
+# format y PMD. La descarga con hash fijado y los motores de cada cadena de
+# herramientas viven en engines.ps1, compartido con el setup de Inno. Los
+# hashes salen de motores.json (copiada por build-dist desde
+# internal/engines/identidad/motores.json).
 & (Join-Path $Src "engines.ps1") -EnginesDir $Engines -SkipTrivy:$SkipTrivy
 
 # ── 4. PATH de usuario ───────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ func enginesCmd() *cobra.Command {
 		Short: "Verifica que los motores instalados sean los que publicaron sus autores",
 		Long: "Compara el SHA-256 de cada motor descargable contra los hashes " +
 			"publicados por sus autores en los checksums de cada release.\n\n" +
-			"Los motores de Python (semgrep, squawk, ruff) no aparecen: los instala " +
+			"Los motores de Python (semgrep, squawk, ruff, mypy) no aparecen: los instala " +
 			"pip contra PyPI con sus propias firmas, no los distribuimos nosotros.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := DirMotores()

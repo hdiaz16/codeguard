@@ -239,7 +239,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
    ` + "`@ts-ignore`" + ` ni añadir el fingerprint a la baseline). Corrige la causa.
 4. **Verifica cada corrección** ejecutando lo que corresponda:
    - formato: ` + "`gofmt -w <archivo>`" + ` / ` + "`ruff format <archivo>`" + ` / ` + "`dotnet format`" + `
-   - tipos: ` + "`npx tsc --noEmit`" + `
+   - tipos: ` + "`npx tsc --noEmit`" + ` / ` + "`mypy <archivo>`" + `
    - lint: ` + "`go vet ./...`" + ` / ` + "`ruff check <archivo>`" + `
 5. **Al terminar, ejecuta ` + "`codeguard report`" + ` otra vez.** El informe se regenera:
    lo resuelto pasa a la sección "✅ Resueltos" y, cuando no quede ningún

@@ -2,6 +2,8 @@ package linters
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -44,5 +46,37 @@ func TestParseRuffDiag(t *testing.T) {
 	}
 	if diags[0].Code != "F821" || diags[0].Location.Row != 4 {
 		t.Errorf("campos mal leídos: %+v", diags[0])
+	}
+}
+
+// Una ruta que cae FUERA de la raíz no se convierte en relativa: se devuelve
+// cruda.
+//
+// filepath.Rel devuelve error sólo si no puede construir una relación (discos
+// distintos). Con el mismo disco y directorios distintos "tiene éxito" y
+// devuelve `..\..\..\otro\sitio`. Esa ruta no la abre ningún editor, no casa
+// con ninguna huella de la baseline y no coincide con ningún archivo del diff:
+// el hallazgo desaparece en silencio.
+//
+// Lo destapó una prueba de integración de mypy: Windows tiene dos nombres para
+// el mismo directorio —el corto 8.3 y el largo—, Python resuelve el corto al
+// imprimir rutas absolutas y Node no. Con la raíz en una forma y el motor
+// respondiendo en la otra, se evaporaban hallazgos reales.
+func TestRelToNoInventaRutasFueraDeLaRaiz(t *testing.T) {
+	raiz := filepath.Join(string(filepath.Separator), "repos", "mio")
+
+	dentro := filepath.Join(raiz, "internal", "app.go")
+	if got := relTo(raiz, dentro); got != "internal/app.go" {
+		t.Errorf("dentro de la raíz debe salir relativo: %q", got)
+	}
+
+	// Mismo disco, otro sitio: Rel devolvería "../../otro/app.go" sin error.
+	fuera := filepath.Join(string(filepath.Separator), "otro", "sitio", "app.go")
+	got := relTo(raiz, fuera)
+	if strings.HasPrefix(got, "../") || got == ".." {
+		t.Errorf("una ruta de fuera NO puede salir como relativa con ..: %q", got)
+	}
+	if !strings.Contains(got, "otro") {
+		t.Errorf("debe devolverse la ruta cruda para que se vea que es de fuera: %q", got)
 	}
 }

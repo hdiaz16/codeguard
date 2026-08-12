@@ -9,7 +9,21 @@
     "Para subir de versión: descarga el checksums.txt de la release nueva,",
     "copia la línea del artefacto de Windows, y añade una entrada más al",
     "arreglo de versiones. Las versiones viejas se quedan: un equipo no",
-    "actualiza todo el mismo día."
+    "actualiza todo el mismo día.",
+    "",
+    "Los dos campos de hash, cuando el motor no es un .exe suelto:",
+    "  sha256_zip = el ARTEFACTO que se descarga, tal como lo publicó su autor.",
+    "  sha256_exe = lo que queda INSTALADO en el directorio de motores, que es",
+    "               lo que `codeguard engines` vuelve a comprobar después.",
+    "Para gitleaks y trivy son cosas distintas (el zip y el .exe de dentro).",
+    "Para google-java-format coinciden: el artefacto es el propio .jar y se",
+    "instala tal cual. Para PMD el instalado es un ÁRBOL de 104 jars, así que",
+    "sha256_exe es la huella del árbol entero (identidad.HuellaArbol): ruta y",
+    "sha de cada archivo, ordenados y encadenados. Verificar sólo el lanzador",
+    "o sólo pmd-core dejaría sin comprobar el jar donde viven las reglas.",
+    "",
+    "Los motores de Java necesitan un JDK para ejecutarse. Si no hay java, el",
+    "instalador se los salta sin fallar: un repo sin Java no los usa nunca."
   ],
   "motores": {
     "gitleaks": {
@@ -37,6 +51,57 @@
           "fuente": "trivy_0.71.0_checksums.txt"
         }
       ]
+    },
+    "google-java-format": {
+      "critico": false,
+      "versiones": [
+        {
+          "version": "1.36.1",
+          "artefacto": "google-java-format-1.36.1-all-deps.jar",
+          "url": "https://github.com/google/google-java-format/releases/download/v1.36.1/google-java-format-1.36.1-all-deps.jar",
+          "sha256_zip": "25b400f003089d23cc5320cdaf1a16cabee19b8aa3434d0ff021b3d9f42154b4",
+          "sha256_exe": "25b400f003089d23cc5320cdaf1a16cabee19b8aa3434d0ff021b3d9f42154b4",
+          "instalado": "google-java-format-1.36.1-all-deps.jar",
+          "fuente": "google-java-format-1.36.1-all-deps.jar.sha256 publicado por Google en repo1.maven.org (mismo artefacto que la release de GitHub, hash comprobado contra las dos)"
+        }
+      ]
+    },
+    "pmd": {
+      "critico": false,
+      "versiones": [
+        {
+          "version": "7.26.0",
+          "artefacto": "pmd-dist-7.26.0-bin.zip",
+          "url": "https://github.com/pmd/pmd/releases/download/pmd_releases/7.26.0/pmd-dist-7.26.0-bin.zip",
+          "sha256_zip": "9f55cb7ff0e9f9a66dd2f005eaa370e84c8a4cd971b134aa14a930c4a283ebc9",
+          "sha256_exe": "558a4e7428dddf7f1a7b2dadf37958574968da0c7db8448769d6bb018b2ffbfa",
+          "instalado": "pmd-bin-7.26.0",
+          "fuente": "PMD no publica checksums.txt: el zip viene con firma GPG (pmd-dist-7.26.0-bin.zip.asc) y se verificó contra la llave 'PMD Release Signing Key <releases@pmd-code.org>', huella 2EFA 55D0 785C 31F9 56F2 F87E A0B5 CA1A 4E08 6838, ANTES de fijar este hash"
+        }
+      ]
+    }
+  },
+  "_comentario_paquetes": "Motores que NO descargamos nosotros: los trae pip o el toolchain de Go. No llevan hash porque su gestor ya verifica la integridad (PyPI firma, GOSUMDB comprueba las sumas), pero SI llevan version fijada. Sin ella, el CI y la maquina de cada quien instalan lo que haya ese dia: dos motores distintos aplicando reglas distintas, y la paridad local/CI -que es la promesa central del producto- deja de estar garantizada sin que nadie lo note. Esta es la UNICA fuente de verdad: la leen dist/engines.ps1 y el workflow del CI.",
+  "paquetes": {
+    "pip": {
+      "semgrep": "1.172.0",
+      "squawk-cli": "2.62.0",
+      "ruff": "0.16.2",
+      "mypy": "2.3.0"
+    },
+    "go": {
+      "govulncheck": {
+        "modulo": "golang.org/x/vuln/cmd/govulncheck",
+        "version": "v1.6.0"
+      },
+      "staticcheck": {
+        "modulo": "honnef.co/go/tools/cmd/staticcheck",
+        "version": "v0.7.0"
+      },
+      "gitleaks": {
+        "modulo": "github.com/zricethezav/gitleaks/v8",
+        "version": "v8.30.0"
+      }
     }
   }
 }

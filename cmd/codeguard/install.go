@@ -149,6 +149,7 @@ func repairCmd() *cobra.Command {
 				{"semgrep", "pip install semgrep"},
 				{"squawk", "pip install squawk-cli"},
 				{"ruff", "pip install ruff"},
+				{"mypy", "pip install mypy"},
 			} {
 				if _, err := exec.LookPath(tool.bin); err != nil {
 					ok = false
