@@ -188,6 +188,10 @@ func (t *trayState) setPass(tooltip string) {
 	t.reset = time.AfterFunc(15*time.Second, func() { t.set("idle", tooltip) })
 }
 
+// version la inyecta build-dist con -X main.version desde setup.iss — una
+// sola fuente de verdad. "dev" delata un binario compilado a mano.
+var version = "dev"
+
 func main() {
 	// El PATH del registro antes que nada: el daemon lo lanza la clave Run al
 	// iniciar sesión, y si el agente se instaló DURANTE la sesión en curso su
@@ -203,7 +207,7 @@ func main() {
 		if f, err := os.OpenFile(filepath.Join(dir, "daemon.log"),
 			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			log.SetOutput(f)
-			log.Printf("=== daemon arrancado ===")
+			log.Printf("=== daemon %s arrancado ===", version)
 		}
 	}
 
@@ -383,6 +387,10 @@ func main() {
 	app.Event.On("widget-ready", func(*application.CustomEvent) {})
 
 	menu := application.NewMenu()
+	// La versión instalada, visible donde el usuario ya mira: era invisible
+	// (ni el menú, ni el panel, ni `codeguard version` la decían).
+	menu.Add("CodeGuard " + version).SetEnabled(false)
+	menu.AddSeparator()
 	menu.Add("Mostrar panel").OnClick(func(*application.Context) { showPanel() })
 	menu.Add("Ocultar panel").OnClick(func(*application.Context) { app.Event.Emit("panel-hide", nil) })
 	menu.Add("Mostrar/ocultar burbuja").OnClick(func(*application.Context) {
@@ -527,6 +535,24 @@ func main() {
 
 	// El panel pide el contexto activo al abrirse.
 	app.Event.On("panel-ready", func(*application.CustomEvent) {
+		if lastPayload == nil {
+			// Daemon recién reiniciado: sin análisis en memoria, pero los
+			// proyectos enrolados EXISTEN. Un panel vacío aquí se lee como
+			// "se perdieron mis repos" — pasó tras actualizar a 1.2.0. Se
+			// muestra el primero del registro con su estado placeholder;
+			// el primer commit lo llena de verdad.
+			if repos := registry.Load(); len(repos) > 0 {
+				root := filepath.ToSlash(repos[0].Root)
+				lista := listaProyectos(root) // siembra repoState desde el registro
+				stateMu.Lock()
+				p := repoState[root]
+				stateMu.Unlock()
+				if p != nil {
+					p.OtrosRepos = lista
+					lastPayload = p
+				}
+			}
+		}
 		if lastPayload != nil {
 			app.Event.Emit("analysis", lastPayload)
 		}

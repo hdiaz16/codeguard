@@ -4,9 +4,15 @@ $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 Set-Location $repo
 
-Write-Host "==> compilando binarios optimizados" -ForegroundColor Cyan
-go build -trimpath -ldflags "-s -w" -o dist\codeguard.exe .\cmd\codeguard
-go build -trimpath -ldflags "-s -w -H windowsgui" -o dist\codeguard-daemon.exe .\cmd\daemon
+# La version viene de setup.iss - UNA fuente de verdad. Antes el binario
+# decia "0.1.0-fase1" hardcodeado mientras el instalador decia 1.2.0, y no
+# habia forma de saber que version corria de verdad.
+$version = (Select-String (Join-Path $PSScriptRoot "setup.iss") -Pattern '#define MyAppVersion "([^"]+)"').Matches[0].Groups[1].Value
+if (-not $version) { throw "no se pudo leer MyAppVersion de setup.iss" }
+
+Write-Host "==> compilando binarios optimizados (v$version)" -ForegroundColor Cyan
+go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist\codeguard.exe .\cmd\codeguard
+go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$version" -o dist\codeguard-daemon.exe .\cmd\daemon
 
 Write-Host "==> copiando rulepack" -ForegroundColor Cyan
 # Borrar antes de copiar: Copy-Item -Force fusiona en vez de reemplazar, asi

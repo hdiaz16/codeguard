@@ -25,7 +25,9 @@ import (
 	"codeguard/internal/store"
 )
 
-var version = "0.1.0-fase1"
+// version la inyecta build-dist con -X main.version desde setup.iss — una
+// sola fuente de verdad. "dev" delata un binario compilado a mano.
+var version = "dev"
 
 func main() {
 	// Lo primero: el PATH del registro puede traer motores que este proceso no
@@ -43,7 +45,7 @@ func main() {
 	}
 	root.AddCommand(ciCmd(), versionCmd(), hookCmd(), installCmd(), repairCmd(), daemonCmd(),
 		baselineCmd(), statsCmd(), rulesCmd(), initCmd(), graphCmd(), reportCmd(), statusCmd(),
-		enginesCmd(), configCmd(), forgetCmd())
+		enginesCmd(), configCmd(), forgetCmd(), syncCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "codeguard:", err)
 		os.Exit(2)
