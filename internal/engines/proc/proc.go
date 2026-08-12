@@ -95,7 +95,14 @@ func Correr(ctx context.Context, c *exec.Cmd, tope int64) (Salida, error) {
 	// Access is denied" — ruido que enmascaraba la única causa que importa: se
 	// agotó el tiempo. Aquí se dice eso.
 	if ctx.Err() != nil && err != nil {
-		err = fmt.Errorf("plazo agotado: el motor no terminó a tiempo (%v)", ctx.Err())
+		// %w y no %v: el motivo tiene que viajar ENVUELTO para que el
+		// orquestador lo distinga con errors.Is en vez de comparar textos.
+		// Con %v el context.DeadlineExceeded se perdía y un motor que
+		// simplemente tardó de más se reportaba como "staticcheck:error", que
+		// es una acusación distinta: el dev lee "error" y busca qué rompió,
+		// cuando lo único que pasó es que la primera corrida en frío no cupo
+		// en el presupuesto y la siguiente irá con caché.
+		err = fmt.Errorf("plazo agotado: el motor no terminó a tiempo: %w", ctx.Err())
 	}
 	s := Salida{Stdout: so.buf.Bytes(), Stderr: se.buf.Bytes(), Recortada: so.recortada || se.recortada}
 	if s.Recortada && err == nil {

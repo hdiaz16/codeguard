@@ -153,6 +153,16 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 				res.Degraded = append(res.Degraded, "rulepack-ausente:"+opt.Config.Rulepack)
 			} else if isMissingBinary(failures[i]) {
 				res.Degraded = append(res.Degraded, "falta:"+opt.Engines[i].Name())
+			} else if errors.Is(failures[i], context.DeadlineExceeded) {
+				// "No terminó a tiempo" no es "falló". Un motor que se pasa del
+				// presupuesto en su primera corrida en frío —staticcheck compila
+				// el módulo, eslint arranca node— vuelve a entrar en cuanto el
+				// caché está caliente, y decirle "error" al desarrollador lo
+				// manda a buscar una avería que no existe. Pasó tras una
+				// instalación limpia: staticcheck y eslint aparecieron como
+				// error y en la corrida siguiente tardaron 502 ms y 610 ms.
+				log.Printf("%s no cupo en el plazo: %v", opt.Engines[i].Name(), failures[i])
+				res.Degraded = append(res.Degraded, opt.Engines[i].Name()+":plazo")
 			} else {
 				// La etiqueta corta viaja al veredicto; el PORQUÉ va al log.
 				// Antes el mensaje del motor se tiraba aquí mismo y diagnosticar

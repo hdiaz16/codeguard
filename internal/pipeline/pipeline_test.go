@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -144,4 +145,56 @@ func TestMotorAusenteSeDetectaSinDependerDelIdioma(t *testing.T) {
 	if isMissingBinary(corrioYFallo) {
 		t.Error("un motor que corrió y falló no puede reportarse como ausente")
 	}
+}
+
+// Un motor que no cupo en el plazo NO es un motor que falló. La diferencia
+// importa porque cambia lo que el desarrollador hace al leerlo: "error" lo
+// manda a buscar una avería, "plazo" le dice que la primera corrida en frío
+// fue cara y la siguiente irá con caché.
+//
+// Pasó de verdad tras una instalación limpia: staticcheck y eslint salieron
+// etiquetados como error, y en la corrida siguiente tardaron 502 ms y 610 ms.
+// Y el motivo viajaba perdido: proc.Correr formateaba el context.DeadlineExceeded
+// con %v en vez de %w, así que aquí no había forma de distinguirlo sin comparar
+// textos traducibles.
+func TestElPlazoAgotadoNoSeReportaComoError(t *testing.T) {
+	in := engines.Input{RepoRoot: t.TempDir(), Files: []gitdiff.ChangedFile{{Path: "a.go", Status: "M"}}}
+	cfg := &config.Config{RepoRoot: in.RepoRoot, MaxDiffLines: 10000}
+
+	lento := &motorFalso{nombre: "lento", err: fmt.Errorf(
+		"lento no terminó: plazo agotado: el motor no terminó a tiempo: %w", context.DeadlineExceeded)}
+	roto := &motorFalso{nombre: "roto", err: errors.New("salida ilegible")}
+
+	res, err := Run(context.Background(), Options{
+		Config: cfg, Diff: &gitdiff.Diff{Files: in.Files}, Engines: []engines.Engine{lento, roto},
+	})
+	if err != nil {
+		t.Fatalf("un motor degradado nunca tumba el pipeline: %v", err)
+	}
+	tiene := func(etiqueta string) bool {
+		for _, d := range res.Degraded {
+			if d == etiqueta {
+				return true
+			}
+		}
+		return false
+	}
+	if !tiene("lento:plazo") {
+		t.Errorf("el que se pasó de tiempo debe etiquetarse como plazo, llegó %v", res.Degraded)
+	}
+	if !tiene("roto:error") {
+		t.Errorf("el que falló de verdad sigue siendo error, llegó %v", res.Degraded)
+	}
+}
+
+// motorFalso es un Engine que siempre falla con el error dado.
+type motorFalso struct {
+	nombre string
+	err    error
+}
+
+func (m *motorFalso) Name() string               { return m.nombre }
+func (m *motorFalso) Applies(engines.Input) bool { return true }
+func (m *motorFalso) Run(context.Context, engines.Input) ([]finding.Finding, error) {
+	return nil, m.err
 }

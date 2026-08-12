@@ -209,6 +209,23 @@ func runPreCommit() error {
 	}
 	if len(res.Degraded) > 0 {
 		progress("capas no revisadas: " + strings.Join(res.Degraded, ", "))
+		// Un motor que no cupo en el plazo se explica solo, porque su remedio
+		// es "no hagas nada": la primera corrida en frío compila o arranca node,
+		// y la siguiente va con caché. Sin esta línea el dev lee una etiqueta
+		// cruda y no sabe si le acaban de romper algo.
+		var lentos []string
+		for _, d := range res.Degraded {
+			if m, ok := strings.CutSuffix(d, ":plazo"); ok {
+				lentos = append(lentos, m)
+			}
+		}
+		if len(lentos) > 0 {
+			fmt.Fprintf(os.Stderr,
+				"CodeGuard  %s no cabía(n) en el plazo de esta corrida (la primera es la cara:\n"+
+					"           compilar o arrancar node). El caché ya quedó tibio; el próximo commit\n"+
+					"           sí los revisa. El CI los aplica igual, así que nada se cuela.\n",
+				strings.Join(lentos, " y "))
+		}
 		// Un rulepack ausente no es una capa más: significa que este commit NO
 		// se revisó con las reglas del CI y puede fallar allá aunque aquí pase.
 		for _, d := range res.Degraded {
