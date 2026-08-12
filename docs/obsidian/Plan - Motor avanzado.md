@@ -4,7 +4,7 @@ El veredicto del que nace este plan: detección **estándar** sólida, montada s
 
 > **Regla de avance**: una fase no se abre hasta que la anterior cierra al 100% —criterio de cierre cumplido y verificado, no "casi". Es el mismo método de la semana de estabilización (F0–F5), que funcionó.
 
-**Estado**: 🟢 F1 cerrada (2026-08-11, CI verde) · 🟢 F2 cerrada (2026-08-12, CI verde run 31605086356) · 🔵 F3 en curso — herramientas listas, el reloj del protocolo corre con el uso real
+**Estado**: 🟢 F1 cerrada (2026-08-11) · 🟢 F2 cerrada (2026-08-12) · 🔵 F3 en curso — herramientas listas, el reloj corre con el uso real · 🟡 F4 en dos tercios (telemetría y PRs hechos; la capa LLM espera a F3)
 
 ---
 
@@ -43,11 +43,11 @@ El veredicto del que nace este plan: detección **estándar** sólida, montada s
 
 ## F4 — Operación
 
-- [ ] Telemetría central (Postgres — fase 5 de la spec): precisión y bypass a nivel organización
+- [x] Telemetría central (Postgres — fase 5): empuje incremental por marca de agua ULID, idempotente y reanudable; DSN en `CODEGUARD_TELEMETRY_DSN`; disparo oportunista del daemon (throttle 10 min) y `codeguard sync` a mano. Verificado con datos reales: 163 filas la primera corrida, 0 incrementales la segunda. **Pendiente honesto**: la validación contra Postgres real no corrió (Docker no responde en esta máquina); el test existe y se salta solo
 - [ ] Capa LLM encendida (ya construida y verificada; se enciende **después** de calibrar, no antes)
-- [ ] Comentarios de PR desde el SARIF que el CI ya genera (sin GitHub Advanced Security)
+- [x] Comentarios de PR desde el SARIF que el CI ya genera (sin GitHub Advanced Security) — probado con el PR #1: comentario creado y luego **actualizado** en la segunda corrida, sin duplicar
 
-**Criterio de cierre**: un hallazgo hecho en cualquier máquina enrolada se ve en la telemetría central; un PR recibe comentarios del análisis.
+**Criterio de cierre**: un hallazgo hecho en cualquier máquina enrolada se ve en la telemetría central ✓ (mecanismo probado; falta un Postgres real donde apuntarlo — decisión de infraestructura del usuario); un PR recibe comentarios del análisis ✓. La capa LLM espera a la calibración (F3) a propósito.
 
 ## F5 — Distribución
 
@@ -62,6 +62,8 @@ El veredicto del que nace este plan: detección **estándar** sólida, montada s
 Motor de análisis propio (orquestar los mejores motores **es** la arquitectura correcta), reescribir el fingerprinting, ML para el score de riesgo, y semgrep Pro antes de que la calibración diga si hace falta.
 
 ## Bitácora
+
+- **2026-08-12 (tarde)** — F4 en dos tercios y **v1.3.0 instalada**. Telemetría central viva (marca de agua ULID, 163 filas reales empujadas, 0 en la segunda corrida) y comentarios de PR probados en el PR #1 (creado → actualizado, sin duplicar). Tres huecos que sólo se ven usando el producto, corregidos: la versión era invisible (binario decía `0.1.0-fase1` mientras el instalador decía 1.2.0 — ahora `build-dist` la inyecta desde `setup.iss` y se ve en el menú del orbe, el log y `codeguard version`); el panel salía vacío tras reiniciar el daemon y se leía como "se perdieron mis repos" (ahora se siembra del registro); y **tsc llevaba enrolado sin correr JAMÁS** en monorepos (exigía tsconfig.json en la raíz) — al despertar, los repos con deuda de tipos necesitan refrescar baseline. trivy también cachea (era el piso de 4.3 s del segundo informe en bds.portal).
 
 - **2026-08-11** — Plan creado. F1 arranca: corpus de pruebas + govulncheck.
 - **2026-08-11** — F1 ejecutada en el día. govulncheck es el décimo motor (`ddd3979`): sólo hallazgos de nivel símbolo (alcanzabilidad probada), integración real bajo el sandbox. Corpus `--test` completo (`993797d`): 119/119 reglas con positivo y negativo, escrito por tres agentes en paralelo y consolidado; el CI ahora corre `--validate` + `--test` + cobertura obligatoria. El corpus pagó antes de nacer: 2 reglas muertas de nacimiento y 3 con defectos de fábrica, las cinco curadas y probadas. Lecciones de infraestructura: los fixtures viven en `testdata/` hermano de `semgrep/` (un yaml dentro del `--config` se parsea como reglas), los fixtures YAML se llaman `<stem>.test.yaml`, y el modo test ignora los filtros `paths:`. Falta: CI en verde para cerrar la fase.
