@@ -11,6 +11,9 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      # Para el comentario del PR con los hallazgos (el SARIF solo, sin
+      # Advanced Security, no tiene dónde mostrarse en un repo privado).
+      pull-requests: write
     steps:
       # Acciones ancladas por SHA, no por etiqueta: una etiqueta es un puntero
       # movible y quien controle el repo de la acción puede reapuntarla a otro
@@ -154,6 +157,63 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: results.sarif
+
+      # El SARIF sin Advanced Security no tiene superficie en un repo privado:
+      # GitHub lo descarta en silencio. Este paso lo convierte en UN comentario
+      # del PR que se actualiza en cada push (upsert por marcador, no un
+      # comentario nuevo por corrida — el hilo del PR no es un log). En modo
+      # sombra el job nunca falla; el comentario es donde el análisis se VE.
+      - name: Comentar el PR con los hallazgos
+        if: always() && github.event_name == 'pull_request' && steps.sarif.outputs.existe == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $sarif = Get-Content results.sarif -Raw | ConvertFrom-Json
+          $res = @($sarif.runs[0].results)
+          $md = [System.Collections.Generic.List[string]]::new()
+          $md.Add('<!-- codeguard-informe -->')
+          $md.Add('## CodeGuard — análisis del PR')
+          $md.Add('')
+          if ($res.Count -eq 0) {
+            $md.Add('✅ Sin hallazgos en los archivos de este PR.')
+          } else {
+            $bloq   = @($res | Where-Object { $_.level -eq 'error' })
+            $avisos = @($res | Where-Object { $_.level -ne 'error' })
+            $md.Add("**$($bloq.Count) bloqueante(s) · $($avisos.Count) aviso(s)** — el CI corre en sombra (no falla el job); el hook local sí bloquea los primeros.")
+            foreach ($grupo in @(,@('⛔ Bloqueantes', $bloq)) + @(,@('⚠️ Avisos', $avisos))) {
+              $titulo, $lista = $grupo
+              if ($lista.Count -eq 0) { continue }
+              $md.Add('')
+              $md.Add("### $titulo")
+              $md.Add('| Regla | Dónde | Qué |')
+              $md.Add('|---|---|---|')
+              $tope = 30
+              foreach ($r in ($lista | Select-Object -First $tope)) {
+                $loc = $r.locations[0].physicalLocation
+                $donde = "``$($loc.artifactLocation.uri):$($loc.region.startLine)``"
+                $que = ($r.message.text -replace '\|', '\|' -replace "`n", ' ')
+                if ($que.Length -gt 160) { $que = $que.Substring(0, 160) + '…' }
+                $md.Add("| $($r.ruleId) | $donde | $que |")
+              }
+              if ($lista.Count -gt $tope) { $md.Add("| … | | y $($lista.Count - $tope) más |") }
+            }
+          }
+          $md.Add('')
+          $md.Add("_Corrida [$($env:GITHUB_RUN_ID)]($($env:GITHUB_SERVER_URL)/$($env:GITHUB_REPOSITORY)/actions/runs/$($env:GITHUB_RUN_ID)) sobre $($env:GITHUB_SHA.Substring(0,8))_")
+          Set-Content -Path cuerpo-comentario.md -Value ($md -join "`n") -Encoding utf8
+
+          $repo = "${{ github.repository }}"
+          $pr = "${{ github.event.pull_request.number }}"
+          $previos = gh api "repos/$repo/issues/$pr/comments" --paginate | ConvertFrom-Json
+          $mio = $previos | Where-Object { $_.body -like '*<!-- codeguard-informe -->*' } | Select-Object -First 1
+          if ($mio) {
+            gh api -X PATCH "repos/$repo/issues/comments/$($mio.id)" -F body=@cuerpo-comentario.md | Out-Null
+            Write-Host "comentario actualizado ($($res.Count) hallazgos)"
+          } else {
+            gh api -X POST "repos/$repo/issues/$pr/comments" -F body=@cuerpo-comentario.md | Out-Null
+            Write-Host "comentario creado ($($res.Count) hallazgos)"
+          }
 
       - name: Resumen
         if: always()
