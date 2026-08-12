@@ -10,7 +10,10 @@
 ; =============================================================================
 
 #define MyAppName "CodeGuard"
-#define MyAppVersion "1.5.2"
+#define MyAppVersion "1.5.3"
+; reglas.iss lo genera build-dist.ps1 contando el rulepack: el numero que se le
+; promete al usuario no se escribe a mano (llego a decir 112 con 119 instaladas)
+#include "reglas.iss"
 #define MyAppExe "codeguard.exe"
 #define MyDaemonExe "codeguard-daemon.exe"
 
@@ -51,7 +54,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Messages]
 ; copy minimo: el asistente habla claro y corto
 spanish.WelcomeLabel1=CodeGuard
-spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus 112 reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk y ruff (vía pip)%n%nTodos los motores son necesarios: sin ellos la paridad con el CI se rompe.
+spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus {#MyRuleCount} reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk y ruff (vía pip)%n  •  govulncheck y staticcheck, que se COMPILAN: un par de minutos%n%nTodos los motores son necesarios: sin ellos la paridad con el CI se rompe.
 spanish.FinishedHeadingLabel=Listo.
 spanish.FinishedLabelNoIcons=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)
 spanish.FinishedLabel=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)
@@ -217,11 +220,13 @@ begin
 
   L := LineaBienvenida('Se instalará para tu usuario, sin permisos de administrador:', 'Segoe UI Semibold', 9, ColGrafito, Y);
   Y := L.Top + Salto;
-  L := LineaBienvenida('CodeGuard — CLI, orbe y sus 112 reglas', 'Segoe UI', 9, ColGrafito, Y);
+  L := LineaBienvenida('CodeGuard — CLI, orbe y sus {#MyRuleCount} reglas', 'Segoe UI', 9, ColGrafito, Y);
   Y := L.Top + Salto;
   L := LineaBienvenida('gitleaks y trivy, verificados contra el checksum de sus autores', 'Segoe UI', 9, ColGrafito, Y);
   Y := L.Top + Salto;
   L := LineaBienvenida('semgrep, squawk y ruff', 'Segoe UI', 9, ColGrafito, Y);
+  Y := L.Top + Salto;
+  L := LineaBienvenida('govulncheck y staticcheck, que se compilan: un par de minutos', 'Segoe UI', 9, ColGrafito, Y);
   Y := L.Top + Salto + ScaleY(10);
 
   LineaBienvenida('Todos los motores son necesarios: sin ellos se rompe la paridad con el CI.', 'Segoe UI', 8, ColBruma, Y);
@@ -292,7 +297,9 @@ begin
   if EsActualizacion then
     WizardForm.StatusLabel.Caption := 'Actualizando CodeGuard — los motores ya verificados se conservan...'
   else
-    WizardForm.StatusLabel.Caption := 'Instalando motores de análisis (gitleaks, trivy, semgrep, squawk, ruff)...';
+    // Se nombran TODOS, y se avisa de los que compilan: son los que tardan y
+    // los que hacían parecer que el asistente se había colgado.
+    WizardForm.StatusLabel.Caption := 'Instalando motores (gitleaks, trivy, semgrep, squawk, ruff) y compilando govulncheck y staticcheck...';
   WizardForm.StatusLabel.Refresh;
 
   Espera := 0;

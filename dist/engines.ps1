@@ -208,6 +208,14 @@ if ($userPath -notlike "*$pyScripts*") {
 #
 # Sin toolchain de Go no se instalan y no es un error: un repo Go siempre
 # viene con su toolchain, y en un repo sin Go estos motores jamas aplican.
+# Blindaje 6: este paso NO puede quedarse mudo.
+#
+# El asistente muestra en vivo la ultima linea de este log. Los dos motores de
+# abajo no se descargan: se COMPILAN desde el fuente, y eso son minutos en los
+# que antes no se escribia ni una linea. El usuario veia el asistente detenido
+# en el mismo texto y concluia -con razon- que se habia colgado; paso en la
+# primera instalacion limpia. Cada motor anuncia lo que va a hacer ANTES de
+# empezar, y dice que compila y cuanto puede tardar.
 Step "Motores Go (govulncheck, staticcheck)"
 $goBin = Get-Command go -ErrorAction SilentlyContinue
 if (-not $goBin) {
@@ -216,16 +224,24 @@ if (-not $goBin) {
     $previoGobin = $env:GOBIN
     $env:GOBIN = $EnginesDir
     try {
-        $gv = Correr "go" @("install", "golang.org/x/vuln/cmd/govulncheck@latest")
-        if ($gv.Codigo -ne 0) {
-            throw "go install govulncheck fallo (codigo $($gv.Codigo)):`n$($gv.Salida)"
+        $goMotores = @(
+            @{ nombre = "govulncheck"; paquete = "golang.org/x/vuln/cmd/govulncheck@latest";
+               que = "analisis de alcanzabilidad de CVEs" },
+            @{ nombre = "staticcheck"; paquete = "honnef.co/go/tools/cmd/staticcheck@latest";
+               que = "analisis semantico sobre la forma SSA" }
+        )
+        $n = 0
+        foreach ($m in $goMotores) {
+            $n++
+            Step "compilando $($m.nombre) desde el fuente ($n de $($goMotores.Count)) - $($m.que)"
+            Ok "esto tarda uno o dos minutos; no se descarga un binario, se compila"
+            $inicio = Get-Date
+            $r = Correr "go" @("install", $m.paquete)
+            if ($r.Codigo -ne 0) {
+                throw "go install $($m.nombre) fallo (codigo $($r.Codigo)):`n$($r.Salida)"
+            }
+            Ok "$($m.nombre) listo en $([int]((Get-Date) - $inicio).TotalSeconds) s"
         }
-        Ok "govulncheck instalado en $EnginesDir"
-        $sc = Correr "go" @("install", "honnef.co/go/tools/cmd/staticcheck@latest")
-        if ($sc.Codigo -ne 0) {
-            throw "go install staticcheck fallo (codigo $($sc.Codigo)):`n$($sc.Salida)"
-        }
-        Ok "staticcheck instalado en $EnginesDir"
     } finally {
         $env:GOBIN = $previoGobin
     }

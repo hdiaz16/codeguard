@@ -23,6 +23,15 @@ Copy-Item rulepacks dist\ -Recurse -Force
 # son fixtures con codigo deliberadamente malo que nadie necesita instalado.
 Get-ChildItem dist\rulepacks -Directory -Recurse -Filter testdata | Remove-Item -Recurse -Force
 
+# El numero de reglas que el asistente le promete al usuario se CUENTA aqui, no
+# se escribe a mano. Estuvo diciendo 112 cuando ya eran 119: el corpus de
+# pruebas desperto reglas muertas y nadie se acordo de este texto. Un numero
+# copiado a mano en una pantalla de bienvenida es un numero que envejece solo.
+$reglas = (Select-String -Path "dist\rulepacks\*\semgrep\*.yaml" -Pattern '^\s*- id:\s*\S+').Count
+if ($reglas -lt 1) { throw "no se pudo contar las reglas del rulepack" }
+Set-Content -Path "dist\reglas.iss" -Encoding UTF8 -Value "#define MyRuleCount `"$reglas`""
+Write-Host "==> el asistente anunciara $reglas reglas" -ForegroundColor Cyan
+
 # motores.json: fuente de verdad de hashes, compartida con engines.ps1 y el
 # setup. Se copia desde el agente para que nunca diverjan.
 Copy-Item internal\engines\identidad\motores.json dist\ -Force

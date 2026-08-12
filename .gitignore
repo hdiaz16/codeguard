@@ -17,3 +17,6 @@ docs/explorador/
 tests/ultimo-resultado.csv
 
 daemon.exe
+
+# lo genera build-dist.ps1 contando el rulepack
+dist/reglas.iss
