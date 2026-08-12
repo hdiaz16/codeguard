@@ -53,20 +53,28 @@
     transition: background 0.8s ease, filter 0.8s ease, opacity 0.6s ease;
     pointer-events: none;
   }
-  /* Capa 1: resplandor base (respira) */
-  .layer-base {
-    width: 58px; height: 58px; border-radius: 50%;
-    background: radial-gradient(circle, var(--plasma-glow) 0%, rgba(0,0,0,0) 70%);
-    filter: blur(5px);
-    animation: breathe var(--speed-breathe) infinite ease-in-out;
-  }
-  /* Capa 2: núcleo de plasma (morfa + rota) */
+  /* La capa de resplandor se retiró: era un halo difuso de 58 px alrededor del
+     núcleo y ensuciaba la silueta. El orbe se lee mejor como una esfera limpia
+     sobre el escritorio, sin un aura que lo emborrona contra el fondo.
+
+     Lo que sí se conservó es la RESPIRACIÓN, que vivía en esa capa: sin ella
+     el orbe quedaba inerte, y un indicador de estado que no se mueve parece
+     apagado.
+
+     Pero respira con la LUZ, no con el tamaño. El núcleo ya rota (spin usa
+     transform) y dos animaciones que tocan transform no se combinan: gana la
+     última y la otra deja de existir. Añadir el scale del halo aquí habría
+     apagado la rotación en silencio. Latir con la opacidad no compite con
+     nada, y a 41 px se lee igual de vivo. */
+
+  /* Núcleo de plasma: morfa, rota y late */
   .layer-core {
     width: 41px; height: 41px;
     background: linear-gradient(45deg, var(--plasma-hot-a), var(--plasma-hot-b));
     filter: blur(2px);
     animation: morph var(--speed-morph) infinite linear,
-               spin var(--speed-spin) infinite linear;
+               spin var(--speed-spin) infinite linear,
+               latido var(--speed-breathe) infinite ease-in-out;
   }
   /* Capa 3: destello interno (pulsa) */
   .layer-spark {
@@ -110,9 +118,13 @@
     --dim: .75;
   }
 
-  @keyframes breathe {
-    0%, 100% { transform: scale(1);    opacity: 0.5; }
-    50%      { transform: scale(1.15); opacity: 0.9; }
+  /* El latido del núcleo: sólo luz. No toca transform porque ahí ya vive la
+     rotación, y dos animaciones sobre transform no se suman — una anula a la
+     otra. (breathe, la del halo retirado, sí escalaba: podía permitírselo
+     porque era una mancha difusa sin borde.) */
+  @keyframes latido {
+    0%, 100% { opacity: 0.78; }
+    50%      { opacity: 1; }
   }
   /* líquido en gravedad cero */
   @keyframes morph {
@@ -212,7 +224,6 @@
       <span class="punto"></span><span class="texto" id="burbuja-texto"></span>
     </div>
     <div class="container" id="orb">
-      <div class="orb-layer layer-base"></div>
       <div class="orb-layer layer-core"></div>
       <div class="orb-layer layer-spark"></div>
     </div>
@@ -340,6 +351,106 @@
     try { Events.Emit("widget-click", null); }
     catch { Events.Emit({ name: "widget-click", data: null }); }
   });
+
+  // ── La ventana se recorta a lo que de verdad se ve ──────────────────────
+  //
+  // Esta ventana mide 300x180 y de eso sólo se ven 84 px de orbe (más la
+  // burbuja cuando aparece). El resto es aire transparente — pero transparente
+  // no es inexistente: sigue siendo ventana, está siempre encima, y se come
+  // cada clic que cae ahí. Desde fuera se ve un trozo de pantalla que no
+  // responde y nada que lo explique.
+  //
+  // Así que la página mide dónde acabó su contenido y el daemon le da esa
+  // forma a la ventana (SetWindowRgn). Lo de fuera deja de existir para el
+  // ratón. Se manda devicePixelRatio con la medida porque es el mismo factor
+  // con el que se midió: en un monitor al 150% recortaríamos donde no es.
+  function emitir(nombre, datos) {
+    try { Events.Emit(nombre, datos); }
+    catch { Events.Emit({ name: nombre, data: datos }); }
+  }
+
+  // Se mide la caja de MAQUETACIÓN, no la de pintado.
+  //
+  // getBoundingClientRect incluye las transformaciones, y aquí casi todo está
+  // animado: el orbe se encoge con la clase "gesto", la burbuja entra desde
+  // scale(.9). Medir a media animación daría una región más pequeña que lo que
+  // se está dibujando, y el recorte mordería justo lo que se mueve. offsetLeft
+  // y compañía son valores de maquetación: ignoran los transform y devuelven
+  // siempre la posición en reposo, que es la forma que la ventana debe tener.
+  function caja(el, radio) {
+    if (el.offsetWidth <= 0 || el.offsetHeight <= 0) return null;
+    let x = 0, y = 0;
+    for (let n = el; n; n = n.offsetParent) {
+      x += n.offsetLeft;
+      y += n.offsetTop;
+    }
+    // Un margen de 2 px evita que el antialias del borde quede fuera de la
+    // región y se vea el orbe con el canto mordido.
+    return { x: x - 2, y: y - 2, w: el.offsetWidth + 4, h: el.offsetHeight + 4, radio: radio };
+  }
+
+  // La región CRECE de inmediato y ENCOGE tarde, y ese desfase es el punto.
+  //
+  // La burbuja tarda hasta 420 ms en desvanecerse (mira su transition). Si la
+  // ventana se recorta en cuanto se le quita la clase, el recorte llega antes
+  // que la animación y la burbuja se corta en seco a media transición: se veía
+  // desaparecer a mordiscos en vez de desvanecerse. Así que al aparecer se
+  // publica ya —si no, el primer fotograma quedaría fuera de la región— y al
+  // ocultarse se espera a que termine.
+  //
+  // Durante el desvanecido se usa la caja MEDIDA MIENTRAS SE VEÍA: la burbuja
+  // se encoge a 0.9 al salir, y medirla en ese momento daría una región más
+  // pequeña que la burbuja que todavía se está dibujando.
+  const SALIDA_MS = 460;                    // 420 de transform + margen
+  let cajaBurbuja = null;                   // última caja con la burbuja visible
+  let temporizadorSalida = null;
+  let ultimaForma = "";
+
+  function publicar(zonas) {
+    if (!zonas.length) return;
+    const forma = JSON.stringify(zonas);
+    if (forma === ultimaForma) return;      // nada cambió: no molestar al daemon
+    ultimaForma = forma;
+    emitir("zona-activa", {
+      ventana: "CodeGuard estado",
+      escala: window.devicePixelRatio || 1,
+      zonas: zonas,
+    });
+  }
+
+  function publicarZonaActiva() {
+    const zonas = [];
+    const z1 = caja(orb, 999);              // el orbe: redondo, siempre
+    if (z1) zonas.push(z1);
+
+    if (burbuja.classList.contains("on")) {
+      clearTimeout(temporizadorSalida);
+      temporizadorSalida = null;
+      const z2 = caja(burbuja, 10);
+      if (z2) cajaBurbuja = z2;
+      if (cajaBurbuja) zonas.push(cajaBurbuja);
+    } else if (cajaBurbuja) {
+      // Se está yendo: la región la sigue incluyendo hasta que acabe.
+      zonas.push(cajaBurbuja);
+      if (!temporizadorSalida) {
+        temporizadorSalida = setTimeout(() => {
+          temporizadorSalida = null;
+          cajaBurbuja = null;
+          publicarZonaActiva();             // ahora sí, sólo el orbe
+        }, SALIDA_MS);
+      }
+    }
+    publicar(zonas);
+  }
+
+  // Al cargar, y cada vez que algo pueda cambiar la forma: la burbuja aparece
+  // y desaparece, y su ancho depende del texto.
+  publicarZonaActiva();
+  new ResizeObserver(publicarZonaActiva).observe(document.body);
+  new MutationObserver(publicarZonaActiva).observe(burbuja, {
+    attributes: true, attributeFilter: ["class"], childList: true, subtree: true,
+  });
+  setInterval(publicarZonaActiva, 500);     // red de seguridad
 </script>
 </body>
 </html>

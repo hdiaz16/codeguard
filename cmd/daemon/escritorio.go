@@ -372,6 +372,44 @@ func (e *escritorio) registrarEventos() {
 	e.registrarEventosModelo()
 }
 
+// zonaDelEvento traduce lo que manda la página —su caja en píxeles CSS más el
+// factor de escala— a píxeles físicos, que es en lo que habla SetWindowRgn.
+//
+// La escala la manda la página (devicePixelRatio) en vez de preguntarla aquí:
+// es la misma que usó para medirse, así que no puede desincronizarse. En un
+// monitor al 150% eso es la diferencia entre recortar donde está el orbe y
+// recortar a dos tercios de camino.
+func zonaDelEvento(ev *application.CustomEvent) (string, []Rect) {
+	if ev == nil || ev.Data == nil {
+		return "", nil
+	}
+	raw, err := json.Marshal(ev.Data)
+	if err != nil {
+		return "", nil
+	}
+	var msg struct {
+		Ventana string  `json:"ventana"`
+		Escala  float64 `json:"escala"`
+		Zonas   []struct {
+			X, Y, W, H, Radio float64
+		} `json:"zonas"`
+	}
+	if json.Unmarshal(raw, &msg) != nil || msg.Ventana == "" {
+		return "", nil
+	}
+	if msg.Escala <= 0 {
+		msg.Escala = 1
+	}
+	px := func(v float64) int { return int(v*msg.Escala + 0.5) }
+	zonas := make([]Rect, 0, len(msg.Zonas))
+	for _, z := range msg.Zonas {
+		zonas = append(zonas, Rect{
+			X: px(z.X), Y: px(z.Y), W: px(z.W), H: px(z.H), Radio: px(z.Radio),
+		})
+	}
+	return msg.Ventana, zonas
+}
+
 func (e *escritorio) registrarEventosPanel() {
 	// Clic en la burbuja: alterna el panel (cierre con animación de plegado).
 	e.app.Event.On("widget-click", func(*application.CustomEvent) {
@@ -379,6 +417,16 @@ func (e *escritorio) registrarEventosPanel() {
 	})
 	// La burbuja pide su estado al cargar.
 	e.app.Event.On("widget-ready", func(*application.CustomEvent) {})
+	// Cada ventana transparente dice dónde acabó su contenido, y la ventana se
+	// recorta a esa forma. Sin esto, el aire que rodea al orbe y la mitad vacía
+	// del panel se comen los clics de esa zona de la pantalla.
+	e.app.Event.On("zona-activa", func(ev *application.CustomEvent) {
+		titulo, zonas := zonaDelEvento(ev)
+		if titulo == "" {
+			return
+		}
+		application.InvokeAsync(func() { RecortarA(titulo, zonas) })
+	})
 	// El ✕ del panel solo lo oculta; el proceso sigue en la bandeja.
 	e.app.Event.On("panel-close", func(*application.CustomEvent) {
 		application.InvokeAsync(func() { e.panel.Hide() })

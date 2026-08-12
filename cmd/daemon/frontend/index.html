@@ -601,6 +601,58 @@
     $("btn-min").textContent = main.hidden ? "+" : "–";
   });
 
+  // ── La ventana se recorta a la tarjeta ──────────────────────────────────
+  //
+  // El panel mide 480 x ~900 px, pero su contenido crece hacia ARRIBA desde el
+  // orbe (justify-content: flex-end), así que con pocos hallazgos la mitad
+  // superior de la ventana está vacía. Vacía y transparente — pero sigue
+  // siendo ventana, sigue estando encima, y se traga los clics de esa franja
+  // de pantalla. El usuario ve una zona muerta y nada que la explique.
+  //
+  // La tarjeta dice dónde acaba de verdad y el daemon recorta la ventana a esa
+  // forma (SetWindowRgn); lo de fuera deja de existir para el ratón. Va
+  // devicePixelRatio con la medida porque es el factor con el que se midió: en
+  // un monitor al 150% el recorte caería donde no es.
+  const tarjeta = $("card");
+  let ultimaForma = "";
+  function publicarZonaActiva() {
+    // Caja de MAQUETACIÓN, no de pintado: la tarjeta entra con una animación
+    // que arranca en scale(.5) y sale plegándose. getBoundingClientRect
+    // incluye esas transformaciones, así que medir a media animación daría una
+    // región más pequeña que la tarjeta que se está dibujando y la recortaría
+    // justo mientras se mueve. offsetWidth/offsetHeight ignoran los transform
+    // y devuelven siempre la forma en reposo, que es la que debe tener la
+    // ventana.
+    if (tarjeta.offsetWidth <= 0 || tarjeta.offsetHeight <= 0) return;
+    let x = 0, y = 0;
+    for (let n = tarjeta; n; n = n.offsetParent) {
+      x += n.offsetLeft;
+      y += n.offsetTop;
+    }
+    // 3 px de margen: la tarjeta tiene sombra, y recortar al borde exacto la
+    // corta en seco y se ve un canto duro.
+    const zonas = [{
+      x: x - 3, y: y - 3, w: tarjeta.offsetWidth + 6, h: tarjeta.offsetHeight + 6, radio: 14,
+    }];
+    const forma = JSON.stringify(zonas);
+    if (forma === ultimaForma) return;
+    ultimaForma = forma;
+    emit("zona-activa", {
+      ventana: "CodeGuard",
+      escala: window.devicePixelRatio || 1,
+      zonas: zonas,
+    });
+  }
+
+  // El contenido cambia de alto cada vez que llega un análisis, se pliega una
+  // tarjeta o se abre la lista de proyectos.
+  publicarZonaActiva();
+  new ResizeObserver(publicarZonaActiva).observe(tarjeta);
+  new MutationObserver(publicarZonaActiva).observe(tarjeta, {
+    childList: true, subtree: true, attributes: true,
+  });
+  setInterval(publicarZonaActiva, 500); // red de seguridad para las transiciones
+
   emit("panel-ready", null);
 </script>
 </body>
