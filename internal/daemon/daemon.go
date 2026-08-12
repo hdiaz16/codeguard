@@ -77,7 +77,23 @@ func Engines(cfg *config.Config, inCI bool, cache sgengine.Cache) []engines.Engi
 		// tsc compila el proyecto entero por cambio de un archivo: sin caché,
 		// cada informe de un monorepo con frontend pagaría la compilación.
 		linters.Tsc{Cache: cache},
+		// Formato y estilo de TS/JS, que hasta aquí no tenían NADA (tsc sólo ve
+		// tipos). Corre el eslint o el biome que el repo ya configuró, con sus
+		// reglas; si no configura ninguno no aplica, y el caché es por archivo
+		// con la huella de esa config dentro de la clave.
+		linters.ESLint{Cache: cache},
 		linters.DotnetFormat{},
+		// Compilación de C#: hasta aquí un `; expected` en un .cs llegaba entero
+		// al CI, porque dotnet format sólo mira el formato. Compila el .csproj
+		// tocado (nunca la solución) con --no-restore y -t:Rebuild, así que el
+		// caché por huella de proyecto no es un lujo: es lo que evita pagar la
+		// compilación en cada informe.
+		linters.DotnetBuild{Cache: cache},
+		// CVEs de NuGet, el hueco que trivy no cubre: sin packages.lock.json no
+		// encuentra NADA en un .csproj (verificado). Misma política local/CI que
+		// trivy y govulncheck, y en el hook sólo cuando cambian los manifiestos
+		// — este comando sí restaura y sí va a la red.
+		linters.DotnetVuln{BlockCritical: inCI, SoloManifiestos: !inCI, Cache: cache},
 	}
 }
 
