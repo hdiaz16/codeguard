@@ -81,3 +81,5 @@ El hueco más grande del producto: TS/JS sólo tenía tipos (tsc) y reglas de la
 ## Bitácora
 
 - **2026-08-12** — Plan creado a partir de la propuesta del usuario, ajustado con dos mediciones: la cobertura real de trivy por ecosistema (tres SCA propuestos resultaron redundantes, uno resultó hueco real) y la ausencia de toolchain Java. P1 y P2 arrancan en paralelo.
+
+<!-- verificacion del refactor del daemon -->
