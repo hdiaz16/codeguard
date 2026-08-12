@@ -2,6 +2,7 @@ package proc
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -128,5 +129,43 @@ func TestElSandboxNoRompeLaEjecucion(t *testing.T) {
 	}
 	if !strings.Contains(string(salida.Stdout), "funciona") {
 		t.Errorf("salida inesperada: %q", salida.Stdout)
+	}
+}
+
+// El refresco de variables incorpora lo que falta y NO pisa lo que el proceso
+// ya tiene: una variable presente puede venir de una decisión deliberada de la
+// sesión (un venv activo, una clave exportada a mano para una prueba), y
+// sobreescribirla con la del registro rompería esa intención.
+//
+// Este refresco existe porque la clave del modelo vive en HKCU\Environment: sin
+// él, cada reinicio del daemon arrancaba sin la clave y la capa LLM se apagaba
+// sola mientras la configuración decía "sin configurar" y la clave llevaba días
+// guardada. Se comprobó con la sonda: antes=false → refrescadas=1 → después=true.
+func TestIncorporarNoPisaLoQueYaEstaEnElProceso(t *testing.T) {
+	t.Setenv("CG_PRUEBA_YA_PUESTA", "de-la-sesion")
+	// CG_PRUEBA_NUEVA no existe en el proceso a propósito.
+
+	n := incorporar(map[string]string{
+		"CG_PRUEBA_YA_PUESTA": "del-registro",
+		"CG_PRUEBA_NUEVA":     "del-registro",
+	})
+	t.Cleanup(func() { _ = os.Unsetenv("CG_PRUEBA_NUEVA") })
+
+	if n != 1 {
+		t.Errorf("sólo debía incorporar la que faltaba; incorporó %d", n)
+	}
+	if got := os.Getenv("CG_PRUEBA_YA_PUESTA"); got != "de-la-sesion" {
+		t.Errorf("pisó la variable de la sesión: %q", got)
+	}
+	if got := os.Getenv("CG_PRUEBA_NUEVA"); got != "del-registro" {
+		t.Errorf("no incorporó la que faltaba: %q", got)
+	}
+}
+
+// Una variable vacía en el registro no se incorpora como vacía: sería
+// indistinguible de "no está" para quien luego hace os.Getenv.
+func TestIncorporarSinVariablesNoHaceNada(t *testing.T) {
+	if n := incorporar(nil); n != 0 {
+		t.Errorf("sin variables no hay nada que incorporar; devolvió %d", n)
 	}
 }

@@ -72,6 +72,40 @@ func RefrescarPATH() {
 	_ = os.Setenv("PATH", vigente+string(os.PathListSeparator)+actual)
 }
 
+// RefrescarVariables trae del registro las variables de usuario que ESTE
+// proceso no tiene, y devuelve cuántas incorporó.
+//
+// Es el mismo problema que RefrescarPATH y tuvo la misma consecuencia invisible.
+// La pantalla de configuración guarda la clave del modelo en HKCU\Environment y
+// además hace os.Setenv para que el daemon la vea sin reiniciar sesión — lo cual
+// funciona para ESE proceso y sólo para él. Cada reinicio del daemon (y hay uno
+// por actualización, o sea varios por semana) arrancaba con un entorno que no
+// tenía la clave, os.Getenv devolvía vacío, y la capa LLM se apagaba sola: el
+// log decía "sin endpoint/API key" y la pantalla de configuración decía "clave
+// sin configurar" mientras la clave llevaba días en el registro. La capa
+// semántica del producto estuvo dormida por esto, no por falta de credenciales.
+//
+// Sólo se incorpora lo que falta: una variable que el proceso YA tiene se
+// respeta, porque puede venir de una decisión deliberada de la sesión (un venv
+// activo, una clave distinta exportada a mano para una prueba).
+func RefrescarVariables() int { return incorporar(variablesDeUsuario()) }
+
+// incorporar aplica la regla a un conjunto de variables ya leídas. Existe
+// aparte para poder probarla sin escribir en el registro del usuario, que es
+// justo lo que un test no debe hacer.
+func incorporar(vars map[string]string) int {
+	n := 0
+	for clave, valor := range vars {
+		if _, ya := os.LookupEnv(clave); ya {
+			continue
+		}
+		if os.Setenv(clave, valor) == nil {
+			n++
+		}
+	}
+	return n
+}
+
 // Entorno arma el entorno de un motor: sólo lo permitido, más lo que se le
 // pase. Los extra van en la forma "CLAVE=valor" y siempre ganan.
 func Entorno(extra ...string) []string {

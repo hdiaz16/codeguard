@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 
 	"codeguard/internal/config"
+	"codeguard/internal/engines/proc"
 	"codeguard/internal/llm"
 )
 
@@ -73,6 +74,11 @@ func leerConfigLLM(repoRoot string) estadoConfigLLM {
 		e.TimeoutMs = cfg.LLM.TimeoutMs
 	}
 	if cfg.LLM.APIKeyEnv != "" {
+		// Se refresca antes de mirar: si la clave se guardó desde otro proceso
+		// (otra sesión, otro arranque del daemon), está en el registro y este
+		// proceso no la tiene. Decir "sin configurar" en ese caso era una
+		// mentira que dejó la capa LLM dormida durante días.
+		proc.RefrescarVariables()
 		e.HayKey = os.Getenv(cfg.LLM.APIKeyEnv) != ""
 	}
 	// Lo que dice el repo, leído sin la anulación personal encima.

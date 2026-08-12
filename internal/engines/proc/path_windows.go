@@ -47,3 +47,30 @@ func pathVigente() string {
 	}
 	return strings.Join(partes, ";")
 }
+
+// variablesDeUsuario devuelve las variables de HKCU\Environment tal como están
+// AHORA, sin PATH (de eso se encarga pathVigente, que sabe componerlo con el de
+// máquina en el orden correcto).
+func variablesDeUsuario() map[string]string {
+	out := map[string]string{}
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE)
+	if err != nil {
+		return out
+	}
+	defer k.Close()
+	nombres, err := k.ReadValueNames(0)
+	if err != nil {
+		return out
+	}
+	for _, n := range nombres {
+		if strings.EqualFold(n, "Path") {
+			continue
+		}
+		v, _, err := k.GetStringValue(n)
+		if err != nil || v == "" {
+			continue
+		}
+		out[n] = v
+	}
+	return out
+}

@@ -198,6 +198,9 @@ func main() {
 	// entorno no tiene los motores. Sin esto, la compuerta de secretos bloquea
 	// commits pidiendo un gitleaks que está instalado.
 	proc.RefrescarPATH()
+	// Y las demás variables del usuario, que es donde vive la clave del modelo:
+	// sin esto, cada reinicio del daemon apagaba la capa LLM en silencio.
+	refrescadas := proc.RefrescarVariables()
 
 	// El daemon corre sin consola (-H windowsgui): sin este log, cualquier
 	// fallo es invisible. Vive junto a la BD del usuario.
@@ -208,6 +211,9 @@ func main() {
 			os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			log.SetOutput(f)
 			log.Printf("=== daemon %s arrancado ===", version)
+			if refrescadas > 0 {
+				log.Printf("entorno: %d variable(s) del usuario incorporadas del registro", refrescadas)
+			}
 		}
 	}
 

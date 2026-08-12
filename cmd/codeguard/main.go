@@ -36,6 +36,10 @@ func main() {
 	// es fail-closed: BLOQUEA el commit pidiendo que se instale algo que ya
 	// está instalado.
 	proc.RefrescarPATH()
+	// Y el resto de variables del usuario: aquí vive la clave del modelo, y sin
+	// esto `codeguard config --probar` decía "la variable no tiene valor" con la
+	// clave sentada en el registro desde hacía días.
+	proc.RefrescarVariables()
 
 	root := &cobra.Command{
 		Use:           "codeguard",
