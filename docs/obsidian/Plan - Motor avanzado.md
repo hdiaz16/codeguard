@@ -4,7 +4,7 @@ El veredicto del que nace este plan: detección **estándar** sólida, montada s
 
 > **Regla de avance**: una fase no se abre hasta que la anterior cierra al 100% —criterio de cierre cumplido y verificado, no "casi". Es el mismo método de la semana de estabilización (F0–F5), que funcionó.
 
-**Estado**: 🟢 F1 cerrada (2026-08-11, CI verde) · 🟢 F2 ejecutada (2026-08-11) — pendiente sólo la confirmación del CI · 🔜 F3
+**Estado**: 🟢 F1 cerrada (2026-08-11, CI verde) · 🟢 F2 cerrada (2026-08-12, CI verde run 31605086356) · 🔵 F3 en curso — herramientas listas, el reloj del protocolo corre con el uso real
 
 ---
 
@@ -35,11 +35,11 @@ El veredicto del que nace este plan: detección **estándar** sólida, montada s
 
 ## F3 — Calibración con datos reales
 
-- [ ] `codeguard stats --precision`: precisión por regla desde la tabla `feedback`, lista para podar
-- [ ] Protocolo §17 corriendo: 2+ semanas en sombra, 500+ hallazgos etiquetados — **es tiempo-calendario: arranca en paralelo desde ya, no espera a F2**
+- [x] `codeguard stats`: precisión por regla desde `feedback` + **emisiones por regla** (el denominador real — la precisión sobre votos solos tiene sesgo de selección) + avance hacia el umbral del §17 (14 días / 500 hallazgos / votos)
+- [ ] Protocolo §17 corriendo: 2+ semanas en sombra, 500+ hallazgos, votos con los botones del panel — **tiempo-calendario y manos del equipo; al 2026-08-12: 64 hallazgos en 2 días, 0 votos**
 - [ ] Primera poda ejecutada: reglas <80% de precisión degradadas o retiradas, con el dato en la mano
 
-**Criterio de cierre**: la precisión por regla se consulta con un comando; la primera poda está hecha y documentada.
+**Criterio de cierre**: la precisión por regla se consulta con un comando ✓; la primera poda está hecha y documentada ⏳ (bloqueada por calendario, no por código — mientras corre el reloj pueden avanzar las piezas de F4 que no dependen de la calibración: comentarios de PR y la telemetría central; la capa LLM sí espera).
 
 ## F4 — Operación
 
@@ -66,4 +66,5 @@ Motor de análisis propio (orquestar los mejores motores **es** la arquitectura 
 - **2026-08-11** — Plan creado. F1 arranca: corpus de pruebas + govulncheck.
 - **2026-08-11** — F1 ejecutada en el día. govulncheck es el décimo motor (`ddd3979`): sólo hallazgos de nivel símbolo (alcanzabilidad probada), integración real bajo el sandbox. Corpus `--test` completo (`993797d`): 119/119 reglas con positivo y negativo, escrito por tres agentes en paralelo y consolidado; el CI ahora corre `--validate` + `--test` + cobertura obligatoria. El corpus pagó antes de nacer: 2 reglas muertas de nacimiento y 3 con defectos de fábrica, las cinco curadas y probadas. Lecciones de infraestructura: los fixtures viven en `testdata/` hermano de `semgrep/` (un yaml dentro del `--config` se parsea como reglas), los fixtures YAML se llaman `<stem>.test.yaml`, y el modo test ignora los filtros `paths:`. Falta: CI en verde para cerrar la fase.
 - **2026-08-11** — **F1 CERRADA**: CI verde en el run 31531522460 con los tres candados del rulepack activos. Pendiente de operación (no bloquea fases): las reglas despertadas llegan a los repos enrolados con la próxima actualización del rulepack instalado; si producen hallazgos nuevos, el flujo es refrescar la baseline. F2 abre: file_cache incremental + staticcheck.
+- **2026-08-12** — **F2 CERRADA** (CI verde, run 31605086356). F3 abre con las herramientas listas: `stats` gana denominador (emisiones por regla) y medidor de avance del §17 — al abrir: 64 hallazgos en 2 días, 0 votos; la palanca son los botones útil/falso-positivo del panel. Instalador v1.2.0 para que el daemon corra con caché y los dos motores nuevos: la calibración debe acumular datos de la versión que se va a calibrar. Primer commit del día degradó semgrep por plazo (burst matutino del EDR + arranque frío, transitorio conocido; el log del daemon lo dice con todas sus letras).
 - **2026-08-11** — F2 ejecutada el mismo día (`edb7e44`, `bd0aef8`). El caché de deterministas vive: por archivo (semgrep) y por huella de módulo (govulncheck con día UTC, staticcheck con lista de paquetes). staticcheck es el onceavo motor y estrenó cazando código muerto de la propia tanda. La medición guió todo: destapó los ~200 procesos de gofmt por CRLF (ahora `go/format` en proceso), el informe que se analizaba a sí mismo, y el timing por motor quedó como superficie de diagnóstico permanente. Reporte: 36.8 s → 2.0 s (−94%). Y el rulepack bloqueó mi primera versión de la lectura del caché (SQL concatenado) — el sistema vigilándose a sí mismo, dos veces en un día. Pendientes conocidos del repo (no de la fase): los dos `go-dinero-float` de config.go:107-108 (tarifas LLM en float64 — decisión del usuario: baseline o int64 micros).
