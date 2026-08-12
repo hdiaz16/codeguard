@@ -48,6 +48,10 @@ type Response struct {
 	Degraded         []string          `json:"degraded"`
 	Findings         []finding.Finding `json:"findings"`
 	ElapsedMs        int64             `json:"elapsed_ms"`
+	// ParityReason explica en una línea POR QUÉ se rompió la paridad. El aviso
+	// sin motivo ("no puedo garantizar que pase el CI") es de los que se
+	// aprenden a ignorar: nadie puede arreglar lo que no se nombra.
+	ParityReason string `json:"parity_reason,omitempty"`
 }
 
 // PipeName devuelve \\.\pipe\codeguard-<SID del usuario actual>.

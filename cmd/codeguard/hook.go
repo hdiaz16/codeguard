@@ -158,7 +158,13 @@ func runPreCommit() error {
 			ElapsedMs:        resp.ElapsedMs,
 		}
 		if !resp.CIParity {
-			progress("aviso: tu rulepack/config no coincide — no puedo garantizar que pase el CI")
+			// El motivo viaja desde el daemon: un aviso que no dice qué
+			// arreglar se convierte en ruido que el dev aprende a ignorar.
+			if resp.ParityReason != "" {
+				progress("aviso: sin paridad con el CI — " + resp.ParityReason)
+			} else {
+				progress("aviso: tu rulepack/config no coincide — no puedo garantizar que pase el CI")
+			}
 		}
 	} else {
 		degraded = append(degraded, "daemon:offline")

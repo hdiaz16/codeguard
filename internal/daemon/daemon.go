@@ -88,19 +88,37 @@ func short(s string) string {
 	return s
 }
 
-// RulepackDir resuelve el rulepack pinneado: primero vendoreado en el repo,
-// después junto al binario.
+// RulepackDir resuelve el rulepack pinneado, en orden: vendoreado en el repo,
+// junto al binario, un nivel arriba del binario, y la instalación estándar del
+// usuario.
+//
+// Los dos últimos no son "por si acaso". El binario instalado vive en
+// CodeGuard\bin y los rulepacks se copian ahí y también un nivel arriba; pero
+// cualquier binario que NO sea el instalado —una compilación de desarrollo, una
+// copia portable— no tiene rulepacks al lado, y entonces todo repo que no los
+// vendoree pierde las 119 reglas de la casa EN SILENCIO. Se reprodujo en un
+// repo de prueba: semgrep "corrió" en 0 ms con 0 hallazgos y la baseline se
+// escribió sin cobertura de reglas. La instalación estándar es el último
+// recurso porque siempre está donde está, sin importar quién arrancó el proceso.
 func RulepackDir(repoRoot, version string) string {
 	local := filepath.Join(repoRoot, "rulepacks", version)
-	if _, err := os.Stat(local); err == nil {
-		return local
-	}
+	candidatos := []string{local}
 	if exe, err := os.Executable(); err == nil {
-		alt := filepath.Join(filepath.Dir(exe), "rulepacks", version)
-		if _, err := os.Stat(alt); err == nil {
-			return alt
+		dir := filepath.Dir(exe)
+		candidatos = append(candidatos,
+			filepath.Join(dir, "rulepacks", version),
+			filepath.Join(filepath.Dir(dir), "rulepacks", version))
+	}
+	if base := os.Getenv("LOCALAPPDATA"); base != "" {
+		candidatos = append(candidatos, filepath.Join(base, "CodeGuard", "rulepacks", version))
+	}
+	for _, c := range candidatos {
+		if _, err := os.Stat(c); err == nil {
+			return c
 		}
 	}
+	// Ninguno existe: se devuelve la ruta del repo para que el mensaje de error
+	// hable del sitio donde el dev PODRÍA vendorearlo.
 	return local
 }
 
@@ -111,9 +129,15 @@ func RulepackDir(repoRoot, version string) string {
 func RulepacksInstalados(repoRoot string) []string {
 	vistos := map[string]bool{}
 	var out []string
+	// Los mismos sitios que mira RulepackDir, para que "instaladas: ..." no
+	// contradiga a la resolución.
 	dirs := []string{filepath.Join(repoRoot, "rulepacks")}
 	if exe, err := os.Executable(); err == nil {
-		dirs = append(dirs, filepath.Join(filepath.Dir(exe), "rulepacks"))
+		dir := filepath.Dir(exe)
+		dirs = append(dirs, filepath.Join(dir, "rulepacks"), filepath.Join(filepath.Dir(dir), "rulepacks"))
+	}
+	if base := os.Getenv("LOCALAPPDATA"); base != "" {
+		dirs = append(dirs, filepath.Join(base, "CodeGuard", "rulepacks"))
 	}
 	for _, d := range dirs {
 		entradas, err := os.ReadDir(d)
@@ -281,6 +305,12 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 			cfg = again
 		} else {
 			resp.CIParity = false
+			if cfg.Rulepack != req.RulepackVersion {
+				resp.ParityReason = fmt.Sprintf("el rulepack cambió durante el commit (%s → %s): vuelve a intentarlo",
+					req.RulepackVersion, cfg.Rulepack)
+			} else {
+				resp.ParityReason = "la configuración cambió durante el commit: vuelve a intentarlo"
+			}
 			log.Printf("paridad rota en %s: config %s≠%s, rulepack %s≠%s",
 				filepath.Base(req.RepoRoot), short(cfg.Hash), short(req.ConfigHash),
 				cfg.Rulepack, req.RulepackVersion)
@@ -289,6 +319,19 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	rulepack := RulepackDir(req.RepoRoot, cfg.Rulepack)
 	if _, err := os.Stat(rulepack); err != nil {
 		resp.CIParity = false
+		// Este camino rompía la paridad EN SILENCIO: el dev leía "no puedo
+		// garantizar que pase el CI" en cada commit y no había una sola línea
+		// en ningún log que dijera por qué. Ahora dice qué versión se buscó,
+		// dónde, y qué versiones sí están instaladas — con eso el aviso se
+		// resuelve solo en vez de convertirse en ruido que se aprende a ignorar.
+		instaladas := RulepacksInstalados(req.RepoRoot)
+		if len(instaladas) == 0 {
+			instaladas = []string{"ninguna"}
+		}
+		resp.ParityReason = fmt.Sprintf("este repo pinnea el rulepack %s y no está instalado (hay: %s) — corre `codeguard repair`",
+			cfg.Rulepack, strings.Join(instaladas, ", "))
+		log.Printf("paridad rota en %s: el repo pinnea el rulepack %q y no está en %s (instaladas: %s)",
+			filepath.Base(req.RepoRoot), cfg.Rulepack, rulepack, strings.Join(instaladas, ", "))
 	}
 
 	deadline := time.Duration(req.DeadlineMs) * time.Millisecond
