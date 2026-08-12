@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"codeguard/internal/baseline"
@@ -60,7 +61,7 @@ func Engines(cfg *config.Config, inCI bool, cache sgengine.Cache) []engines.Engi
 		&sgengine.Engine{Cache: cache},
 		&sqengine.Engine{MigrationGlobs: migGlobs, Dialect: migDialecto},
 		// Política §7: CVE crítico advierte en local, bloquea en CI.
-		&tvengine.Engine{BlockCritical: inCI, SkipDBUpdate: !inCI},
+		&tvengine.Engine{BlockCritical: inCI, SkipDBUpdate: !inCI, Cache: cache},
 		// Alcanzabilidad: trivy dice "el CVE está en tu go.sum"; govulncheck
 		// demuestra si el código lo llama. Misma política local/CI que trivy,
 		// y en el hook sólo corre cuando cambian las dependencias — recorre el
@@ -73,7 +74,9 @@ func Engines(cfg *config.Config, inCI bool, cache sgengine.Cache) []engines.Engi
 		linters.GoFmt{},
 		linters.GoVet{},
 		linters.Ruff{},
-		linters.Tsc{},
+		// tsc compila el proyecto entero por cambio de un archivo: sin caché,
+		// cada informe de un monorepo con frontend pagaría la compilación.
+		linters.Tsc{Cache: cache},
 		linters.DotnetFormat{},
 	}
 }
@@ -212,6 +215,47 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 				s.Shadow.Run(context.Background(), cfg, req, resp.Findings) //nolint:contextcheck // desligado del request a propósito
 			}()
 		}
+	}
+	// F4a: el empuje al Postgres central viaja a cuestas del tráfico real —
+	// cada análisis es una oportunidad de sincronizar, con throttle para no
+	// abrir una conexión por commit. Best-effort puro: jamás toca el commit.
+	if s.Shadow != nil && s.Shadow.Store != nil {
+		go syncOportunista(s.Shadow.Store)
+	}
+}
+
+// El daemon es un proceso longevo: el throttle del empuje oportunista vive en
+// variables de paquete, con mutex porque handle() atiende conexiones en
+// paralelo.
+var (
+	sincronizaMu      sync.Mutex
+	ultimoIntentoSync time.Time
+)
+
+// syncOportunista empuja la telemetría local al central si el DSN está
+// configurado y han pasado al menos diez minutos desde el último INTENTO
+// (también los fallidos cuentan: un central caído no merece un martilleo por
+// commit). Los errores van al log y a ningún otro sitio — la telemetría
+// nunca se interpone en un commit.
+func syncOportunista(st *store.Store) {
+	dsn := os.Getenv(store.EnvTelemetriaDSN)
+	if dsn == "" {
+		return // sin central configurado no hay nada que empujar ni que avisar
+	}
+	sincronizaMu.Lock()
+	if time.Since(ultimoIntentoSync) < 10*time.Minute {
+		sincronizaMu.Unlock()
+		return
+	}
+	ultimoIntentoSync = time.Now()
+	sincronizaMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if res, err := st.SyncCentral(ctx, dsn); err != nil {
+		log.Printf("sync central oportunista: %v", err)
+	} else if res.Total() > 0 {
+		log.Printf("sync central: %d fila(s) empujada(s)", res.Total())
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/proc"
@@ -23,6 +24,10 @@ type Engine struct {
 	BlockCritical bool
 	// SkipDBUpdate: true en el camino del hook; el daemon/CI refrescan la DB.
 	SkipDBUpdate bool
+	// Cache: mismos manifiestos = mismos CVE, sin re-escanear. La clave lleva
+	// el día UTC — la política local ya acepta una DB del día (SkipDBUpdate),
+	// pero un acierto de la semana pasada escondería CVEs nuevos.
+	Cache engines.Cache
 }
 
 func (e *Engine) Name() string { return "trivy" }
@@ -66,10 +71,31 @@ type trivyReport struct {
 	} `json:"Results"`
 }
 
+// clave identifica un escaneo: la huella de TODOS los manifiestos rastreados
+// del repo (el escaneo es fs sobre la raíz, no por archivo) más el día UTC.
+func (e *Engine) clave(repoRoot string) string {
+	huella := engines.HuellaModulo(repoRoot, ".", func(rel string) bool {
+		base := strings.ToLower(path.Base(rel))
+		return manifests[base] || strings.HasSuffix(base, ".csproj")
+	})
+	if huella == "" {
+		return ""
+	}
+	return "trivy:" + huella + ":" + time.Now().UTC().Format("2006-01-02")
+}
+
 func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
 	bin := e.Binary
 	if bin == "" {
 		bin = "trivy"
+	}
+	clave := ""
+	if e.Cache != nil {
+		if clave = e.clave(in.RepoRoot); clave != "" {
+			if fs, ok := e.Cache.Leer([]string{clave})[clave]; ok {
+				return fs, nil
+			}
+		}
 	}
 	args := []string{"fs", "--scanners", "vuln", "--format", "json", "--quiet"}
 	if e.SkipDBUpdate {
@@ -123,6 +149,9 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 			f.ComputeFingerprint()
 			findings = append(findings, f)
 		}
+	}
+	if e.Cache != nil && clave != "" {
+		e.Cache.Guardar(map[string][]finding.Finding{clave: findings})
 	}
 	return findings, nil
 }
