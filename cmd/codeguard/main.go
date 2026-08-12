@@ -40,6 +40,9 @@ func main() {
 	// esto `codeguard config --probar` decía "la variable no tiene valor" con la
 	// clave sentada en el registro desde hacía días.
 	proc.RefrescarVariables()
+	// El caché de resultados lleva la versión en su clave: al actualizar el
+	// agente, lo que analizó el binario viejo deja de darse por bueno.
+	daemon.Version = version
 
 	root := &cobra.Command{
 		Use:           "codeguard",

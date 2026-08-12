@@ -218,3 +218,33 @@ func main() {
 		t.Errorf("GO-2022-1059 está presente en la dependencia pero nunca se llama: reportarla es el ruido que este motor promete filtrar; hallazgos: %v", ids)
 	}
 }
+
+// Una vulnerabilidad alcanzada por varios caminos es UN hallazgo, no varios.
+//
+// govulncheck emite un hallazgo de nivel símbolo por cada ruta de llamada, así
+// que en el backend de un repo real 9 vulnerabilidades se convertían en 28
+// hallazgos — mientras la propia herramienta decía "your code is affected by 8".
+// Inflar el problema por tres no lo hace más urgente, lo hace menos creíble; y
+// el remedio de todas las rutas es el mismo, subir el módulo una vez.
+func TestVariasRutasALaMismaVulnerabilidadSonUnHallazgo(t *testing.T) {
+	// Misma OSV alcanzada desde dos sitios distintos del código propio.
+	payload := `{"osv":{"id":"GO-2026-0001","summary":"Fallo en el parser"}}
+{"finding":{"osv":"GO-2026-0001","fixed_version":"v1.2.3","trace":[{"module":"ejemplo.com/lib","version":"v1.0.0","package":"ejemplo.com/lib","function":"Parse","position":{"filename":"lib/parse.go","line":10}},{"module":"m","package":"m","function":"Segundo","position":{"filename":"internal/b.go","line":50}}]}}
+{"finding":{"osv":"GO-2026-0001","fixed_version":"v1.2.3","trace":[{"module":"ejemplo.com/lib","version":"v1.0.0","package":"ejemplo.com/lib","function":"Parse","position":{"filename":"lib/parse.go","line":10}},{"module":"m","package":"m","function":"Primero","position":{"filename":"cmd/a.go","line":20}}]}}
+`
+	fs, err := interpretar([]byte(payload), ".", false)
+	if err != nil {
+		t.Fatalf("interpretar: %v", err)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("dos rutas hacia la MISMA vulnerabilidad son un hallazgo, llegaron %d: %+v", len(fs), fs)
+	}
+	// Se conserva la primera en orden estable (archivo, línea) para que la
+	// huella no baile entre corridas.
+	if fs[0].File != "cmd/a.go" || fs[0].Line != 20 {
+		t.Errorf("debía anclarse en la primera ruta en orden estable, llegó %s:%d", fs[0].File, fs[0].Line)
+	}
+	if !strings.Contains(fs[0].Message, "desde 2 sitios") {
+		t.Errorf("el mensaje debe decir cuántas rutas hay para que nadie crea que se le escapó una: %q", fs[0].Message)
+	}
+}

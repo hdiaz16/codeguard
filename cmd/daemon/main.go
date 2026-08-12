@@ -17,6 +17,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 
+	"codeguard/internal/daemon"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 )
@@ -213,6 +214,9 @@ func main() {
 	// Y las demás variables del usuario, que es donde vive la clave del modelo:
 	// sin esto, cada reinicio del daemon apagaba la capa LLM en silencio.
 	refrescadas := proc.RefrescarVariables()
+	// El caché de resultados lleva la versión en su clave: al actualizar el
+	// agente, lo que analizó el binario viejo deja de darse por bueno.
+	daemon.Version = version
 	abrirLog(refrescadas)
 
 	// El escritorio nace antes que la aplicación: Wails pide el manejador HTTP

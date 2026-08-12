@@ -33,8 +33,31 @@ func CachePorArchivo(st *store.Store, repoID, remote, nombre string, cfg *config
 	if err := st.FileCachePrune(repoID, cfg.Rulepack, 30*24*time.Hour); err != nil {
 		log.Printf("file_cache: la poda falló (se sigue sin podar): %v", err)
 	}
-	return &cacheArchivos{st: st, repoID: repoID, rulepack: cfg.Rulepack, configHash: cfg.Hash}
+	// La VERSIÓN del agente entra en la clave, y no es un detalle.
+	//
+	// Un acierto de caché dice "este contenido, con estas reglas y esta config,
+	// ya se analizó". Faltaba la cuarta cosa de la que depende el resultado:
+	// el código que lo analizó. Al actualizar CodeGuard, los motores cambian
+	// —se arregla un conteo, se cura una regla, se corrige un parseo— y el
+	// caché seguía sirviendo lo que produjo el binario viejo, sin forma de
+	// notarlo.
+	//
+	// Se descubrió arreglando el conteo de vulnerabilidades de govulncheck: el
+	// arreglo estaba compilado y funcionando, y el informe seguía mostrando el
+	// número anterior porque venía del caché. Una corrección que no llega al
+	// usuario es una corrección que no existe.
+	return &cacheArchivos{
+		st: st, repoID: repoID, rulepack: cfg.Rulepack,
+		configHash: cfg.Hash + "|" + Version,
+	}
 }
+
+// Version la fijan los dos binarios al arrancar (la inyecta build-dist desde
+// setup.iss). Vive aquí porque el caché la necesita en su clave y este paquete
+// no puede ver el main de nadie. "dev" delata un binario compilado a mano, y
+// como también entra en la clave, un binario de desarrollo no envenena el
+// caché del instalado.
+var Version = "dev"
 
 type cacheArchivos struct {
 	st                           *store.Store

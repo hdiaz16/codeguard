@@ -217,12 +217,50 @@ func interpretar(raw []byte, dir string, bloquea bool) ([]finding.Finding, error
 		}
 	}
 
+	// UNA vulnerabilidad, UN hallazgo — aunque el código la alcance por varias
+	// rutas.
+	//
+	// govulncheck emite un hallazgo de nivel símbolo por cada camino de llamada
+	// distinto, así que una sola CVE aparece tantas veces como sitios la
+	// alcancen. En el backend del portal eso convertía 9 vulnerabilidades en 28
+	// hallazgos, y el desarrollador leía "28 vulnerabilidades" cuando la propia
+	// herramienta decía "your code is affected by 8". Inflar el problema por 3
+	// no lo hace más urgente: lo hace menos creíble.
+	//
+	// Y el remedio es el mismo para todas las rutas de una CVE: subir el módulo
+	// UNA vez. Veintiocho hallazgos que piden lo mismo son veintisiete
+	// distracciones, y veintisiete huellas de más en la baseline.
+	//
+	// Se conserva la primera ruta en orden estable —archivo y línea— para que
+	// la huella no baile entre corridas, y el mensaje dice cuántas hay.
+	rutasPorOSV := map[string]int{}
+	for _, h := range crudos {
+		if len(h.Trace) > 0 && h.Trace[0].Function != "" {
+			rutasPorOSV[h.OSV]++
+		}
+	}
+	sort.SliceStable(crudos, func(a, b int) bool {
+		ua, ub := marcoUsuario(crudos[a].Trace), marcoUsuario(crudos[b].Trace)
+		if ua == nil || ub == nil {
+			return ua != nil
+		}
+		if ua.Position.Filename != ub.Position.Filename {
+			return ua.Position.Filename < ub.Position.Filename
+		}
+		return ua.Position.Line < ub.Position.Line
+	})
+
 	var out []finding.Finding
+	vistas := map[string]bool{}
 	for _, h := range crudos {
 		// Nivel módulo o paquete: presencia sin llamada — territorio de trivy.
 		if len(h.Trace) == 0 || h.Trace[0].Function == "" {
 			continue
 		}
+		if vistas[h.OSV] {
+			continue // otra ruta hacia la MISMA vulnerabilidad
+		}
+		vistas[h.OSV] = true
 		vuln := h.Trace[0]
 		simbolo := vuln.Package + "." + vuln.Function
 
@@ -233,6 +271,10 @@ func interpretar(raw []byte, dir string, bloquea bool) ([]finding.Finding, error
 				rel = path.Join(dir, rel)
 			}
 			file, line = rel, u.Position.Line
+		}
+		otras := ""
+		if n := rutasPorOSV[h.OSV]; n > 1 {
+			otras = fmt.Sprintf(" (alcanzada desde %d sitios; se arregla una sola vez)", n)
 		}
 
 		fix := "Sin versión corregida publicada todavía; evalúa mitigar o sustituir la dependencia."
@@ -252,7 +294,7 @@ func interpretar(raw []byte, dir string, bloquea bool) ([]finding.Finding, error
 			Blocking:    bloquea,
 			File:        file,
 			Line:        line,
-			Message:     fmt.Sprintf("%s alcanzable: el código llama a %s (%s@%s). %s", h.OSV, simbolo, vuln.Module, vuln.Version, resumen[h.OSV]),
+			Message:     fmt.Sprintf("%s alcanzable: el código llama a %s (%s@%s)%s. %s", h.OSV, simbolo, vuln.Module, vuln.Version, otras, resumen[h.OSV]),
 			Why:         "Cadena de suministro (OWASP A03 2025) con prueba de alcanzabilidad: no es sólo que la dependencia tenga un CVE — el grafo de llamadas demuestra que este código ejecuta la función vulnerable.",
 			FixHint:     fix,
 			Verified:    true,
