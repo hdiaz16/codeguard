@@ -2,6 +2,9 @@ package pipeline
 
 import (
 	"context"
+	"errors"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"codeguard/internal/config"
@@ -106,5 +109,39 @@ func TestRepoNoEnrolado(t *testing.T) {
 	res, err := Run(context.Background(), Options{Config: nil, Diff: &gitdiff.Diff{}})
 	if err != nil || res.Verdict != Skipped {
 		t.Fatalf("sin config = skipped, fue %v %v", res.Verdict, err)
+	}
+}
+
+// Un motor ausente se reconoce por el SISTEMA DE ERRORES, no por el texto del
+// mensaje. Antes se comparaba contra literales traducibles ("cannot find the
+// file", "el sistema no puede encontrar"): en un Windows en francés o alemán
+// esa comparación no casaba y un motor que simplemente no estaba instalado se
+// reportaba como fallo del análisis, pintando de naranja commits sanos.
+//
+// Los dos caminos salen de medir con exec real, no de suponer:
+//   - binario que no está en el PATH  → exec.ErrNotFound
+//   - ruta absoluta inexistente       → *fs.PathError con fs.ErrNotExist
+func TestMotorAusenteSeDetectaSinDependerDelIdioma(t *testing.T) {
+	// Caminos reales: se ejecutan de verdad para no fiarse de un error fabricado.
+	errPATH := exec.Command("binario-que-no-existe-jamas-cg.exe").Run()
+	errRuta := exec.Command(filepath.Join(t.TempDir(), "no", "existe", "motor.exe")).Run()
+
+	for nombre, err := range map[string]error{
+		"no está en el PATH":    errPATH,
+		"ruta absoluta ausente": errRuta,
+	} {
+		if err == nil {
+			t.Fatalf("%s: se esperaba un error de ejecución", nombre)
+		}
+		if !isMissingBinary(err) {
+			t.Errorf("%s: debía reconocerse como motor ausente y no lo hizo (%v)", nombre, err)
+		}
+	}
+
+	// Y lo contrario: un motor que SÍ corrió y falló no es un motor ausente —
+	// confundirlos escondería un fallo real detrás de "falta: X".
+	corrioYFallo := errors.New("semgrep no llegó a analizar: raíz de escaneo inválida")
+	if isMissingBinary(corrioYFallo) {
+		t.Error("un motor que corrió y falló no puede reportarse como ausente")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os/exec"
 	"sort"
@@ -213,16 +214,22 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 }
 
 // isMissingBinary distingue "la herramienta no está instalada" de "corrió y
-// falló". Windows: ERROR_FILE_NOT_FOUND / "executable file not found".
+// falló". La distinción importa porque cambia el mensaje: un motor ausente es
+// un asunto de configuración ("falta: trivy") y no una degradación del
+// análisis, y confundirlos pinta de naranja cada commit del día.
+//
+// Los dos caminos por los que Go reporta un binario que no está, comprobados
+// midiendo en vez de suponiendo:
+//   - no está en el PATH  → exec.ErrNotFound
+//   - ruta absoluta que no existe → un *fs.PathError con fs.ErrNotExist
+//
+// Antes esto se cerraba comparando el TEXTO del error ("cannot find the file",
+// "el sistema no puede encontrar"), o sea el mensaje que Windows traduce al
+// idioma del sistema: en un Windows en francés o alemán la comparación no
+// casaba y un motor ausente se reportaba como fallo del análisis. Las dos
+// comprobaciones de arriba son del sistema de errores, no del idioma.
 func isMissingBinary(err error) bool {
-	if errors.Is(err, exec.ErrNotFound) {
-		return true
-	}
-	m := strings.ToLower(err.Error())
-	return strings.Contains(m, "executable file not found") ||
-		strings.Contains(m, "no such file") ||
-		strings.Contains(m, "cannot find the file") ||
-		strings.Contains(m, "el sistema no puede encontrar")
+	return errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist)
 }
 
 // SoloFaltantes indica si todas las capas degradadas son motores ausentes
