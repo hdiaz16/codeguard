@@ -385,6 +385,60 @@ func (s *Store) RuleStats(repoID string) ([]RuleStat, error) {
 	return out, rows.Err()
 }
 
+// Emision es cuánto produjo una regla, votado o no. La precisión sobre votos
+// solos tiene sesgo de selección: una regla que emite 200 hallazgos y recibe
+// 3 votos no está calibrada por muy 100% que salgan los tres.
+type Emision struct {
+	Engine, RuleKey string
+	Total           int
+}
+
+// Emisiones cuenta los hallazgos registrados por regla (la sombra registra
+// todo, así que esto es el denominador real de la calibración).
+func (s *Store) Emisiones(repoID string) ([]Emision, error) {
+	rows, err := s.db.Query(`SELECT f.engine, f.rule_key, COUNT(*)
+	  FROM findings f JOIN runs r ON r.id = f.run_id
+	 WHERE (? = '' OR r.repo_id = ?)
+	 GROUP BY f.engine, f.rule_key`, repoID, repoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Emision
+	for rows.Next() {
+		var e Emision
+		if err := rows.Scan(&e.Engine, &e.RuleKey, &e.Total); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// Calibracion resume el avance hacia el umbral del protocolo §17: dos semanas
+// de sombra y 500+ hallazgos etiquetados.
+type Calibracion struct {
+	Hallazgos, Votos int
+	Desde, Hasta     string // ISO; vacíos si no hay datos
+}
+
+func (s *Store) ProgresoCalibracion(repoID string) (Calibracion, error) {
+	var c Calibracion
+	var desde, hasta sql.NullString
+	err := s.db.QueryRow(`SELECT COUNT(*), MIN(f.created_at), MAX(f.created_at)
+	  FROM findings f JOIN runs r ON r.id = f.run_id
+	 WHERE (? = '' OR r.repo_id = ?)`, repoID, repoID).Scan(&c.Hallazgos, &desde, &hasta)
+	if err != nil {
+		return c, err
+	}
+	c.Desde, c.Hasta = desde.String, hasta.String
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM feedback fb
+	  JOIN findings f ON f.id = fb.finding_id
+	  JOIN runs r ON r.id = f.run_id
+	 WHERE (? = '' OR r.repo_id = ?)`, repoID, repoID).Scan(&c.Votos)
+	return c, err
+}
+
 // DemotedRules devuelve las reglas auto-degradadas para un repo: con al
 // menos minVotes votos y tasa de falsos positivos sobre el umbral, dejan de
 // bloquear (§17: precisión < 80% se corrige o se desactiva — aquí, se degrada
