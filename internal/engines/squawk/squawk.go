@@ -107,7 +107,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	out := salida.Stdout
 	// squawk sale con código != 0 cuando hay violaciones; el JSON sigue siendo válido.
 	if runErr != nil && len(out) == 0 {
-		return nil, fmt.Errorf("squawk no corrió: %v", runErr)
+		return nil, fmt.Errorf("squawk no corrió: %w", runErr)
 	}
 	if salida.Recortada {
 		return nil, fmt.Errorf("squawk devolvió más de %d MB de salida", proc.MaxSalida>>20)

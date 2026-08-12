@@ -109,7 +109,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	out := salida.Stdout
 	if runErr != nil && len(out) == 0 {
-		return nil, fmt.Errorf("trivy no corrió: %v", runErr)
+		return nil, fmt.Errorf("trivy no corrió: %w", runErr)
 	}
 	if salida.Recortada {
 		return nil, fmt.Errorf("trivy devolvió más de %d MB de salida", proc.MaxSalida>>20)

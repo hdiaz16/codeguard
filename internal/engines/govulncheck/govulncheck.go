@@ -188,7 +188,9 @@ func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string) ([
 		if errors.As(runErr, &exit) && len(salida.Stderr) > 0 {
 			detalle = ": " + recorte(salida.Stderr)
 		}
-		return nil, fmt.Errorf("govulncheck falló en %s: %v%s", dir, runErr, detalle)
+		// %w y no %v: el centinela (binario ausente, plazo agotado) tiene que
+		// llegar entero al orquestador, que clasifica con errors.Is.
+		return nil, fmt.Errorf("govulncheck falló en %s: %w%s", dir, runErr, detalle)
 	}
 	if salida.Recortada {
 		return nil, fmt.Errorf("govulncheck devolvió más de %d MB de salida", proc.MaxSalida>>20)

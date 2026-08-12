@@ -199,6 +199,27 @@ func runPreCommit() error {
 		}
 		progress(fmt.Sprintf("BLOQUEADO: %d problema(s) que el CI también rechazaría  (%.1f s)",
 			res.BlockingFindings, time.Since(start).Seconds()))
+	} else if len(res.Degraded) > 0 {
+		// Revisión PARCIAL: no se puede poner un ✓ ni decir "listo" cuando una
+		// compuerta no llegó a mirar nada.
+		//
+		// Casi todas las compuertas de §7 están configuradas para BLOQUEAR
+		// (formato, compilación, lint, reglas, migraciones). Una capa que no
+		// corre es una compuerta que no revisa nada mientras aparenta que sí, y
+		// el ✓ de esta línea era justo esa apariencia: el aviso de las capas
+		// caídas se imprimía DESPUÉS, como nota al pie de un veredicto que ya
+		// había dicho que todo estaba bien.
+		//
+		// No se bloquea —sólo los secretos son fail-closed (§14), y volver
+		// obstáculo al agente cada vez que un motor tropieza es la forma más
+		// rápida de que lo desinstalen— pero el veredicto dice la verdad: aquí
+		// no se miró todo.
+		progress(fmt.Sprintf("%s — PARCIAL   (%.1f s)", gates, time.Since(start).Seconds()))
+		if res.AdvisoryFindings > 0 {
+			progress(fmt.Sprintf("commit permitido sobre lo que SÍ se revisó; %d sugerencia(s) en el panel", res.AdvisoryFindings))
+		} else {
+			progress("commit permitido sobre lo que SÍ se revisó")
+		}
 	} else {
 		progress(fmt.Sprintf("%s ✓   (%.1f s)", gates, time.Since(start).Seconds()))
 		if res.AdvisoryFindings > 0 {
@@ -209,6 +230,17 @@ func runPreCommit() error {
 	}
 	if len(res.Degraded) > 0 {
 		progress("capas no revisadas: " + strings.Join(res.Degraded, ", "))
+		// El daemon caído no es una capa más: sin él, la etapa 2 corre en el
+		// proceso del hook, en frío y contra el mismo plazo, así que suele
+		// arrastrar a otras capas con ella. Se dice qué hacer.
+		for _, d := range res.Degraded {
+			if d == "daemon:offline" {
+				fmt.Fprintln(os.Stderr,
+					"CodeGuard  el agente no estaba corriendo, así que esta revisión fue en frío y sin\n"+
+						"           caché. Arráncalo (cierra y abre sesión, o lanza codeguard-daemon) y el\n"+
+						"           siguiente commit se revisa completo y en segundos.")
+			}
+		}
 		// Un motor que no cupo en el plazo se explica solo, porque su remedio
 		// es "no hagas nada": la primera corrida en frío compila o arranca node,
 		// y la siguiente va con caché. Sin esta línea el dev lee una etiqueta

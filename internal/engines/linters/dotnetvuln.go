@@ -245,7 +245,7 @@ func (e DotnetVuln) revisarProyecto(ctx context.Context, repoRoot, csproj string
 		return nil, fmt.Errorf("dotnet list package devolvió más de %d MB en %s", proc.MaxSalida>>20, csproj)
 	}
 	if runErr != nil {
-		return nil, fmt.Errorf("dotnet list package no corrió en %s: %v%s", csproj, runErr, dnvDetalle(salida.Stderr))
+		return nil, fmt.Errorf("dotnet list package no corrió en %s: %w%s", csproj, runErr, dnvDetalle(salida.Stderr))
 	}
 	return e.interpretar(salida.Stdout, repoRoot, csproj)
 }

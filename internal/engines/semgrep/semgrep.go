@@ -324,7 +324,9 @@ func (e *Engine) correrLote(ctx context.Context, bin, rules string, in engines.I
 	out := salida.Stdout
 	// Semgrep sale con 1 cuando hay hallazgos bloqueantes; el JSON sigue siendo válido.
 	if runErr != nil && len(out) == 0 {
-		return nil, nil, fmt.Errorf("semgrep no corrió: %v", runErr)
+		// %w: sin él, un semgrep ausente o un plazo agotado llegaban al
+		// orquestador como un error genérico y se reportaban como fallo.
+		return nil, nil, fmt.Errorf("semgrep no corrió: %w", runErr)
 	}
 	// Un JSON recortado no se puede parsear; decirlo es mejor que un error de sintaxis.
 	if salida.Recortada {

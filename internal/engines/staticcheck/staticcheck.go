@@ -197,7 +197,10 @@ func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string, pa
 			if len(salida.Stderr) > 0 {
 				detalle = ": " + recorte(salida.Stderr)
 			}
-			return nil, fmt.Errorf("staticcheck falló en %s: %v%s", dir, runErr, detalle)
+			// %w: el orquestador clasifica la degradación con errors.Is, así
+			// que el centinela (binario ausente, plazo agotado) tiene que
+			// llegar entero. Con %v se perdía y todo salía como ":error".
+			return nil, fmt.Errorf("staticcheck falló en %s: %w%s", dir, runErr, detalle)
 		}
 	}
 	// Para recortar los paths absolutos hay que probar las dos formas del
