@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"codeguard/internal/baseline"
 	"codeguard/internal/config"
 	"codeguard/internal/daemon"
+	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/pipeline"
 )
@@ -58,6 +60,18 @@ func baselineCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Lo que se acepta se ENSEÑA antes de aceptarlo.
+			//
+			// Aceptar una baseline es decir "todo esto deja de bloquear para
+			// siempre", y hasta aquí el comando lo hacía con un número al final
+			// —"198 hallazgos suprimidos"— sin decir de qué. Lo señaló el agente
+			// que trabaja en bds.portal: entre los 195 que iba a aceptar había
+			// una llave de API escribiéndose en los registros, que se arregla
+			// borrando una línea. Aceptarla habría sido enterrarla, y en un
+			// minuto de trabajo se resolvía. Un resumen que hay que ir a buscar
+			// a otro comando es un resumen que nadie mira.
+			mostrarLoQueSeAcepta(res.Findings)
+
 			n, err := baseline.Write(repoRoot, res.Findings)
 			if err != nil {
 				return err
@@ -70,4 +84,53 @@ func baselineCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// mostrarLoQueSeAcepta desglosa la deuda por pilar y saca a la luz los
+// hallazgos de seguridad uno por uno.
+//
+// El desglose por pilar es contexto; la lista de seguridad es el punto. Un
+// hallazgo de seguridad que entra a la baseline deja de bloquear para siempre,
+// y algunos se arreglan en un minuto —una línea que sobra, una llamada que no
+// debía estar—. La diferencia entre "deuda aceptada a conciencia" y "problema
+// enterrado" es exactamente si alguien los vio antes de firmar.
+func mostrarLoQueSeAcepta(fs []finding.Finding) {
+	if len(fs) == 0 {
+		return
+	}
+	porPilar := map[finding.Pillar]int{}
+	var seguridad []finding.Finding
+	for _, f := range fs {
+		porPilar[f.Pillar]++
+		if f.Pillar == finding.Security {
+			seguridad = append(seguridad, f)
+		}
+	}
+	fmt.Println("\nvas a aceptar como deuda:")
+	for _, p := range []finding.Pillar{finding.Security, finding.Data, finding.Quality} {
+		if porPilar[p] > 0 {
+			fmt.Printf("  %-10s %d\n", string(p), porPilar[p])
+		}
+	}
+
+	if len(seguridad) == 0 {
+		return
+	}
+	sort.Slice(seguridad, func(a, b int) bool {
+		if seguridad[a].File != seguridad[b].File {
+			return seguridad[a].File < seguridad[b].File
+		}
+		return seguridad[a].Line < seguridad[b].Line
+	})
+	fmt.Printf("\nlos %d de SEGURIDAD, uno por uno — revísalos antes de enterrarlos:\n", len(seguridad))
+	const tope = 20
+	for i, f := range seguridad {
+		if i == tope {
+			fmt.Printf("  … y %d más (el informe completo: codeguard report --avisos)\n", len(seguridad)-tope)
+			break
+		}
+		fmt.Printf("  %s:%d  [%s] %s\n", f.File, f.Line, f.RuleKey, f.Message)
+	}
+	fmt.Println("\nSi alguno se arregla en un minuto, arréglalo AHORA y vuelve a correr esto:")
+	fmt.Println("lo que entre aquí deja de bloquear para siempre, en tu máquina y en el CI.")
 }
