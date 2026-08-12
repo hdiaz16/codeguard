@@ -322,3 +322,28 @@ func TestConstruirPayloadLlevaElCodigoSenalado(t *testing.T) {
 		t.Errorf("la línea culpable debe venir marcada: %+v", f.Snippet[2])
 	}
 }
+
+// Un proyecto sembrado del registro NO puede afirmar que la paridad con el CI
+// está rota: nadie la ha comprobado todavía.
+//
+// El panel enseña el aviso amarillo cuando ci_parity es false, y false es el
+// cero de Go. Al sembrar el placeholder sin fijar el campo, bds.portal —un repo
+// sano, con su rulepack instalado y resuelto— aparecía acusando "tu rulepack no
+// coincide, no puedo garantizar que pase el CI". El arreglo del panel vacío
+// (1.3.0) trajo puesto este otro fallo.
+func TestElProyectoSembradoNoAcusaFaltaDeParidad(t *testing.T) {
+	uno := repoEnDisco(t, "portal")
+	e, _ := escritorioDePrueba([]registry.Repo{uno})
+
+	e.sembrarDesdeRegistro()
+
+	if e.activo == nil {
+		t.Fatal("el sembrado debia dejar un contexto activo")
+	}
+	if !e.activo.CIParity {
+		t.Error("sin analisis no hay paridad rota que reportar: el panel ensenaria un aviso inventado")
+	}
+	if e.activo.Verdict != "—" || e.activo.At != "sin analisis" && e.activo.At != "sin análisis" {
+		t.Errorf("el placeholder debe verse como lo que es: %+v", e.activo)
+	}
+}

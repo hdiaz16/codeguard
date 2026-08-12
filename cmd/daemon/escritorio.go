@@ -520,6 +520,16 @@ func (e *escritorio) altaDeProyectosEnrolados() {
 		if _, ya := e.porProyecto[root]; !ya {
 			e.porProyecto[root] = &panelPayload{
 				Repo: r.Nombre, RepoRoot: root, Verdict: "—", At: "sin análisis",
+				// CIParity en true a propósito: el panel enseña el aviso de
+				// paridad cuando es false, y el cero de Go es false. Sin esta
+				// línea, un proyecto que NUNCA se ha analizado aparecía
+				// afirmando "tu rulepack no coincide — no puedo garantizar que
+				// pase el CI", que es una acusación inventada sobre un repo
+				// perfectamente sano. Pasó con bds.portal en cuanto se sembró
+				// el panel desde el registro (1.3.0). La paridad sólo se puede
+				// romper cuando un análisis la comprueba; mientras no lo haya,
+				// no hay nada que avisar.
+				CIParity: true,
 			}
 		}
 	}

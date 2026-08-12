@@ -1,4 +1,4 @@
-﻿; =============================================================================
+; =============================================================================
 ; CodeGuard - paquete instalador (Inno Setup 6)
 ; Un solo CodeGuard-Setup.exe: asistente grafico, desinstalador registrado en
 ; "Aplicaciones instaladas" y modo silencioso (/VERYSILENT) para reparto
@@ -10,7 +10,7 @@
 ; =============================================================================
 
 #define MyAppName "CodeGuard"
-#define MyAppVersion "1.5.0"
+#define MyAppVersion "1.5.1"
 #define MyAppExe "codeguard.exe"
 #define MyDaemonExe "codeguard-daemon.exe"
 
