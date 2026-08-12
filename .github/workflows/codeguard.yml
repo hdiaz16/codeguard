@@ -105,6 +105,37 @@ jobs:
             Write-Host "$($pack.Name): $($ids.Count) reglas, todas con test"
           }
 
+      # Nos auditamos a nosotros mismos, y este paso SÍ tumba el job.
+      #
+      # `codeguard engines` comprueba que cada motor sea el binario que publicó
+      # su autor. Esto comprueba la otra mitad: que lo que publicó su autor no
+      # arrastre CVEs conocidos. Un motor puede coincidir con su hash a la
+      # perfección y traer dentro una dependencia vulnerable — el hash sólo
+      # prueba que nadie lo manipuló por el camino.
+      #
+      # Repartimos nueve binarios a las máquinas del equipo. Una herramienta que
+      # exige no desplegar dependencias vulnerables y no se mira a sí misma pide
+      # una confianza que no se ganó.
+      - name: Auditar los motores que distribuimos (CVEs propios)
+        shell: pwsh
+        run: |
+          $engines = Join-Path $env:LOCALAPPDATA "CodeGuard\engines"
+          New-Item -ItemType Directory -Force $engines | Out-Null
+          # trivy es el que audita, así que tiene que estar donde el comando lo busca.
+          $v = (Get-Content internal\engines\identidad\motores.json -Raw | ConvertFrom-Json).motores.trivy.versiones | Select-Object -Last 1
+          Invoke-WebRequest -Uri $v.url -OutFile "$env:TEMP\trivy.zip" -UseBasicParsing
+          $h = (Get-FileHash "$env:TEMP\trivy.zip" -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $v.sha256_zip) {
+            Write-Host "::error::el zip de trivy no coincide con el checksum fijado ($h)"
+            exit 1
+          }
+          Expand-Archive "$env:TEMP\trivy.zip" "$env:TEMP\trivy" -Force
+          Copy-Item "$env:TEMP\trivy\trivy.exe" $engines -Force
+          Copy-Item (Get-Command gitleaks).Source $engines -Force -ErrorAction SilentlyContinue
+          Copy-Item (Get-Command govulncheck).Source $engines -Force -ErrorAction SilentlyContinue
+          Copy-Item (Get-Command staticcheck).Source $engines -Force -ErrorAction SilentlyContinue
+          ./codeguard.exe engines --auditar
+
       # El commit base no siempre existe: en el primer push de un repo
       # github.event.before son ceros, y tras un push forzado apunta a un
       # commit que ya no está. En ambos casos `git diff base..head` falla y se
