@@ -145,9 +145,20 @@ func reportCmd() *cobra.Command {
 			if len(resueltos) > 0 {
 				fmt.Printf("  RESUELTOS desde el informe anterior: %d\n", len(resueltos))
 			}
-			if len(bloq) == 0 {
+			// Lo que no se revisó se dice ANTES del veredicto, no en una línea
+			// suelta después: leído en ese orden, "no quedan bloqueantes" ya no
+			// se puede confundir con "está limpio".
+			capas := explicarCapas(res.Degraded)
+			for _, c := range capas {
+				fmt.Println("\n  ⚠️  " + textoPlano(c))
+			}
+			switch {
+			case len(bloq) == 0 && len(capas) == 0:
 				fmt.Println("\n  ✅ COMPLETADO: no quedan bloqueantes")
-			} else {
+			case len(bloq) == 0:
+				fmt.Println("\n  ⚠️  PARCIAL: sin bloqueantes en lo que sí se revisó, pero el")
+				fmt.Println("      análisis está incompleto. Esto NO es un visto bueno.")
+			default:
 				fmt.Println("\n  entrégale el archivo a tu agente: \"resuelve .codeguard/HALLAZGOS.md\"")
 			}
 			return nil
@@ -218,15 +229,38 @@ func construirInforme(cfg *config.Config, res *pipeline.Result, bloq, avisos []f
 
 	var b strings.Builder
 	fecha := time.Now().Format("2006-01-02 15:04")
-	completado := len(bloq) == 0
+	capas := explicarCapas(res.Degraded)
+	// COMPLETADO exige las DOS cosas: que no queden bloqueantes y que se haya
+	// revisado todo. Antes bastaba lo primero, y con el rulepack sin instalar
+	// el informe encabezaba "✅ COMPLETADO" con las 119 reglas de la casa sin
+	// ejecutar — y unas líneas más abajo le decía al agente de código que ese
+	// encabezado "es el criterio de terminado, no tu impresión de haber
+	// terminado". Una máquina leyendo eso da el trabajo por bueno con la
+	// compuerta principal apagada.
+	completado := len(bloq) == 0 && len(capas) == 0
 
 	fmt.Fprintf(&b, "# Hallazgos de CodeGuard\n\n")
-	if completado {
+	switch {
+	case completado:
 		fmt.Fprintf(&b, "> ## ✅ COMPLETADO — no quedan hallazgos bloqueantes\n>\n")
 		fmt.Fprintf(&b, "> Generado el %s · rulepack `%s`\n\n", fecha, cfg.Rulepack)
-	} else {
+	case len(bloq) == 0:
+		fmt.Fprintf(&b, "> ## ⚠️ PARCIAL — sin bloqueantes EN LO QUE SÍ SE REVISÓ\n>\n")
+		fmt.Fprintf(&b, "> Este análisis no está completo, así que no vale como visto bueno:\n>\n")
+		for _, c := range capas {
+			fmt.Fprintf(&b, "> - %s\n", c)
+		}
+		fmt.Fprintf(&b, ">\n> Generado el %s · rulepack `%s`\n\n", fecha, cfg.Rulepack)
+	default:
 		fmt.Fprintf(&b, "> **Estado: %d bloqueante(s) pendiente(s)** · generado el %s · rulepack `%s`\n\n",
 			len(bloq), fecha, cfg.Rulepack)
+		if len(capas) > 0 {
+			fmt.Fprintf(&b, "> ⚠️ Y el análisis está INCOMPLETO, así que puede haber más:\n>\n")
+			for _, c := range capas {
+				fmt.Fprintf(&b, "> - %s\n", c)
+			}
+			b.WriteString(">\n")
+		}
 	}
 
 	b.WriteString(`## Instrucciones para el agente de código
@@ -243,8 +277,13 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
    - lint: ` + "`go vet ./...`" + ` / ` + "`ruff check <archivo>`" + `
 5. **Al terminar, ejecuta ` + "`codeguard report`" + ` otra vez.** El informe se regenera:
    lo resuelto pasa a la sección "✅ Resueltos" y, cuando no quede ningún
-   bloqueante, el encabezado dirá **COMPLETADO**. Ese es el criterio de terminado —
-   no tu impresión de haber terminado.
+   bloqueante **y todas las capas hayan corrido**, el encabezado dirá
+   **COMPLETADO**. Ese es el criterio de terminado — no tu impresión de haber
+   terminado.
+   Si el encabezado dice **PARCIAL**, el trabajo NO está terminado por mucho que
+   no queden bloqueantes: significa que una capa del análisis no se ejecutó y
+   nadie sabe qué habría encontrado. Arregla primero lo que el encabezado
+   indique y vuelve a generar el informe.
 6. Si un hallazgo te parece un falso positivo, **no lo silencies**: anótalo en la
    sección "Discrepancias" al final y sigue con los demás.
 
@@ -345,4 +384,58 @@ func listaOVacio(xs []string) string {
 		return "ninguna"
 	}
 	return "`" + strings.Join(xs, "`, `") + "`"
+}
+
+// textoPlano quita el markdown de un aviso pensado para el informe, para poder
+// reusar el MISMO texto en la terminal. Dos redacciones distintas del mismo
+// aviso acaban divergiendo, y entonces una de las dos miente.
+func textoPlano(s string) string {
+	return strings.NewReplacer("**", "", "`", "").Replace(s)
+}
+
+// explicarCapas traduce las etiquetas crudas de degradación a algo que se pueda
+// leer y actuar: qué dejó de revisarse y qué hacer al respecto.
+//
+// Existe porque las etiquetas se escribieron para el log —`rulepack-ausente:…`,
+// `semgrep:plazo`, `falta:trivy`— y acabaron siendo lo único que veía el
+// desarrollador, en una línea suelta, mientras el encabezado del informe decía
+// COMPLETADO. Una etiqueta que sólo entiende quien escribió el código no es un
+// aviso: es un adorno.
+//
+// Devuelve vacío cuando no falta nada, y ESO es lo que permite declarar
+// COMPLETADO. La lista no distingue por gravedad a propósito: cualquier capa
+// que no corre deja un hueco que nadie ha mirado.
+func explicarCapas(degraded []string) []string {
+	var out []string
+	for _, d := range degraded {
+		switch {
+		case strings.HasPrefix(d, "rulepack-ausente:"):
+			v := strings.TrimPrefix(d, "rulepack-ausente:")
+			out = append(out, fmt.Sprintf(
+				"**Las reglas de la casa NO se aplicaron**: este repo apunta al rulepack `%s` "+
+					"y no está instalado. El CI sí las aplica, así que puede rechazar lo que aquí pasó. "+
+					"Arréglalo con `codeguard repair`.", v))
+		case d == "daemon:offline":
+			out = append(out, "El agente no estaba corriendo: la revisión fue en frío y sin caché, "+
+				"y suele arrastrar otras capas. Arráncalo y repite.")
+		case strings.HasSuffix(d, ":plazo"):
+			m := strings.TrimSuffix(d, ":plazo")
+			out = append(out, fmt.Sprintf(
+				"`%s` no cupo en el plazo y no revisó nada. La primera corrida es la cara "+
+					"(compilar, arrancar node); repite y con el caché tibio debería entrar.", m))
+		case strings.HasPrefix(d, "falta:"):
+			m := strings.TrimPrefix(d, "falta:")
+			out = append(out, fmt.Sprintf(
+				"`%s` no está instalado, así que su capa no se revisó. Instálalo con "+
+					"`codeguard repair` para tener la misma cobertura que el CI.", m))
+		case strings.HasSuffix(d, ":error"):
+			m := strings.TrimSuffix(d, ":error")
+			out = append(out, fmt.Sprintf(
+				"`%s` falló y no revisó nada. El motivo está en el log del agente "+
+					"(`%%LOCALAPPDATA%%\\CodeGuard\\daemon.log`).", m))
+		default:
+			out = append(out, fmt.Sprintf("`%s` no se revisó.", d))
+		}
+	}
+	return out
 }
