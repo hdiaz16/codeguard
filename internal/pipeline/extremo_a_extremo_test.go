@@ -57,6 +57,28 @@ type violacion struct {
 	requiere string
 }
 
+// El módulo con una dependencia vulnerable FIJADA, y el código que la llama.
+//
+// yaml.v2 v2.2.2 se elige por vieja y con CVE público: una vulnerabilidad
+// reciente puede desaparecer del feed o cambiar de severidad, y dejaría la
+// prueba en rojo por algo que no es nuestro.
+//
+// Los dos archivos van juntos porque prueban cosas distintas del mismo hecho:
+// trivy dice "el CVE está en tu manifiesto"; govulncheck demuestra que tu
+// código LLAMA al símbolo vulnerable. Un fixture que sólo declarara la
+// dependencia haría pasar a govulncheck sin ejercitar la alcanzabilidad, que es
+// exactamente lo único que aporta sobre trivy.
+const (
+	modConDependenciaVulnerable = "module fixture\n\ngo 1.21\n\n" +
+		"require gopkg.in/yaml.v2 v2.2.2\n"
+
+	usaSimboloVulnerable = "package fixture\n\nimport \"gopkg.in/yaml.v2\"\n\n" +
+		"func Cargar(datos []byte) (map[string]any, error) {\n" +
+		"\tvar m map[string]any\n" +
+		"\terr := yaml.Unmarshal(datos, &m)\n" +
+		"\treturn m, err\n}\n"
+)
+
 // elSecreto va aparte: bloquea la etapa 1 y con él dentro no corre nada más,
 // así que se prueba en su propia fase.
 const elSecreto = "# fixture de verificación — token inventado, no es una credencial real\n" +
@@ -133,6 +155,31 @@ func violaciones() []violacion {
 			requiere: "mypy instalado Y configurado por el repo",
 		},
 		{
+			// El manifiesto con una dependencia vulnerable fijada. yaml.v2
+			// v2.2.2 se elige por vieja y con CVE publico: una vulnerabilidad
+			// reciente puede desaparecer del feed y dejar la prueba en rojo por
+			// algo que no es nuestro.
+			motor:     "trivy",
+			archivo:   "go.mod",
+			contenido: modConDependenciaVulnerable,
+			porQue:    "trivy: dependencia con CVE declarada en el manifiesto",
+			requiere:  "red la primera vez (descargar el módulo)",
+		},
+		{
+			// Y el MISMO módulo, pero llamando al símbolo vulnerable.
+			//
+			// Es la diferencia entre los dos motores y hay que probarla así:
+			// trivy dice "el CVE está en tu go.sum"; govulncheck demuestra que
+			// tu código lo LLAMA. Un fixture que sólo declarara la dependencia
+			// haría pasar a govulncheck sin ejercitar la alcanzabilidad, que es
+			// justo lo único que aporta sobre trivy.
+			motor:     "govulncheck",
+			archivo:   "usayaml.go",
+			contenido: usaSimboloVulnerable,
+			porQue:    "govulncheck: llama a yaml.Unmarshal, símbolo vulnerable alcanzable",
+			requiere:  "red la primera vez (descargar el módulo)",
+		},
+		{
 			motor:     "dotnet-format",
 			archivo:   "src/Malformato.cs",
 			contenido: "public class Malformato{\npublic void M(){\nint x=1;\n}\n}\n",
@@ -157,8 +204,6 @@ func violaciones() []violacion {
 // un motor que nadie prueba y que además nadie MENCIONA desaparece del informe,
 // y entonces "todo verde" significa menos de lo que parece.
 var sinPruebaTodavia = map[string]string{
-	"trivy":       "necesita un manifiesto con dependencias vulnerables reales",
-	"govulncheck": "necesita un go.sum con una vulnerabilidad alcanzable",
 	"tsc":         "necesita un proyecto TypeScript con tsconfig",
 	"eslint":      "sólo aplica si el repo configura eslint o biome",
 	"dotnet-vuln": "necesita packages.lock.json con un CVE",
@@ -305,8 +350,27 @@ func montarRepo(t *testing.T) string {
 	for _, v := range violaciones() {
 		escribir(t, repo, v.archivo, v.contenido)
 	}
+	// El módulo tiene que resolverse: sin go.sum, govulncheck y staticcheck no
+	// pueden cargar los paquetes y las dos casillas saldrían sin probar por un
+	// motivo que no es suyo.
+	resolverModuloGo(t, repo)
 	git(t, repo, "add", "-A")
 	return repo
+}
+
+// resolverModuloGo genera el go.sum del fixture. La primera vez necesita red
+// para bajar el módulo; después vive en la caché de módulos de la máquina.
+//
+// Si falla no se aborta: las casillas de trivy y govulncheck saldrán sin cazar
+// y se verá en la tabla, que es mejor que un fallo con un motivo confuso.
+func resolverModuloGo(t *testing.T, repo string) {
+	t.Helper()
+	c := exec.Command("go", "mod", "tidy")
+	c.Dir = repo
+	c.Env = append(sinGOROOT(os.Environ()), "GOFLAGS=-mod=mod")
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Logf("go mod tidy falló (¿sin red?): las casillas de dependencias saldrán sin probar: %v\n%s", err, out)
+	}
 }
 
 // restaurarProyectoDotnet deja el .csproj listo para compilar sin red. Si no
