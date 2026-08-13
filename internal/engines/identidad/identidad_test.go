@@ -1,8 +1,11 @@
 package identidad
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -55,6 +58,77 @@ func TestBinarioAlteradoNoPasa(t *testing.T) {
 		return
 	}
 	t.Fatal("Verificar no reportó gitleaks")
+}
+
+// Dos versiones que se instalan en la MISMA ruta.
+//
+// Es el caso de gitleaks y trivy: sin campo "instalado", todas sus versiones son
+// <motor>.exe. Estuvo latente mientras cada motor tenía una sola versión en el
+// manifiesto, y salió al añadir la segunda: se comparaba contra la primera del
+// arreglo, no coincidía, y se devolvía Desconocido sin llegar a mirar el hash de
+// la versión instalada de verdad.
+//
+// El daño no era teórico: la compuerta de identidad decía que el gitleaks
+// correcto y recién verificado "no coincide con ninguna versión publicada",
+// junto al aviso de que un gitleaks manipulado puede no reportar un solo
+// secreto. Una alarma falsa en la compuerta más importante se desactiva sola en
+// la cabeza de quien la lee.
+func TestUnaVersionNuevaEnLaMismaRutaSeReconoce(t *testing.T) {
+	original := cargado
+	defer func() { cargado = original }()
+
+	dir := t.TempDir()
+	contenido := []byte("soy la version nueva")
+	if err := os.WriteFile(filepath.Join(dir, "prueba.exe"), contenido, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	suma := sha256.Sum256(contenido)
+	nueva := hex.EncodeToString(suma[:])
+
+	cargado = manifiesto{Motores: map[string]Motor{
+		"prueba": {Critico: true, Versiones: []Version{
+			// La vieja va primera, como en el archivo real, y su hash NO es el
+			// del archivo instalado.
+			{Version: "1.0.0", SHA256Exe: strings.Repeat("a", 64)},
+			{Version: "1.0.1", SHA256Exe: nueva},
+		}},
+	}}
+
+	res := Verificar(dir)
+	if len(res) != 1 {
+		t.Fatalf("esperaba un motor, hubo %d", len(res))
+	}
+	if res[0].Estado != Verificado {
+		t.Fatalf("el binario instalado ES la 1.0.1 y está en el manifiesto; quedó como %q (%s)",
+			res[0].Estado, res[0].Detalle)
+	}
+	if res[0].Version != "1.0.1" {
+		t.Errorf("debería nombrar la versión que de verdad está instalada, dijo %q", res[0].Version)
+	}
+}
+
+// Y el reverso, que es lo que no puede romperse al arreglar lo anterior: si el
+// archivo no encaja con NINGUNA de las versiones conocidas, sigue siendo
+// desconocido. Ampliar la comparación no puede convertirse en aceptar cualquier
+// cosa.
+func TestSiNoEncajaConNingunaSigueSiendoDesconocido(t *testing.T) {
+	original := cargado
+	defer func() { cargado = original }()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "prueba.exe"), []byte("binario ajeno"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cargado = manifiesto{Motores: map[string]Motor{
+		"prueba": {Critico: true, Versiones: []Version{
+			{Version: "1.0.0", SHA256Exe: strings.Repeat("a", 64)},
+			{Version: "1.0.1", SHA256Exe: strings.Repeat("b", 64)},
+		}},
+	}}
+	if res := Verificar(dir); res[0].Estado != Desconocido {
+		t.Fatalf("un binario que no es ninguna de las dos debe quedar como %q, quedó como %q",
+			Desconocido, res[0].Estado)
+	}
 }
 
 func TestMotorAusenteSeDistingueDeAlterado(t *testing.T) {

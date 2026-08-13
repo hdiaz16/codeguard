@@ -109,23 +109,41 @@ func Verificar(dirMotores string) []Resultado {
 	return out
 }
 
-// verificarMotor prueba la ruta de instalación de CADA versión conocida y se
-// queda con la primera que exista.
+// verificarMotor prueba la ruta de instalación de CADA versión conocida, se
+// queda con la primera que exista, y compara su huella contra TODAS las
+// versiones que se instalan en esa misma ruta.
 //
-// Recorrer las versiones —y no una ruta fija— es lo que permite que un motor se
-// instale con la versión en el nombre (pmd-bin-7.26.0). Para gitleaks y trivy no
-// cambia nada: sin campo "instalado" todas sus versiones apuntan al mismo
-// <motor>.exe, así que la primera existente es esa y el comportamiento es el de
-// siempre, incluido reportar Desconocido cuando el archivo está pero su hash no
-// coincide con ninguno.
+// Lo segundo es lo que arregla un fallo que estuvo latente hasta que un motor
+// tuvo dos versiones en el manifiesto. Recorrer las versiones —y no una ruta
+// fija— es lo que permite instalar con la versión en el nombre (pmd-bin-7.26.0);
+// pero gitleaks y trivy no llevan campo "instalado", así que TODAS sus versiones
+// resuelven al mismo <motor>.exe. La versión anterior comparaba contra la
+// primera del arreglo y se rendía: con 8.30.1 instalado, comparaba contra el
+// hash de 8.30.0, no coincidía, y devolvía Desconocido sin llegar a mirar el de
+// 8.30.1 — que estaba en el manifiesto y encajaba.
+//
+// El resultado era una falsa alarma en la compuerta de identidad, y encima en el
+// motor marcado como crítico: "no coincide con ninguna versión publicada" y el
+// aviso de que un gitleaks manipulado puede no reportar un solo secreto, con el
+// binario correcto y recién verificado delante. Una compuerta que grita cuando
+// no pasa nada se desactiva sola en la cabeza de quien la lee, y entonces no
+// sirve el día que grite de verdad.
 func verificarMotor(dirMotores, nombre string, m Motor) Resultado {
 	r := Resultado{Motor: nombre, Critico: m.Critico}
 	// Cuando no hay nada instalado, la ruta que se enseña es la de la versión
 	// más reciente que conocemos: es donde debería estar.
 	r.Ruta = filepath.Join(dirMotores, rutaInstalada(nombre, ultima(m.Versiones)))
 
+	probadas := map[string]bool{}
 	for _, v := range m.Versiones {
-		ruta := filepath.Join(dirMotores, rutaInstalada(nombre, v))
+		rel := rutaInstalada(nombre, v)
+		clave := strings.ToLower(rel)
+		if probadas[clave] {
+			continue // otra versión que se instala en el mismo sitio; ya se miró
+		}
+		probadas[clave] = true
+
+		ruta := filepath.Join(dirMotores, rel)
 		suma, err := huellaDe(ruta)
 		if os.IsNotExist(err) {
 			continue
@@ -136,9 +154,18 @@ func verificarMotor(dirMotores, nombre string, m Motor) Resultado {
 			return r
 		}
 		r.SHA256 = suma
-		if strings.EqualFold(v.SHA256Exe, suma) {
-			r.Estado, r.Version = Verificado, v.Version
-			return r
+		// Contra todas las que comparten esta ruta, de la más nueva a la más
+		// vieja: si dos versiones tuvieran el mismo hash, la que se nombra es la
+		// reciente.
+		for i := len(m.Versiones) - 1; i >= 0; i-- {
+			c := m.Versiones[i]
+			if !strings.EqualFold(rutaInstalada(nombre, c), rel) {
+				continue
+			}
+			if strings.EqualFold(c.SHA256Exe, suma) {
+				r.Estado, r.Version = Verificado, c.Version
+				return r
+			}
 		}
 		r.Estado = Desconocido
 		r.Detalle = "no coincide con ninguna versión publicada que conozcamos"
