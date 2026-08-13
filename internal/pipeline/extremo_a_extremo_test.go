@@ -79,6 +79,26 @@ const (
 		"\treturn m, err\n}\n"
 )
 
+// El proyecto de C# del fixture: declara una dependencia con aviso conocido y
+// pide el lockfile.
+//
+// RestorePackagesWithLockFile no es un detalle. Sin packages.lock.json,
+// `dotnet list package --vulnerable` no encuentra NADA en un .csproj —lo dice
+// el propio motor en su cabecera, y es el hueco que trivy no cubre—, así que la
+// casilla habría quedado verde sin analizar.
+//
+// System.Net.Http 4.3.0 se elige por vieja y con aviso publicado
+// (GHSA-7jgj-8wvc-jh57), por el mismo motivo que yaml.v2 en Go: un aviso
+// reciente puede moverse y dejar la prueba roja por algo ajeno.
+const csprojConDependenciaVulnerable = "<Project Sdk=\"Microsoft.NET.Sdk\">\n" +
+	"  <PropertyGroup>\n" +
+	"    <TargetFramework>net10.0</TargetFramework>\n" +
+	"    <Nullable>disable</Nullable>\n" +
+	"    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>\n" +
+	"  </PropertyGroup>\n  <ItemGroup>\n" +
+	"    <PackageReference Include=\"System.Net.Http\" Version=\"4.3.0\" />\n" +
+	"  </ItemGroup>\n</Project>\n"
+
 // elSecreto va aparte: bloquea la etapa 1 y con él dentro no corre nada más,
 // así que se prueba en su propia fase.
 const elSecreto = "# fixture de verificación — token inventado, no es una credencial real\n" +
@@ -180,6 +200,17 @@ func violaciones() []violacion {
 			requiere:  "red la primera vez (descargar el módulo)",
 		},
 		{
+			// El hueco que trivy NO cubre: sin packages.lock.json no encuentra
+			// nada en un .csproj. La "violación" vive en el propio proyecto —la
+			// dependencia declarada— y este .cs sólo existe para que el motor
+			// tenga un archivo de C# tocado por el que aplicar.
+			motor:     "dotnet-vuln",
+			archivo:   "src/Vulnerable.cs",
+			contenido: "public class Vulnerable { public void M() { } }\n",
+			porQue:    "dotnet-vuln: System.Net.Http 4.3.0, aviso de severidad alta",
+			requiere:  "SDK de .NET y red la primera vez",
+		},
+		{
 			motor:     "dotnet-format",
 			archivo:   "src/Malformato.cs",
 			contenido: "public class Malformato{\npublic void M(){\nint x=1;\n}\n}\n",
@@ -204,9 +235,8 @@ func violaciones() []violacion {
 // un motor que nadie prueba y que además nadie MENCIONA desaparece del informe,
 // y entonces "todo verde" significa menos de lo que parece.
 var sinPruebaTodavia = map[string]string{
-	"tsc":         "necesita un proyecto TypeScript con tsconfig",
-	"eslint":      "sólo aplica si el repo configura eslint o biome",
-	"dotnet-vuln": "necesita packages.lock.json con un CVE",
+	"tsc":    "necesita un proyecto TypeScript con tsconfig",
+	"eslint": "sólo aplica si el repo configura eslint o biome",
 }
 
 var (
@@ -411,10 +441,7 @@ func repoBase(t *testing.T) string {
 	// Un proyecto de C# de verdad: `dotnet format` y `dotnet build` trabajan
 	// sobre proyectos, no sobre .cs sueltos, así que sin esto las dos casillas
 	// saldrían "no aplica" sin haber probado nada.
-	escribir(t, repo, "src/App.csproj",
-		"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n"+
-			"    <TargetFramework>net10.0</TargetFramework>\n"+
-			"    <Nullable>disable</Nullable>\n  </PropertyGroup>\n</Project>\n")
+	escribir(t, repo, "src/App.csproj", csprojConDependenciaVulnerable)
 	escribir(t, repo, ".codeguard/config.yaml",
 		"version: 1\nrulepack: \"2026.08.2\"\nmax_diff_lines: 5000\n"+
 			"paths:\n  migrations: [\"migrations/*.sql\"]\n  migrations_dialect: postgres\n")
