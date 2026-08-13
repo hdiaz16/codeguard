@@ -36,6 +36,14 @@
           "sha256_zip": "54fe94f644b832dd08e8c3a5915efb3bfa862386d59fb27ca0792cb687a83573",
           "sha256_exe": "9d08e3f5cfb35a98f230b97bcda24f8d3fc66363c91868ffc98dac0afebdcb72",
           "fuente": "gitleaks_8.30.0_checksums.txt"
+        },
+        {
+          "version": "8.30.1",
+          "artefacto": "gitleaks_8.30.1_windows_x64.zip",
+          "url": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip",
+          "sha256_zip": "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e",
+          "sha256_exe": "17157e2ee8b76fc8b1d8bee607a250e34b8a8023c8bc81822d4b5ee4d78fcb7c",
+          "fuente": "gitleaks_8.30.1_checksums.txt"
         }
       ]
     },
@@ -49,6 +57,14 @@
           "sha256_zip": "382250158fb9431ff9b87904205027b066a544234b8952b2dd764bd712d55387",
           "sha256_exe": "e4a8c8414258c22cd532b73470d544087208bace64bc2ad9c44afa4a94bb33d1",
           "fuente": "trivy_0.71.0_checksums.txt"
+        },
+        {
+          "version": "0.73.0",
+          "artefacto": "trivy_0.73.0_windows-64bit.zip",
+          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.73.0/trivy_0.73.0_windows-64bit.zip",
+          "sha256_zip": "d2d3ad5292aae470a03eb6506db86fce81b1894592b8451cadaf60eaa22f2025",
+          "sha256_exe": "3f8d0a3f4306a628cccb0704ab5f9ab6589a8ff17f89d943722d551cdf8940ef",
+          "fuente": "trivy_0.73.0_checksums.txt"
         }
       ]
     },
@@ -81,7 +97,28 @@
       ]
     }
   },
-  "_comentario_paquetes": "Motores que NO descargamos nosotros: los trae pip o el toolchain de Go. No llevan hash porque su gestor ya verifica la integridad (PyPI firma, GOSUMDB comprueba las sumas), pero SI llevan version fijada. Sin ella, el CI y la maquina de cada quien instalan lo que haya ese dia: dos motores distintos aplicando reglas distintas, y la paridad local/CI -que es la promesa central del producto- deja de estar garantizada sin que nadie lo note. Esta es la UNICA fuente de verdad: la leen dist/engines.ps1 y el workflow del CI.",
+  "_comentario_paquetes": [
+    "Motores que NO descargamos nosotros: los trae pip o el toolchain de Go. No",
+    "llevan hash porque su gestor ya verifica la integridad (PyPI firma, GOSUMDB",
+    "comprueba las sumas), pero SI llevan version fijada. Sin ella, el CI y la",
+    "maquina de cada quien instalan lo que haya ese dia: dos motores distintos",
+    "aplicando reglas distintas, y la paridad local/CI -que es la promesa central",
+    "del producto- deja de estar garantizada sin que nadie lo note. Esta es la",
+    "UNICA fuente de verdad: la leen dist/engines.ps1 y el workflow del CI.",
+    "",
+    "gitleaks estuvo aqui y se saco a proposito. El CI lo compilaba con SU",
+    "toolchain de Go mientras cada equipo descarga el binario que publica",
+    "gitleaks: misma version en la etiqueta, bytes distintos, stdlib distinta.",
+    "Fijar la version daba una sensacion de paridad que los binarios no tenian, y",
+    "encima el que se auditaba no era el que corre la gente. Justo en el unico",
+    "motor fail-closed. Ahora el CI descarga y verifica el mismo artefacto.",
+    "",
+    "govulncheck y staticcheck si se quedan: en las maquinas tambien se compilan",
+    "con `go install`, asi que compilarlos en el CI ES la paridad. Ojo con una",
+    "consecuencia: heredan la stdlib del Go que los compilo, y un Go viejo les",
+    "mete CVEs que no son suyos. Salen en `engines --auditar` diciendo la version",
+    "de stdlib, y se arreglan actualizando Go y reinstalandolos."
+  ],
   "paquetes": {
     "pip": {
       "semgrep": "1.172.0",
@@ -97,10 +134,6 @@
       "staticcheck": {
         "modulo": "honnef.co/go/tools/cmd/staticcheck",
         "version": "v0.7.0"
-      },
-      "gitleaks": {
-        "modulo": "github.com/zricethezav/gitleaks/v8",
-        "version": "v8.30.0"
       }
     }
   }

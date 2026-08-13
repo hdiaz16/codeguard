@@ -45,6 +45,12 @@ jobs:
       # aqui, pasa alla"- de la peor manera: intermitente, y meses despues,
       # cuando una regla cambia de comportamiento entre dos versiones.
       #
+      # gitleaks se DESCARGA con su hash, no se compila. Fijar la version no
+      # bastaba: `go install gitleaks@v8.30.0` en el CI y el zip oficial en las
+      # maquinas dan binarios distintos -otra stdlib, otro build- con la misma
+      # etiqueta. Ahora el CI corre exactamente los mismos bytes que la gente, y
+      # la auditoria mide el artefacto que de verdad se reparte.
+      #
       # mypy viaja junto a semgrep para que el CI tenga el MISMO juego de
       # motores que una maquina de desarrollo: si un .py con configuracion de
       # tipos entra al repo, la compuerta corre aqui igual y no aparece como
@@ -53,18 +59,41 @@ jobs:
         shell: pwsh
         run: |
           $m = Get-Content internal/engines/identidad/motores.json -Raw | ConvertFrom-Json
-          foreach ($n in @("gitleaks", "govulncheck", "staticcheck")) {
+          $engines = "$env:LOCALAPPDATA\CodeGuard\engines"
+          New-Item -ItemType Directory -Force $engines | Out-Null
+
+          # Descargados y verificados, igual que en el instalador.
+          foreach ($n in @("gitleaks", "trivy")) {
+            $v = $m.motores.$n.versiones | Select-Object -Last 1
+            Write-Host "descargando $n $($v.version)"
+            Invoke-WebRequest -Uri $v.url -OutFile "$env:TEMP\$n.zip" -UseBasicParsing
+            $h = (Get-FileHash "$env:TEMP\$n.zip" -Algorithm SHA256).Hash.ToLower()
+            if ($h -ne $v.sha256_zip) {
+              Write-Host "::error::el zip de $n no coincide con el checksum fijado ($h)"
+              exit 1
+            }
+            Expand-Archive "$env:TEMP\$n.zip" "$env:TEMP\$n" -Force
+            Copy-Item "$env:TEMP\$n\$n.exe" $engines -Force
+          }
+
+          # Compilados, porque en las maquinas tambien se compilan: ahi la
+          # paridad es usar la misma version de modulo, no el mismo binario.
+          foreach ($n in @("govulncheck", "staticcheck")) {
             $spec = $m.paquetes.go.$n
             Write-Host "go install $($spec.modulo)@$($spec.version)"
             go install "$($spec.modulo)@$($spec.version)"
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
+          Copy-Item "$(go env GOPATH)\bin\govulncheck.exe" $engines -Force
+          Copy-Item "$(go env GOPATH)\bin\staticcheck.exe" $engines -Force
+
           $pins = @()
           foreach ($q in $m.paquetes.pip.PSObject.Properties) { $pins += "$($q.Name)==$($q.Value)" }
           Write-Host "pip install $($pins -join ' ')"
           pip install @pins
           if ($LASTEXITCODE -ne 0) { exit 1 }
           echo "$(go env GOPATH)/bin" >> $env:GITHUB_PATH
+          echo "$engines" >> $env:GITHUB_PATH
 
       # Este paso SÍ tumba el job, a diferencia del análisis en sombra: una
       # regla que no compila no es un hallazgo discutible, es cobertura
@@ -137,24 +166,32 @@ jobs:
       # Repartimos nueve binarios a las máquinas del equipo. Una herramienta que
       # exige no desplegar dependencias vulnerables y no se mira a sí misma pide
       # una confianza que no se ganó.
+      # Los motores de Java se instalan AQUI aunque el CI no analice Java: si no,
+      # nadie los mira nunca. En una maquina sin JDK el instalador se los salta,
+      # y la auditoria los reportaba como "sin revisar" -honesto, pero el
+      # resultado practico era que los dos artefactos que repartimos viajaban sin
+      # que nadie les hubiera pasado un escaner jamas. El runner tiene JDK.
       - name: Auditar los motores que distribuimos (CVEs propios)
         shell: pwsh
         run: |
-          $engines = Join-Path $env:LOCALAPPDATA "CodeGuard\engines"
-          New-Item -ItemType Directory -Force $engines | Out-Null
-          # trivy es el que audita, así que tiene que estar donde el comando lo busca.
-          $v = (Get-Content internal\engines\identidad\motores.json -Raw | ConvertFrom-Json).motores.trivy.versiones | Select-Object -Last 1
-          Invoke-WebRequest -Uri $v.url -OutFile "$env:TEMP\trivy.zip" -UseBasicParsing
-          $h = (Get-FileHash "$env:TEMP\trivy.zip" -Algorithm SHA256).Hash.ToLower()
+          $m = Get-Content internal/engines/identidad/motores.json -Raw | ConvertFrom-Json
+          $engines = "$env:LOCALAPPDATA\CodeGuard\engines"
+          $v = $m.motores.'google-java-format'.versiones | Select-Object -Last 1
+          Invoke-WebRequest -Uri $v.url -OutFile "$engines\$($v.instalado)" -UseBasicParsing
+          $h = (Get-FileHash "$engines\$($v.instalado)" -Algorithm SHA256).Hash.ToLower()
           if ($h -ne $v.sha256_zip) {
-            Write-Host "::error::el zip de trivy no coincide con el checksum fijado ($h)"
+            Write-Host "::error::google-java-format no coincide con el checksum fijado ($h)"
             exit 1
           }
-          Expand-Archive "$env:TEMP\trivy.zip" "$env:TEMP\trivy" -Force
-          Copy-Item "$env:TEMP\trivy\trivy.exe" $engines -Force
-          Copy-Item (Get-Command gitleaks).Source $engines -Force -ErrorAction SilentlyContinue
-          Copy-Item (Get-Command govulncheck).Source $engines -Force -ErrorAction SilentlyContinue
-          Copy-Item (Get-Command staticcheck).Source $engines -Force -ErrorAction SilentlyContinue
+          $v = $m.motores.pmd.versiones | Select-Object -Last 1
+          Invoke-WebRequest -Uri $v.url -OutFile "$env:TEMP\pmd.zip" -UseBasicParsing
+          $h = (Get-FileHash "$env:TEMP\pmd.zip" -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $v.sha256_zip) {
+            Write-Host "::error::el zip de PMD no coincide con el checksum fijado ($h)"
+            exit 1
+          }
+          Expand-Archive "$env:TEMP\pmd.zip" $engines -Force
+
           ./codeguard.exe engines --auditar
 
       # El commit base no siempre existe: en el primer push de un repo

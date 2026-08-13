@@ -1,0 +1,95 @@
+{
+  "_comentario": [
+    "Riesgos que sabemos que viajan en un motor y que alguien ACEPTO por escrito.",
+    "",
+    "Existe porque la alternativa real no era 'arreglarlo': cuando el CVE esta en",
+    "una dependencia del motor y su autor no ha publicado version corregida, las",
+    "opciones son tres — dejar de repartir el motor, compilarlo nosotros (y dejar",
+    "de poder verificar que es el binario que publico su autor), o aceptar el",
+    "riesgo. Las tres son decisiones legitimas; lo que no es legitimo es bajar el",
+    "umbral de la compuerta hasta que se ponga verde, porque eso apaga tambien los",
+    "hallazgos que nadie ha mirado.",
+    "",
+    "REGLAS, y son estrictas a proposito:",
+    "",
+    "  aceptada_por  VACIO = la excepcion NO aplica y la compuerta sigue roja.",
+    "                Aceptar un riesgo es una firma. Un agente no firma por nadie,",
+    "                y un archivo de excepciones que se llena solo no es un",
+    "                registro de decisiones, es una via para saltarse la compuerta.",
+    "",
+    "  hasta         Obligatoria y con fecha. Al vencer, la excepcion deja de",
+    "                aplicar sola y el hallazgo vuelve. Sin caducidad, la primera",
+    "                excepcion que se escriba sigue ahi dentro de tres anios,",
+    "                tapando un modulo que para entonces ya se arreglo.",
+    "",
+    "  motivo        Por que el riesgo es asumible AQUI. No 'es falso positivo':",
+    "                que hace el motor en NUESTRA invocacion que deja ese codigo",
+    "                fuera de alcance.",
+    "",
+    "  evidencia     Como se comprobo. Un comando que otro pueda repetir.",
+    "",
+    "Nada de esto silencia nada: `engines --auditar` imprime todas las excepciones",
+    "aplicadas con su firma y su fecha, cada vez. Una excepcion es una decision",
+    "visible, no un hallazgo borrado.",
+    "",
+    "El campo `paquete` cubre todos los CVE de una dependencia porque el motivo es",
+    "el mismo para todos (ese codigo no se ejecuta en nuestra invocacion). Es mas",
+    "ancho que ir CVE por CVE y por eso lleva caducidad corta: si aparece un CVE",
+    "NUEVO en ese modulo que si sea alcanzable, la fecha obliga a volver a mirar."
+  ],
+  "excepciones": [
+    {
+      "artefacto": "gitleaks",
+      "paquete": "golang.org/x/crypto",
+      "version": "v0.35.0",
+      "motivo": "Los simbolos vulnerables estan en ssh, ssh/agent y openpgp. CodeGuard invoca gitleaks contra un directorio de trabajo local y su historia de git, sin red, sin remotos y sin desencriptar nada: esas rutas no se entran nunca. gitleaks 8.30.1 es la ultima publicada y sigue trayendo x/crypto v0.35.0, asi que no hay version corregida que instalar.",
+      "evidencia": "govulncheck -mode=binary %LOCALAPPDATA%\\CodeGuard\\engines\\gitleaks.exe — los simbolos aparecen (agent.client.Sign, ssh.*), lo que confirma que el codigo esta COMPILADO dentro; lo que descarta el riesgo es la invocacion, no su ausencia.",
+      "aceptada_por": "",
+      "hasta": "2026-11-30"
+    },
+    {
+      "artefacto": "gitleaks",
+      "paquete": "stdlib",
+      "motivo": "gitleaks publica sus binarios compilados con una linea de Go anterior a la del dia (8.30.1 sale con go1.24.11). Los CVE son de crypto/tls, net/textproto, mime y crypto/x509: red y correo. En nuestra invocacion gitleaks no abre un socket. Se arregla solo cuando su autor recompile.",
+      "evidencia": "govulncheck -mode=binary sobre el binario publicado; y el contraste con govulncheck/staticcheck, que SI compilamos nosotros y quedaron sin hallazgos al recompilarlos con go1.26.5.",
+      "aceptada_por": "",
+      "hasta": "2026-11-30"
+    },
+    {
+      "artefacto": "gitleaks",
+      "paquete": "golang.org/x/text",
+      "version": "v0.22.0",
+      "motivo": "El unico de gitleaks que SI puede entrarse: es un bucle infinito ante entrada invalida en x/text, y gitleaks lee el contenido de archivos cualesquiera del repo, asi que un archivo con codificacion rota podria colgarlo. Lo que lo hace asumible no es que sea inalcanzable -no lo es- sino que el dano tiene techo y es visible: cada motor corre con plazo, y al vencerse el hallazgo sale como capa degradada `gitleaks:plazo` en vez de dejar el commit colgado en silencio. O sea, el peor caso es que un archivo concreto haga que la capa de secretos se reporte como no ejecutada, que es exactamente lo que queremos que pase cuando una capa no puede correr. Sin version corregida: 8.30.1 sigue con x/text v0.22.0.",
+      "evidencia": "internal/engines/proc envuelve cada motor con contexto y plazo, y distingue `motor:plazo` de `motor:error` justo para que un cuelgue no se confunda con un repaso limpio. GO-2026-5970 en el listado de govulncheck -mode=binary.",
+      "aceptada_por": "",
+      "hasta": "2026-11-30"
+    },
+    {
+      "artefacto": "motores de Python",
+      "paquete": "mcp",
+      "version": "1.23.3",
+      "motivo": "Los tres CVE estan en transportes de SERVIDOR del SDK de MCP (SSE, Streamable HTTP y WebSocket) y en los manejadores experimentales de tareas: se explotan contra un servidor MCP escuchando. CodeGuard invoca `semgrep scan`, nunca `semgrep mcp`, asi que no se levanta ningun transporte. Ojo con el matiz, porque lo comprobamos y salio al reves de lo esperado: el modulo mcp SI se importa en cada ejecucion de semgrep (cli.py lo carga arriba, linea 25, para registrar el subcomando), o sea que el codigo esta cargado en memoria; lo que no ocurre nunca es que se instancie un transporte y se pongan a atender peticiones. No se puede arreglar por separado: semgrep 1.172.0 -la ultima- fija mcp==1.23.3 exacto.",
+      "evidencia": "python -c \"import semgrep.cli, sys; print([m for m in sys.modules if m.startswith('mcp')])\" lista mcp.client, mcp.types y mcp.shared — cargados. Y `grep -rn '^\\s*(from|import) mcp' site-packages/semgrep` solo aparece bajo semgrep/commands/mcp.py y semgrep/mcp/, que cuelgan del subcomando `mcp`.",
+      "aceptada_por": "",
+      "hasta": "2026-11-30"
+    },
+    {
+      "artefacto": "trivy",
+      "paquete": "github.com/go-git/go-git/v5",
+      "version": "v5.19.1",
+      "motivo": "trivy usa go-git para clonar y recorrer repositorios remotos (`trivy repo <url>`). CodeGuard lo invoca solo como `trivy fs <raiz>` sobre el directorio de trabajo y como `trivy rootfs` en la auditoria: ni clona, ni resuelve remotos, ni recibe una URL de nadie. trivy 0.73.0 es la ultima publicada y sigue trayendo go-git v5.19.1.",
+      "evidencia": "internal/engines/trivy/trivy.go construye los argumentos: siempre `fs --scanners vuln` mas la raiz del repo. internal/engines/identidad/auditoria.go usa `rootfs`. No hay ninguna ruta que pase una URL.",
+      "aceptada_por": "",
+      "hasta": "2026-11-30"
+    },
+    {
+      "artefacto": "trivy",
+      "paquete": "oras.land/oras-go/v2",
+      "version": "v2.6.1",
+      "motivo": "ESTE ES DISTINTO DE LOS DEMAS Y CONVIENE LEERLO ANTES DE FIRMAR. oras es la libreria con la que trivy se BAJA su base de vulnerabilidades desde ghcr.io, asi que a diferencia del resto si esta en una ruta que ejecutamos. El CVE es acceso a archivos fuera de destino mediante enlaces duros en un tarball manipulado: para explotarlo hay que servirle a trivy un artefacto OCI falso, o sea comprometer el registro de Aqua o interceptar la conexion. La auditoria corre con --skip-db-update y no descarga nada; la descarga ocurre en la actualizacion periodica de la base, que es un momento acotado. Aun asi el riesgo residual no es cero, y quien firme deberia saber que aqui esta aceptando algo alcanzable, no algo inerte.",
+      "evidencia": "trivy 0.73.0 es la ultima publicada (subio oras de 2.6.0 a 2.6.1, que corrige CVE-2026-50151 pero no este). Nuestras invocaciones llevan --skip-db-update: ver auditoria.go y el campo SkipDBUpdate de internal/engines/trivy.",
+      "aceptada_por": "",
+      "hasta": "2026-09-30"
+    }
+  ]
+}

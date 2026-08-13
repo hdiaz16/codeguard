@@ -108,7 +108,11 @@ func auditarMotores(dir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	a, err := identidad.Auditar(ctx, dir, dirPaquetesPython(), "")
+	a, err := identidad.Auditar(ctx, identidad.Opciones{
+		DirMotores:     dir,
+		DirPython:      dirPaquetesPython(),
+		PaquetesPython: clausuraPaquetesPython(ctx),
+	})
 	if err != nil {
 		return err
 	}
@@ -122,12 +126,42 @@ func auditarMotores(dir string) error {
 	}
 	fmt.Println()
 
+	// Las excepciones se imprimen SIEMPRE y con quién las firmó. Un riesgo
+	// aceptado que no se ve es indistinguible de un riesgo que nadie detectó.
+	if len(a.Aceptados) > 0 {
+		fmt.Printf("%d riesgo(s) aceptado(s) por escrito:\n", len(a.Aceptados))
+		porFirma := map[string][]identidad.Aceptado{}
+		var orden []string
+		for _, ac := range a.Aceptados {
+			k := fmt.Sprintf("%s / %s — aceptado por %s hasta %s",
+				ac.Excepcion.Artefacto, ac.Excepcion.Objetivo(), ac.Excepcion.AceptadaPor, ac.Excepcion.Hasta)
+			if _, ya := porFirma[k]; !ya {
+				orden = append(orden, k)
+			}
+			porFirma[k] = append(porFirma[k], ac)
+		}
+		for _, k := range orden {
+			fmt.Printf("  ~ %s (%d hallazgo(s))\n", k, len(porFirma[k]))
+			fmt.Printf("    %s\n", porFirma[k][0].Excepcion.Motivo)
+		}
+		fmt.Println()
+	}
+	// Una excepción caducada, sin firma o que ya no cubre nada es alguien
+	// creyendo que un riesgo está cubierto cuando no lo está. Se dice aparte.
+	for _, av := range a.AvisosExcepciones {
+		fmt.Println("  ! excepción inservible:", av)
+	}
+	if len(a.AvisosExcepciones) > 0 {
+		fmt.Println()
+	}
+
 	graves := a.Graves()
 	if len(a.Riesgos) == 0 {
 		fmt.Println("✓ sin vulnerabilidades conocidas en los motores que distribuimos")
 		return nil
 	}
-	fmt.Printf("%d vulnerabilidad(es) en total, %d crítica(s)/alta(s)\n\n", len(a.Riesgos), len(graves))
+	fmt.Printf("%d vulnerabilidad(es) en total, %d crítica(s)/alta(s) sin aceptar\n\n",
+		len(a.Riesgos), len(graves))
 	for _, r := range graves {
 		arreglo := "sin versión corregida publicada"
 		if r.Corregida != "" {
@@ -137,11 +171,14 @@ func auditarMotores(dir string) error {
 			r.Artefacto, r.CVE, r.Severidad, r.Paquete, r.Version, arreglo)
 	}
 	if len(graves) == 0 {
-		fmt.Println("ninguna crítica ni alta: no bloquea el reparto, pero conviene subirlas")
+		fmt.Println("ninguna crítica ni alta sin aceptar: no bloquea el reparto, pero conviene subir el resto")
 		return nil
 	}
 	fmt.Println("\nSube la versión del motor en internal/engines/identidad/motores.json")
 	fmt.Println("(con el hash de la release nueva) y vuelve a construir el instalador.")
+	fmt.Println("Si no hay versión corregida, la salida no es bajar el umbral: es")
+	fmt.Println("firmar el riesgo en internal/engines/identidad/excepciones.json,")
+	fmt.Println("con motivo y fecha de caducidad.")
 	os.Exit(1)
 	return nil
 }
@@ -155,4 +192,61 @@ func dirPaquetesPython() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// guionClausura le pregunta a Python qué paquetes son nuestros: los cuatro que
+// instalamos y todo lo que arrastran. Se resuelve con importlib.metadata, que
+// lee lo REALMENTE instalado, y no con una lista escrita a mano que envejece en
+// cuanto semgrep cambia una dependencia.
+//
+// Los marcadores de entorno se evalúan (`req.marker.evaluate()`) porque media
+// dependencia de semgrep es condicional —`;python_version<"3.11"`— y contarlas
+// todas metería en la clausura paquetes que en esta máquina no existen.
+const guionClausura = `
+import importlib.metadata as md, sys
+try:
+    from packaging.requirements import Requirement
+except Exception:
+    sys.exit(2)
+raiz = ["semgrep", "squawk-cli", "ruff", "mypy"]
+vistos, cola = set(), list(raiz)
+while cola:
+    nombre = cola.pop()
+    clave = nombre.lower().replace("_", "-").replace(".", "-")
+    if clave in vistos:
+        continue
+    vistos.add(clave)
+    try:
+        dist = md.distribution(nombre)
+    except Exception:
+        continue
+    for bruto in (dist.requires or []):
+        try:
+            req = Requirement(bruto)
+        except Exception:
+            continue
+        if req.marker and not req.marker.evaluate():
+            continue
+        cola.append(req.name)
+print("\n".join(sorted(vistos)))
+`
+
+// clausuraPaquetesPython devuelve vacío si no se puede resolver, y Auditar lo
+// interpreta como "no pude distinguirlos" y lo dice. Lo que NO hace es escanear
+// el site-packages entero: ahí conviven los paquetes de todo el mundo, y
+// acusarnos de un CVE de `cryptography` que no instalamos nosotros gasta la
+// credibilidad de la compuerta igual de rápido que callarse uno propio.
+func clausuraPaquetesPython(ctx context.Context) []string {
+	cmd := exec.CommandContext(ctx, "python", "-c", guionClausura)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var nombres []string
+	for _, l := range strings.Split(string(out), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			nombres = append(nombres, l)
+		}
+	}
+	return nombres
 }

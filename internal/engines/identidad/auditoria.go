@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"codeguard/internal/engines/proc"
 )
@@ -45,9 +46,16 @@ type Auditoria struct {
 	Escaneados []string // artefactos que sí se pudieron mirar
 	Omitidos   []string // y los que no, con su motivo — nunca en silencio
 	Riesgos    []Riesgo
+	// Aceptados son riesgos graves que alguien firmó, con la firma delante.
+	// No se descuentan del total: se enseñan aparte.
+	Aceptados []Aceptado
+	// AvisosExcepciones son las excepciones que no sirven: caducadas, sin firma,
+	// o que ya no cubren nada. Se dicen aunque no cambien el veredicto.
+	AvisosExcepciones []string
 }
 
-// Graves son los que no deberían viajar en un instalador: crítico y alto.
+// Graves son los que no deberían viajar en un instalador: crítico y alto,
+// descontando los que están aceptados por escrito y en vigor.
 func (a Auditoria) Graves() []Riesgo {
 	var out []Riesgo
 	for _, r := range a.Riesgos {
@@ -55,7 +63,8 @@ func (a Auditoria) Graves() []Riesgo {
 			out = append(out, r)
 		}
 	}
-	return out
+	bloquean, _, _ := aplicarExcepciones(out, time.Now())
+	return bloquean
 }
 
 type salidaTrivy struct {
@@ -71,14 +80,40 @@ type salidaTrivy struct {
 	} `json:"Results"`
 }
 
+// Opciones es lo que hay que saber para auditar. Va en struct porque los
+// campos crecieron y `Auditar(ctx, a, b, c, d)` ya no decía qué era cada cosa.
+type Opciones struct {
+	// DirMotores es donde viven los binarios que instalamos.
+	DirMotores string
+	// DirPython es el site-packages donde pip dejó los motores; vacío si no se
+	// sabe (entonces se omite Y SE DICE, en vez de dar por limpio lo que no se
+	// miró — ese silencio es justo el fallo que este proyecto lleva persiguiendo).
+	DirPython string
+	// PaquetesPython son los nombres de NUESTROS paquetes y sus dependencias,
+	// normalizados a minúsculas con guiones.
+	//
+	// Sin esta lista la auditoría acusaba de lo ajeno: en un site-packages de
+	// usuario conviven 83 paquetes y sólo 71 son nuestra clausura. `cryptography`
+	// salía como "motor de Python" nuestro con un CVE alto, y no lo instalamos
+	// nosotros — habría tumbado el CI por algo que no repartimos. Al revés
+	// tampoco vale: `mcp` sí es dependencia de semgrep, y quitar el
+	// site-packages entero para evitar el ruido nos habría dejado ciegos ahí.
+	//
+	// Vacía significa "no pude distinguirlos", y entonces se omite con motivo.
+	// No filtrar sería acusar de lo ajeno; escanear a ciegas sería no mirar.
+	PaquetesPython []string
+	// BinTrivy vacío = el trivy del directorio de motores.
+	BinTrivy string
+	// Ahora existe para poder probar la caducidad de las excepciones sin
+	// esperar a que llegue la fecha. Cero = el reloj de verdad.
+	Ahora time.Time
+}
+
 // Auditar escanea con trivy los motores descargables y los paquetes de Python.
-//
-// dirMotores es donde viven los binarios; dirPython puede ir vacío si no se
-// sabe dónde instaló pip (entonces se omite y se dice, en vez de dar por
-// limpio lo que no se miró — ese silencio es justo el fallo que este proyecto
-// lleva un mes persiguiendo).
-func Auditar(ctx context.Context, dirMotores, dirPython, binTrivy string) (Auditoria, error) {
+func Auditar(ctx context.Context, op Opciones) (Auditoria, error) {
 	var a Auditoria
+	dirMotores, dirPython := op.DirMotores, op.DirPython
+	binTrivy := op.BinTrivy
 	if binTrivy == "" {
 		binTrivy = filepath.Join(dirMotores, "trivy.exe")
 	}
@@ -87,11 +122,44 @@ func Auditar(ctx context.Context, dirMotores, dirPython, binTrivy string) (Audit
 	}
 
 	objetivos := map[string]string{} // nombre → ruta
-	for nombre := range cargado.Motores {
-		ruta := filepath.Join(dirMotores, nombre+".exe")
-		if _, err := os.Stat(ruta); err == nil {
-			objetivos[nombre] = ruta
-		} else {
+	for nombre, motor := range cargado.Motores {
+		// Por rutaInstalada y no por "<nombre>.exe": los motores de Java no son
+		// ejecutables — google-java-format es un .jar y PMD un árbol de 104 —, así
+		// que buscarlos como pmd.exe los daba por no instalados estando ahí, y la
+		// auditoría los saltaba sin que se notara. Es el mismo campo que ya usa
+		// `codeguard engines` para verificar sus hashes; sólo faltaba mirarlo aquí.
+		//
+		// Se recorren TODAS las versiones conocidas porque durante una
+		// actualización conviven dos, y la vieja también está instalada y también
+		// se ejecuta.
+		// Por ruta y no por versión: gitleaks y trivy se instalan siempre como
+		// `<nombre>.exe`, así que todas sus versiones del manifiesto resuelven al
+		// MISMO archivo y sólo hay una instalada. Recorrerlas sin más escaneaba el
+		// binario dos veces y etiquetaba uno con la versión de la otra — una
+		// etiqueta que miente es peor que no ponerla, porque manda a subir una
+		// versión que ya estaba instalada.
+		//
+		// Los motores de Java sí llevan la versión en la ruta (pmd-bin-7.26.0), y
+		// ahí las rutas son distintas de verdad: dos conviven durante una
+		// actualización y las dos se ejecutan, así que se auditan las dos.
+		vistas := map[string]bool{}
+		for _, v := range motor.Versiones {
+			relativa := rutaInstalada(nombre, v)
+			ruta := filepath.Join(dirMotores, relativa)
+			if vistas[strings.ToLower(ruta)] {
+				continue
+			}
+			if _, err := os.Stat(ruta); err != nil {
+				continue
+			}
+			vistas[strings.ToLower(ruta)] = true
+			etiqueta := nombre
+			if v.Instalado != "" {
+				etiqueta = nombre + " " + v.Version
+			}
+			objetivos[etiqueta] = ruta
+		}
+		if len(vistas) == 0 {
 			a.Omitidos = append(a.Omitidos, nombre+" (no instalado)")
 		}
 	}
@@ -108,14 +176,22 @@ func Auditar(ctx context.Context, dirMotores, dirPython, binTrivy string) (Audit
 			a.Omitidos = append(a.Omitidos, nombre+" (no instalado)")
 		}
 	}
-	if dirPython != "" {
+	const python = "motores de Python"
+	switch {
+	case dirPython == "":
+		a.Omitidos = append(a.Omitidos, python+" (no sé dónde instaló pip)")
+	case len(op.PaquetesPython) == 0:
+		a.Omitidos = append(a.Omitidos, python+" (no pude distinguir nuestros paquetes de los demás del site-packages)")
+	default:
 		if _, err := os.Stat(dirPython); err == nil {
-			objetivos["motores de Python"] = dirPython
+			objetivos[python] = dirPython
 		} else {
-			a.Omitidos = append(a.Omitidos, "motores de Python (no encuentro site-packages)")
+			a.Omitidos = append(a.Omitidos, python+" (no encuentro site-packages)")
 		}
-	} else {
-		a.Omitidos = append(a.Omitidos, "motores de Python (no sé dónde instaló pip)")
+	}
+	nuestros := map[string]bool{}
+	for _, p := range op.PaquetesPython {
+		nuestros[normalizarPaquete(p)] = true
 	}
 
 	nombres := make([]string, 0, len(objetivos))
@@ -130,15 +206,68 @@ func Auditar(ctx context.Context, dirMotores, dirPython, binTrivy string) (Audit
 			a.Omitidos = append(a.Omitidos, nombre+" ("+err.Error()+")")
 			continue
 		}
+		if nombre == python {
+			riesgos = soloNuestros(riesgos, nuestros)
+		}
 		a.Escaneados = append(a.Escaneados, nombre)
 		a.Riesgos = append(a.Riesgos, riesgos...)
 	}
+
+	var graves []Riesgo
+	for _, r := range a.Riesgos {
+		if r.Severidad == "CRITICAL" || r.Severidad == "HIGH" {
+			graves = append(graves, r)
+		}
+	}
+	ahora := op.Ahora
+	if ahora.IsZero() {
+		ahora = time.Now()
+	}
+	_, a.Aceptados, a.AvisosExcepciones = aplicarExcepciones(graves, ahora)
 	return a, nil
 }
 
+// soloNuestros descarta lo que vive en el mismo site-packages pero no
+// instalamos nosotros. Responder por el CVE de un paquete ajeno es tan malo
+// como callarse el propio: la primera vez que la compuerta acuse de algo que no
+// se puede arreglar tocando CodeGuard, deja de creérsela quien la lee.
+func soloNuestros(rs []Riesgo, nuestros map[string]bool) []Riesgo {
+	var out []Riesgo
+	for _, r := range rs {
+		if nuestros[normalizarPaquete(r.Paquete)] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// normalizarPaquete aplica la regla de PyPI: mayúsculas y los separadores
+// `.`, `_` y `-` son equivalentes. `ruamel.yaml.clib` y `typing_extensions`
+// llegan escritos de las dos formas según quién los nombre.
+func normalizarPaquete(n string) string {
+	n = strings.ToLower(strings.TrimSpace(n))
+	n = strings.NewReplacer(".", "-", "_", "-").Replace(n)
+	for strings.Contains(n, "--") {
+		n = strings.ReplaceAll(n, "--", "-")
+	}
+	return n
+}
+
+// El subcomando es `rootfs`, no `fs`, y la diferencia no es cosmética: con `fs`
+// esta auditoría no miraba NADA. `fs` busca manifiestos de proyecto (go.mod,
+// package-lock.json, pom.xml) porque está pensado para código fuente; `rootfs`
+// busca artefactos ya instalados —binarios de Go con su lista de módulos
+// dentro, jars, site-packages— que es exactamente lo que nosotros repartimos.
+//
+// Con `fs` los cinco artefactos daban "0 objetivos, 0 vulnerabilidades" y la
+// auditoría imprimía su visto bueno. Con `rootfs`, los mismos cinco archivos
+// sin tocar dan 88 hallazgos. Se descubrió metiéndole un log4j-core 2.14.1 de
+// control: si el escáner no encuentra Log4Shell, su "limpio" no vale nada. Todo
+// escáner nuevo entra con un control así, porque la única diferencia entre
+// "está limpio" y "no miré" es una prueba que falle cuando debe fallar.
 func escanear(ctx context.Context, binTrivy, objetivo, nombre string) ([]Riesgo, error) {
 	cmd := exec.CommandContext(ctx, binTrivy,
-		"fs", "--scanners", "vuln", "--format", "json", "--quiet", "--skip-db-update", objetivo)
+		"rootfs", "--scanners", "vuln", "--format", "json", "--quiet", "--skip-db-update", objetivo)
 	cmd.Env = proc.Entorno()
 	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
 	if err != nil && len(salida.Stdout) == 0 {
@@ -147,6 +276,12 @@ func escanear(ctx context.Context, binTrivy, objetivo, nombre string) ([]Riesgo,
 	var res salidaTrivy
 	if err := json.Unmarshal(salida.Stdout, &res); err != nil {
 		return nil, fmt.Errorf("salida de trivy ilegible")
+	}
+	// Un escaneo sin un solo objetivo es "no pude mirarlo", no "está limpio".
+	// Es la misma trampa que el PMD que escribe files:[] y sale con 1, y la
+	// razón de que este agujero durara: por fuera son idénticos.
+	if len(res.Results) == 0 {
+		return nil, fmt.Errorf("trivy no reconoció nada analizable dentro")
 	}
 	var out []Riesgo
 	for _, r := range res.Results {
