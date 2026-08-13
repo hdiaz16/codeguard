@@ -264,7 +264,13 @@ func informe(t *testing.T, salida string) {
 
 func construirBinario(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "codeguard-e2e.exe")
+	// Se llama codeguard.exe y no codeguard-e2e.exe a propósito: `codeguard
+	// install` deja en .githooks shims que resuelven el binario como
+	// <codeguard.binpath>\codeguard.exe. Con otro nombre, los ganchos
+	// instalados apuntan a un archivo que no existe y el commit falla con un
+	// "No such file or directory" que no tiene nada que ver con lo que se
+	// estaba probando.
+	bin := filepath.Join(t.TempDir(), "codeguard.exe")
 	c := exec.Command("go", "build", "-o", bin, "./cmd/codeguard")
 	c.Dir = raizDelRepo(t)
 	if out, err := c.CombinedOutput(); err != nil {
@@ -289,6 +295,19 @@ func raizDelRepo(t *testing.T) string {
 // arnés no lo tenía y concluyó que la compuerta de secretos estaba rota.
 func montarRepo(t *testing.T) string {
 	t.Helper()
+	repo := repoBase(t)
+	for _, v := range violaciones() {
+		escribir(t, repo, v.archivo, v.contenido)
+	}
+	git(t, repo, "add", "-A")
+	return repo
+}
+
+// repoBase deja un repo enrolado, con historia y SIN violaciones. Lo comparten
+// el arnés de motores y las pruebas de invariantes, que necesitan el mismo
+// punto de partida pero cargan cosas distintas encima.
+func repoBase(t *testing.T) string {
+	t.Helper()
 	repo := t.TempDir()
 	for _, o := range [][]string{
 		{"init", "-q"},
@@ -308,11 +327,6 @@ func montarRepo(t *testing.T) string {
 			"paths:\n  migrations: [\"migrations/*.sql\"]\n  migrations_dialect: postgres\n")
 	git(t, repo, "add", "-A")
 	git(t, repo, "commit", "-q", "-m", "base", "--no-verify")
-
-	for _, v := range violaciones() {
-		escribir(t, repo, v.archivo, v.contenido)
-	}
-	git(t, repo, "add", "-A")
 	return repo
 }
 
@@ -357,7 +371,17 @@ func correr(t *testing.T, bin, repo string, args ...string) (string, int) {
 	t.Helper()
 	c := exec.Command(bin, args...)
 	c.Dir = repo
-	c.Env = sinGOROOT(os.Environ())
+	// CODEGUARD_PIPE apuntando a un pipe que no existe fuerza al gancho a
+	// analizar EN ESTE PROCESO en vez de delegar en el daemon.
+	//
+	// Sin esto, `hook pre-commit` hablaba por IPC con el daemon INSTALADO en la
+	// máquina —un binario de otra versión— y la prueba creía estar midiendo el
+	// que acababa de compilar. Se descubrió persiguiendo un fallo de baseline
+	// que resultó ser código viejo respondiendo. Medir el binario equivocado y
+	// no enterarse es la peor variante del problema que este arnés persigue:
+	// no es que la compuerta no revise, es que revisa OTRA COSA.
+	c.Env = append(sinGOROOT(os.Environ()),
+		`CODEGUARD_PIPE=\\.\pipe\codeguard-verificacion-sin-daemon`)
 	out, err := c.CombinedOutput()
 	codigo := 0
 	if ee, ok := err.(*exec.ExitError); ok {

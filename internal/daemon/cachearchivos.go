@@ -64,6 +64,32 @@ type cacheArchivos struct {
 	repoID, rulepack, configHash string
 }
 
+// enCache es cómo viaja un hallazgo dentro del caché.
+//
+// Existe porque finding.Finding marca Fingerprint y LineContent como `json:"-"`
+// —no viajan por el protocolo del daemon a propósito— y el caché los serializa
+// con el mismo json.Marshal. Resultado: al acertar el caché, los hallazgos
+// volvían SIN huella.
+//
+// Y una huella vacía no casa con ninguna baseline. O sea que la promesa central
+// de adopción, «sólo lo nuevo bloquea», se rompía en cuanto el caché empezaba a
+// acertar: aceptabas un hallazgo, la primera corrida lo suprimía, y la
+// siguiente —ya con caché— volvía a bloquearlo. Un hallazgo que reaparece
+// después de haberlo aceptado se lee como "esta herramienta no sirve", y con
+// razón.
+//
+// Lo destapó la prueba de la Fase 1 que comprueba que la baseline suprime lo
+// preexistente. Antes no había ninguna que lo mirase.
+//
+// LineContent viaja también, y no es opcional: sin él, el recálculo de la
+// huella que hace semgrep cuando una entrada compartida sirve a dos rutas
+// produciría una huella distinta de la real (sha256 sobre contenido vacío).
+type enCache struct {
+	finding.Finding
+	Fingerprint string `json:"fp"`
+	LineContent string `json:"linea,omitempty"`
+}
+
 func (c *cacheArchivos) Leer(shas []string) map[string][]finding.Finding {
 	crudos, err := c.st.FileCacheGet(c.repoID, c.rulepack, c.configHash, shas)
 	if err != nil {
@@ -72,9 +98,28 @@ func (c *cacheArchivos) Leer(shas []string) map[string][]finding.Finding {
 	}
 	out := make(map[string][]finding.Finding, len(crudos))
 	for sha, js := range crudos {
-		var fs []finding.Finding
-		if err := json.Unmarshal([]byte(js), &fs); err != nil {
+		var guardados []enCache
+		if err := json.Unmarshal([]byte(js), &guardados); err != nil {
 			continue // entrada ilegible = miss; la sobrescribirá el Guardar
+		}
+		fs := make([]finding.Finding, 0, len(guardados))
+		for _, g := range guardados {
+			f := g.Finding
+			f.Fingerprint = g.Fingerprint
+			f.LineContent = g.LineContent
+			// Una entrada vieja (escrita antes de que el caché guardara la
+			// huella) llega sin ella. Se descarta la ENTRADA entera en vez de
+			// devolver hallazgos sin huella: un hallazgo sin huella es
+			// insuprimible, y prefiero volver a analizar el archivo que
+			// resucitar deuda que alguien ya aceptó.
+			if f.Fingerprint == "" {
+				fs = nil
+				break
+			}
+			fs = append(fs, f)
+		}
+		if fs == nil {
+			continue
 		}
 		out[sha] = fs
 	}
@@ -84,10 +129,15 @@ func (c *cacheArchivos) Leer(shas []string) map[string][]finding.Finding {
 func (c *cacheArchivos) Guardar(porSHA map[string][]finding.Finding) {
 	m := make(map[string]string, len(porSHA))
 	for sha, fs := range porSHA {
-		if fs == nil {
-			fs = []finding.Finding{}
+		guardados := make([]enCache, 0, len(fs))
+		for _, f := range fs {
+			guardados = append(guardados, enCache{
+				Finding:     f,
+				Fingerprint: f.Fingerprint,
+				LineContent: f.LineContent,
+			})
 		}
-		js, err := json.Marshal(fs)
+		js, err := json.Marshal(guardados)
 		if err != nil {
 			continue
 		}
