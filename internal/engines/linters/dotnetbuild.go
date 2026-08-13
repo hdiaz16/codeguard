@@ -210,7 +210,22 @@ func dnbCompilar(ctx context.Context, repoRoot, csproj string) ([]finding.Findin
 		"--no-restore", "--nologo", "-v", "quiet", "-clp:NoSummary", "-t:Rebuild",
 		"-p:BaseIntermediateOutputPath=obj/codeguard/",
 		"-p:MSBuildProjectExtensionsPath=obj/",
-		"-p:BaseOutputPath=obj/codeguard/bin/")
+		"-p:BaseOutputPath=obj/codeguard/bin/",
+		// obj/ y bin/ fuera del compilado, EXPLÍCITAMENTE.
+		//
+		// El SDK excluye por defecto lo que haya bajo BaseIntermediateOutputPath
+		// y BaseOutputPath; al moverlos a obj/codeguard/ para no destrozar el
+		// obj/ del desarrollador, el obj/ REAL deja de estar excluido y sus .cs
+		// generados —AssemblyInfo, los atributos del TargetFramework— entran a
+		// la compilación junto a los nuestros.
+		//
+		// El resultado son errores CS0579 "Duplicate attribute" que NO existen
+		// en el código del usuario: ocho errores inventados sobre archivos que
+		// él nunca escribió. Y bloqueantes, porque son errores de compilación.
+		// Salió en la verificación de extremo a extremo, en la SEGUNDA corrida
+		// —la primera no los tiene porque el obj/ todavía está vacío—, que es
+		// justamente la corrida normal: el desarrollador que reintenta el commit.
+		"-p:DefaultItemExcludes=$(DefaultItemExcludes);obj/**;bin/**")
 	cmd.Dir = dirProy
 	cmd.Env = proc.Entorno()
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)

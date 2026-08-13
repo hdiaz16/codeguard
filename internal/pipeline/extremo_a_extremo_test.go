@@ -306,12 +306,6 @@ func montarRepo(t *testing.T) string {
 		escribir(t, repo, v.archivo, v.contenido)
 	}
 	git(t, repo, "add", "-A")
-
-	// `dotnet build` se invoca con --no-restore a propósito (restaurar en el
-	// camino del commit sería ir a la red), así que el proyecto tiene que estar
-	// restaurado antes. Es lo que hace cualquier repo real: se restaura al
-	// clonar, no en cada commit.
-	restaurarProyectoDotnet(t, repo)
 	return repo
 }
 
@@ -362,6 +356,15 @@ func repoBase(t *testing.T) string {
 			"paths:\n  migrations: [\"migrations/*.sql\"]\n  migrations_dialect: postgres\n")
 	git(t, repo, "add", "-A")
 	git(t, repo, "commit", "-q", "-m", "base", "--no-verify")
+
+	// El restore va aquí, junto al .csproj que lo necesita, y no en montarRepo:
+	// estaba en el otro sitio y la prueba de la doble compilación —que parte de
+	// repoBase— se encontraba un proyecto sin restaurar y no veía el error ni
+	// la primera vez.
+	//
+	// `dotnet build` se invoca con --no-restore a propósito: restaurar en el
+	// camino del commit sería ir a la red. Un repo real se restaura al clonar.
+	restaurarProyectoDotnet(t, repo)
 	return repo
 }
 
@@ -455,4 +458,82 @@ func correrCon(t *testing.T, bin, repo, datos string, args ...string) (string, i
 		t.Fatalf("no se pudo ejecutar %s %v: %v", bin, args, err)
 	}
 	return string(out), codigo
+}
+
+// La trampa de MSBuild: la SEGUNDA compilación también tiene que ver el error.
+//
+// `dotnet build` sin más considera el proyecto "al día" si nada cambió desde la
+// última compilación, no recompila, y sale sin errores. Un motor que se fiara
+// de eso diría "limpio" en la segunda corrida sobre el MISMO código roto —y la
+// segunda corrida es la normal: el desarrollador reintenta el commit—.
+//
+// Por eso el motor compila con -t:Rebuild. Estaba en el plan de la fase 4.1
+// desde el principio: sin esta prueba, la casilla de dotnet-build se habría
+// cerrado verificando sólo el caso fácil.
+//
+// LÍMITE DE ESTA PRUEBA, y conviene leerlo antes de fiarse de ella: lo que
+// verifica es la GARANTÍA —la segunda corrida ve lo mismo que la primera—, no
+// el mecanismo. Se hizo el control quitando -t:Rebuild y la prueba siguió
+// verde, así que NO demuestra que esa bandera sea la que lo consigue. En este
+// fixture MSBuild vuelve a compilar de todas formas.
+//
+// Se deja dicho en vez de callarlo: alguien podría quitar -t:Rebuild mañana,
+// ver esto verde, y creer que lo ha comprobado. La garantía sí está medida; la
+// atribución no. Reproducir la trampa del build "al día" pide un proyecto que
+// MSBuild considere realmente actualizado, y eso es otra prueba.
+func TestDotnetBuildVeElErrorTambienLaSegundaVez(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compila un proyecto de C# dos veces")
+	}
+	if runtime.GOOS != "windows" {
+		t.Skip("CodeGuard sólo se distribuye para Windows")
+	}
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("sin SDK de .NET no hay nada que compilar")
+	}
+
+	bin := construirBinario(t)
+	repo := repoBase(t)
+	escribir(t, repo, "src/NoCompila.cs",
+		"public class NoCompila {\n    public int M() {\n        return \"texto\";\n    }\n}\n")
+	git(t, repo, "add", "-A")
+
+	// Con el directorio de datos aislado, para poder vaciar el caché entre las
+	// dos corridas.
+	//
+	// Sin vaciarlo, la segunda corrida acierta en el caché y `dotnet build` ni
+	// se invoca: la prueba mediría el caché y no Rebuild, y pasaba igual
+	// quitando -t:Rebuild. Vaciándolo se fuerza una compilación de verdad con el
+	// proyecto ya compilado en disco, que es exactamente el escenario del
+	// desarrollador que ya compiló en su IDE.
+	datos := t.TempDir()
+	primera, _ := correrCon(t, bin, repo, datos, "report", "--avisos")
+	vaciarCache(t, datos)
+	segunda, _ := correrCon(t, bin, repo, datos, "report", "--avisos")
+
+	n1 := cuentaDe(primera, "dotnet-build")
+	n2 := cuentaDe(segunda, "dotnet-build")
+
+	if n1 == 0 {
+		t.Fatalf("dotnet-build no vio el error ni la primera vez: no hay nada que medir.\n%s", primera)
+	}
+	if n2 != n1 {
+		t.Errorf("la SEGUNDA compilación vio %d errores y la primera %d.\n"+
+			"MSBuild da el proyecto por 'al día' y no recompila, así que el motor diría "+
+			"limpio sobre el mismo código roto — y la segunda corrida es la normal, "+
+			"porque el desarrollador reintenta el commit.\n%s", n2, n1, segunda)
+	} else {
+		t.Logf("  ✓ las dos compilaciones ven los mismos %d aviso(s)", n1)
+	}
+}
+
+// cuentaDe extrae cuántos hallazgos anunció un motor concreto en la salida.
+func cuentaDe(salida, motor string) int {
+	for _, m := range reLinea.FindAllStringSubmatch(salida, -1) {
+		if m[1] == motor {
+			n, _ := strconv.Atoi(m[2])
+			return n
+		}
+	}
+	return 0
 }

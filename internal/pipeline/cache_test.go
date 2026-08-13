@@ -445,3 +445,17 @@ func exigirQueElVenenoSeSirva(t *testing.T, bin, repo, datos string) {
 var noCacheablePorDiseño = map[string]bool{
 	"playbook": true,
 }
+
+// vaciarCache borra las entradas del caché por archivo, sin tocar nada más.
+//
+// Sirve para forzar que un motor vuelva a EJECUTARSE de verdad cuando lo que se
+// quiere medir es su comportamiento y no el del caché: con el caché caliente,
+// muchas pruebas acaban comprobando que SQLite devuelve lo que se le guardó.
+func vaciarCache(t *testing.T, datos string) {
+	t.Helper()
+	db := abrirBase(t, filepath.Join(datos, "codeguard", "codeguard.db"))
+	defer db.Close()
+	if _, err := db.Exec(`DELETE FROM file_cache`); err != nil {
+		t.Fatalf("no se pudo vaciar el caché: %v", err)
+	}
+}
