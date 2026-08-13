@@ -4,6 +4,8 @@ rules:
     severity: ERROR
     message: "eval() sobre datos — inyección de código"
     metadata:
+      cwe: "CWE-95"
+      owasp: "A03:2021"
       pillar: security
       why: "eval ejecuta cualquier cadena como código: entrada de usuario = ejecución remota."
       fix_hint: "Usa JSON.parse para datos, o un mapa de funciones permitidas."
@@ -16,6 +18,8 @@ rules:
     severity: ERROR
     message: "subprocess con shell=True — inyección de comandos"
     metadata:
+      cwe: "CWE-78"
+      owasp: "A03:2021"
       pillar: security
       why: "Con shell=True cualquier dato en el comando puede ejecutar lo que quiera en el sistema."
       fix_hint: "Pasa el comando como lista de argumentos y quita shell=True."
@@ -26,6 +30,8 @@ rules:
     severity: ERROR
     message: "yaml.load sin Loader seguro — deserialización peligrosa"
     metadata:
+      cwe: "CWE-502"
+      owasp: "A08:2021"
       pillar: security
       why: "yaml.load puede instanciar objetos arbitrarios: un YAML malicioso ejecuta código."
       fix_hint: "Usa yaml.safe_load(...)."
@@ -39,6 +45,8 @@ rules:
     severity: ERROR
     message: "Consulta SQL construida por concatenación — inyección SQL"
     metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
       pillar: security
       why: "Concatenar datos en el SQL permite inyectar consultas arbitrarias."
       fix_hint: "Usa placeholders: db.Query(\"... WHERE id = ?\", id)."
@@ -56,6 +64,8 @@ rules:
     mode: taint
     message: "Consulta SQL armada por concatenación en una variable — inyección SQL"
     metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
       pillar: security
       why: >-
         Da igual que la concatenación esté a veinte líneas del Query: lo que
@@ -99,6 +109,8 @@ rules:
     severity: ERROR
     message: "BinaryFormatter — deserialización insegura prohibida"
     metadata:
+      cwe: "CWE-502"
+      owasp: "A08:2021"
       pillar: security
       why: "BinaryFormatter es vector conocido de ejecución remota; Microsoft lo declaró obsoleto e inseguro."
       fix_hint: "Usa System.Text.Json o protobuf."
@@ -110,6 +122,8 @@ rules:
     severity: WARNING
     message: "CORS con comodín * — cualquier origen puede llamar a esta API"
     metadata:
+      cwe: "CWE-942"
+      owasp: "A05:2021"
       pillar: security
       why: "OWASP A02 2025 (configuración insegura): un origen comodín anula la protección del navegador."
       fix_hint: "Lista explícita de orígenes permitidos por entorno."
@@ -121,6 +135,8 @@ rules:
     severity: ERROR
     message: "JWT decodificado sin verificar la firma"
     metadata:
+      cwe: "CWE-347"
+      owasp: "A01:2021"
       pillar: security
       why: "decode sin verify acepta cualquier token fabricado: autenticación rota (BOLA)."
       fix_hint: "Usa jwt.verify(token, secret) — nunca jwt.decode para decisiones de acceso."

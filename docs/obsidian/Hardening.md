@@ -22,6 +22,16 @@ Las reglas de seguridad **del propio agente**. La regla de oro: *un CodeGuard ro
 15. **Riesgos aceptados con firma y caducidad** — `excepciones.json`: sin `aceptada_por` no aplican, caducan solas, y se imprimen enteras en cada ejecución
 16. **Vigía semanal** (`.github/workflows/motores.yml`) — un CVE nuevo en una versión ya fijada no espera a que empujemos código
 
+## Cobertura frente a lo que más se explota
+
+67 reglas de seguridad, **las 67 con CWE y OWASP** — sin eso no se puede responder "¿cubrimos X?" sin leerlas una por una, y la matriz salía con huecos falsos. Cubren **18 CWE distintos**, más dos clases que no son reglas sino motores: dependencias vulnerables (trivy + govulncheck con alcanzabilidad de símbolo) y secretos (gitleaks, fail-closed).
+
+Los huecos **medidos**, no supuestos: autorización y autenticación (CWE-862/863/306/287, cero reglas), CSRF (CWE-352, cero), subida de archivos (CWE-434), redirección abierta y SSTI, ReDoS, y las inyecciones primas (LDAP, NoSQL, CSV). Más un hallazgo que sólo aparece al mirar la matriz por lenguaje: **el trabajo de paridad cubrió los motores, no las reglas** — un repo de C# corre los mismos motores que uno de Python pero no tiene reglas de XSS, path traversal ni SSRF.
+
+Lo que **no** aplica y conviene decirlo para que la tabla no parezca suspender: buena parte del CWE Top 25 es memoria (787, 125, 416, 119, 476). CodeGuard cubre Python, TS/JS, Go, Java y C# —lenguajes con memoria gestionada— y no soporta C/C++. Eso es el alcance, no un hueco.
+
+El detalle, la matriz completa y el plan por olas: **[[Plan - Remediación y cobertura]]**.
+
 ## Pendientes ⏳
 
 17. **Cero elevación** — jamás admin

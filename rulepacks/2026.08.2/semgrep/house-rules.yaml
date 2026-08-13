@@ -17,6 +17,8 @@ rules:
     severity: ERROR
     message: "eval() sobre entrada — inyección de código"
     metadata:
+      cwe: "CWE-95"
+      owasp: "A03:2021"
       pillar: security
       why: "eval ejecuta cualquier expresión: entrada de usuario = ejecución remota."
       fix_hint: "Usa ast.literal_eval o un parser específico del formato esperado."
@@ -62,6 +64,8 @@ rules:
     severity: ERROR
     message: "Cadena de conexión hardcodeada"
     metadata:
+      cwe: "CWE-798"
+      owasp: "A07:2021"
       pillar: security
       why: "Credenciales en el código llegan al historial de git y a cada clon."
       fix_hint: "Muévela a configuración/variable de entorno y rota la credencial."
