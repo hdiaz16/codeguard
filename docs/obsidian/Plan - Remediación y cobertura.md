@@ -13,7 +13,7 @@ Todo lo que dice este documento está **medido**, y donde no se ha medido lo dic
 
 Ordenadas por lo que costaría si alguien las explota, no por lo fácil que sean de arreglar.
 
-## R1 · La API key vive en un sitio que otro programa puede leer 🔴
+## ~~R1 · La API key vive en un sitio que otro programa puede leer~~ ✅ HECHO
 
 **Qué pasa**: la clave del modelo se guarda en `HKCU\Environment`. Cualquier proceso corriendo como el usuario la lee sin pedir permiso a nadie.
 
@@ -23,7 +23,11 @@ Ordenadas por lo que costaría si alguien las explota, no por lo fácil que sean
 
 **Cuidado con**: el arreglo tiene una trampa conocida — hoy `RefrescarVariables()` existe justamente porque la clave *no* llegaba al daemon tras reiniciar, y la capa LLM estuvo dormida por eso sin que nadie lo notara. Migrar sin cerrar ese camino repite el fallo. La migración tiene que leer del Credential Manager **y**, si no hay nada, del registro, avisando de que hay que migrar.
 
-**Esfuerzo**: 1 día. **Bloqueado por**: nada.
+**Cómo quedó**: `internal/secreto` sobre `CredWriteW`/`CredReadW`. La clave se lee **en el momento de usarla**, así que el modo de fallo que motivaba `RefrescarVariables()` desaparece por construcción. La migración corre al arrancar el daemon —el único sitio por el que pasa toda instalación al actualizar— y cubre los proveedores conocidos, no sólo el activo: quien probó Azure y se pasó a Anthropic tiene dos claves en el registro, y la que dejó de usar es la que nadie va a volver a tocar.
+
+**Dos fallos que aparecieron al cablearlo, los dos silenciosos**: `Probar` inyectaba la clave pegada en el entorno del proceso, así que con la bóveda por delante habría probado la clave *guardada* y respondido OK con la vieja; y mi propia migración salía en cuanto veía la clave en la bóveda, dejando la copia del registro intacta para siempre — literalmente el error contra el que avisa el comentario que escribí tres funciones más abajo. Lo cazó copiar la clave real para una comprobación, no una prueba.
+
+**Honestidad sobre el alcance**: el Credential Manager **no es una frontera de seguridad** frente a código que corre como el mismo usuario. Lo que se gana: la clave sale del texto plano, deja de heredarse sola a cada proceso hijo, y queda cifrada en reposo por DPAPI.
 
 ## R2 · El instalador sin firmar dispara el EDR 🔴
 
@@ -63,7 +67,7 @@ Ordenadas por lo que costaría si alguien las explota, no por lo fácil que sean
 
 **Esfuerzo**: 2 días la detección. **Bloqueado por**: R2 para la corrección.
 
-## R5 · Un repo anclado a un rulepack retirado analiza con cero reglas 🟠
+## ~~R5 · Un repo anclado a un rulepack retirado analiza con cero reglas~~ ✅ HECHO
 
 **Qué pasa**: el rulepack va anclado por repo en `.codeguard/config.yaml` y es obligatorio. Si apunta a una versión que ya no se distribuye, degrada a transparente: las 119 reglas de la casa se saltan, y lo único que lo dice es una línea de *capas no revisadas*. `codeguard repair` mueve el ancla — pero sólo si alguien lo corre.
 
@@ -71,7 +75,9 @@ Ordenadas por lo que costaría si alguien las explota, no por lo fácil que sean
 
 **Arreglo**: que el hook detecte el ancla rota y lo diga como advertencia destacada del veredicto —no como una línea más—, con la orden exacta para arreglarlo. Y que `codeguard status` lo saque en primera línea.
 
-**Esfuerzo**: medio día. **Bloqueado por**: nada. Es lo más barato de esta lista y de las que más pesa.
+**Lo que se encontró al medirlo**: `status` y el hook ya lo decían bien. El que fallaba era **el informe**, y era el peor de la familia: encabezaba `✅ COMPLETADO — no quedan hallazgos bloqueantes` con `semgrep: 0 hallazgos en 0ms`, y unas líneas más abajo le decía al agente de código que ese encabezado *"es el criterio de terminado, no tu impresión de haber terminado"*. Una máquina leyendo eso da el trabajo por bueno con la compuerta apagada.
+
+**Cómo quedó**: COMPLETADO exige ahora las dos cosas —sin bloqueantes **y** todas las capas corridas— y hay un tercer estado, **PARCIAL**, con qué faltó y cómo arreglarlo arriba del todo. Las etiquetas crudas (`falta:trivy`, `rulepack-ausente:…`) se traducen a algo accionable, y el mismo texto se reusa en la terminal: dos redacciones del mismo aviso divergen, y entonces una miente. Comprobado en las dos direcciones — con el rulepack bueno vuelve a decir COMPLETADO, porque un aviso permanente se aprende a ignorar.
 
 ## R6 · La compuerta del CI no obliga 🟠
 
@@ -103,31 +109,34 @@ Ordenadas por lo que costaría si alguien las explota, no por lo fácil que sean
 
 ## Lo que hay hoy, medido
 
-`rulepacks/2026.08.2` tiene **119 reglas**, de las cuales **67 son de seguridad**. Al empezar este plan, **18 de esas 67 no llevaban CWE**: es decir, no se podía responder *"¿cubrimos X?"* sin leerse las reglas una por una, y la matriz de cobertura salía con huecos falsos (SQL injection aparecía sin cubrir en Go teniendo `go-sql-concat`). **Ya están las 67 etiquetadas** con CWE y OWASP; el escaneo del corpus da 171 hallazgos antes y después, o sea que el etiquetado no cambió ni una detección.
+`rulepacks/2026.08.2` tiene **130 reglas**, de las cuales **78 son de seguridad**. Al empezar este plan, **18 de esas 67 no llevaban CWE**: es decir, no se podía responder *"¿cubrimos X?"* sin leerse las reglas una por una, y la matriz de cobertura salía con huecos falsos (SQL injection aparecía sin cubrir en Go teniendo `go-sql-concat`). **Ya están las 67 etiquetadas** con CWE y OWASP; el escaneo del corpus da 171 hallazgos antes y después, o sea que el etiquetado no cambió ni una detección.
 
 Cobertura real, por CWE y lenguaje (`·` = sin regla):
 
 | CWE | py | ts | js | go | java | c# |
 |---|---|---|---|---|---|---|
-| CWE-22 · path traversal / zip-slip | 1 | 1 | 1 | 1 | 1 | · |
+| CWE-22 · path traversal / zip-slip | 1 | 1 | 1 | 1 | 1 | **1** |
 | CWE-78 · inyección de comandos | 1 | 1 | 1 | 1 | 1 | 1 |
-| CWE-79 · XSS | · | 1 | 1 | · | 1 | · |
+| CWE-79 · XSS | **1** | 1 | 1 | **1** | 1 | **1** |
 | CWE-89 · inyección SQL | 2 | 2 | 2 | 2 | 1 | 2 |
 | CWE-95 · inyección de código (eval) | 1 | 1 | 1 | · | 1 | 1 |
 | CWE-295 · validación de certificado | 1 | 1 | 1 | 1 | 1 | 1 |
 | CWE-327 · criptografía débil | 1 | 1 | 1 | 1 | 1 | 1 |
 | CWE-338 · PRNG débil | 1 | 1 | 1 | 1 | 1 | 1 |
 | CWE-347 · firma JWT sin verificar | 1 | 1 | 1 | 1 | 1 | 1 |
-| CWE-489 · depuración en producción | 1 | 1 | 1 | · | · | · |
+| CWE-489 · depuración en producción | 1 | 1 | 1 | **1** | · | **1** |
 | CWE-502 · deserialización insegura | 2 | 1 | 1 | · | 1 | 1 |
 | CWE-611 · XXE | 1 | · | · | · | 1 | 1 |
-| CWE-614 / 1004 · cookies sin flags | 1 | 1 | 1 | · | · | 1 |
+| CWE-614 · cookie sin Secure | · | 1 | 1 | · | · | · |
 | CWE-798 · credenciales en el código | 2 | 2 | 1 | 2 | 2 | 2 |
 | CWE-829 · acción de CI sin SHA | *(yaml)* | | | | | |
-| CWE-918 · SSRF | 1 | 1 | 1 | · | · | · |
+| CWE-918 · SSRF | 1 | 1 | 1 | **1** | **1** | **1** |
 | CWE-942 · CORS permisivo | 1 | 2 | 2 | 1 | 2 | 2 |
+| CWE-1004 · cookie sin HttpOnly | 1 | 1 | 1 | **1** | **1** | 1 |
 
-**18 CWE distintos.** Y los motores aportan dos clases más que no son reglas: **dependencias vulnerables** (trivy + govulncheck con alcanzabilidad de símbolo) y **secretos filtrados** (gitleaks, fail-closed).
+En **negrita**, lo que añadió la Ola 1. Las casillas que siguen vacías lo están **a propósito** y el propio rulepack dice por qué (`seguridad-paridad.yaml`): en Go no hay `eval`, `encoding/xml` no resuelve entidades externas —así que XXE no existe en la biblioteca estándar—, y lo que expone stack traces en Java es una propiedad de Spring que vive en un `.properties`, no en un `.java`. Rellenarlas por simetría produciría reglas muertas que pintan la tabla de verde sin cubrir nada.
+
+**18 CWE distintos, y ya sin asimetrías en las cuatro clases que más se explotan.** Y los motores aportan dos clases más que no son reglas: **dependencias vulnerables** (trivy + govulncheck con alcanzabilidad de símbolo) y **secretos filtrados** (gitleaks, fail-closed).
 
 ## Contra qué se compara
 
@@ -180,7 +189,7 @@ Cerrar estas es lo más barato de toda la Parte 2: las reglas ya existen y está
 
 Cada regla nueva entra **con su par de fixtures** en el corpus (positivo y negativo). Sin eso no entra: el corpus ya cazó 5 reglas muertas de nacimiento, y una regla que no dispara es una compuerta que aparenta cubrir y no cubre.
 
-**Ola 1 — cerrar asimetrías** (~15 reglas). Portar XSS, path traversal, SSRF, XXE, cookies y debug a los lenguajes que les faltan. Bajo riesgo: patrones ya validados. *Estimado: 3 días.*
+**~~Ola 1 — cerrar asimetrías~~** ✅ **HECHA.** 11 reglas nuevas (`seguridad-paridad.yaml`), no las ~15 estimadas: cuatro de las previstas no se escribieron porque la vulnerabilidad no existe en ese lenguaje, y eso está documentado en el propio archivo. Corpus: 16 positivos y 15 negativos, todas cazan lo suyo y respetan su negativo; 0 hallazgos sobre el código del producto. La de Java costó dos intentos por una trampa ya conocida de la casa —`pattern-not` no suprime sub-rangos—, que hace que la regla dispare también sobre el código correcto y desde fuera parezca que funciona.
 
 **Ola 2 — lo que más se explota y no tenemos** (~12 reglas). CSRF y subida de archivos en los cinco lenguajes, redirección abierta, ReDoS. *Estimado: 4 días.*
 
