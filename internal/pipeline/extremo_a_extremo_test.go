@@ -403,3 +403,21 @@ func sinGOROOT(entorno []string) []string {
 	}
 	return out
 }
+
+// correrCon es `correr` con el directorio de datos aislado: la base local, el
+// caché y todo lo que CodeGuard guarda por máquina van a un sitio de la prueba
+// en vez de a la base real de quien la ejecuta.
+func correrCon(t *testing.T, bin, repo, datos string, args ...string) (string, int) {
+	t.Helper()
+	c := exec.Command(bin, args...)
+	c.Dir = repo
+	c.Env = entornoAislado(t, datos)
+	out, err := c.CombinedOutput()
+	codigo := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		codigo = ee.ExitCode()
+	} else if err != nil {
+		t.Fatalf("no se pudo ejecutar %s %v: %v", bin, args, err)
+	}
+	return string(out), codigo
+}
