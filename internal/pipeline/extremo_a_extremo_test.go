@@ -137,11 +137,18 @@ func violaciones() []violacion {
 			archivo:   "src/Malformato.cs",
 			contenido: "public class Malformato{\npublic void M(){\nint x=1;\n}\n}\n",
 			porQue:    "dotnet format: estilo deliberadamente roto",
-			// Medido: el SDK está instalado y aun así no aplica. `dotnet format`
-			// necesita un proyecto o solución — no analiza .cs sueltos. La
-			// etiqueta decía "requiere SDK de .NET" y era inexacta: mandaba a
-			// instalar algo que ya estaba.
-			requiere: "un .csproj (dotnet format no analiza .cs sueltos)",
+			requiere:  "SDK de .NET",
+		},
+		{
+			// La compuerta que le faltaba a C#: hasta que se integró, un
+			// `; expected` en un .cs llegaba entero al CI, porque dotnet format
+			// sólo mira el formato y nadie compilaba.
+			motor:   "dotnet-build",
+			archivo: "src/NoCompila.cs",
+			contenido: "public class NoCompila {\n    public int M() {\n" +
+				"        return \"texto\";\n    }\n}\n",
+			porQue:   "dotnet build: string devuelto donde se declara int (CS0029)",
+			requiere: "SDK de .NET",
 		},
 	}
 }
@@ -150,12 +157,11 @@ func violaciones() []violacion {
 // un motor que nadie prueba y que además nadie MENCIONA desaparece del informe,
 // y entonces "todo verde" significa menos de lo que parece.
 var sinPruebaTodavia = map[string]string{
-	"trivy":        "necesita un manifiesto con dependencias vulnerables reales",
-	"govulncheck":  "necesita un go.sum con una vulnerabilidad alcanzable",
-	"tsc":          "necesita un proyecto TypeScript con tsconfig",
-	"eslint":       "sólo aplica si el repo configura eslint o biome",
-	"dotnet-build": "necesita un .csproj restaurable",
-	"dotnet-vuln":  "necesita packages.lock.json con un CVE",
+	"trivy":       "necesita un manifiesto con dependencias vulnerables reales",
+	"govulncheck": "necesita un go.sum con una vulnerabilidad alcanzable",
+	"tsc":         "necesita un proyecto TypeScript con tsconfig",
+	"eslint":      "sólo aplica si el repo configura eslint o biome",
+	"dotnet-vuln": "necesita packages.lock.json con un CVE",
 }
 
 var (
@@ -300,7 +306,29 @@ func montarRepo(t *testing.T) string {
 		escribir(t, repo, v.archivo, v.contenido)
 	}
 	git(t, repo, "add", "-A")
+
+	// `dotnet build` se invoca con --no-restore a propósito (restaurar en el
+	// camino del commit sería ir a la red), así que el proyecto tiene que estar
+	// restaurado antes. Es lo que hace cualquier repo real: se restaura al
+	// clonar, no en cada commit.
+	restaurarProyectoDotnet(t, repo)
 	return repo
+}
+
+// restaurarProyectoDotnet deja el .csproj listo para compilar sin red. Si no
+// hay SDK no es un fallo: las dos casillas de C# saldrán "no aplica" y lo
+// dirán.
+func restaurarProyectoDotnet(t *testing.T, repo string) {
+	t.Helper()
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		return
+	}
+	c := exec.Command("dotnet", "restore", filepath.Join("src", "App.csproj"))
+	c.Dir = repo
+	c.Env = sinGOROOT(os.Environ())
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Logf("dotnet restore falló (las casillas de C# saldrán sin probar): %v\n%s", err, out)
+	}
 }
 
 // repoBase deja un repo enrolado, con historia y SIN violaciones. Lo comparten
@@ -322,6 +350,13 @@ func repoBase(t *testing.T) string {
 	// mypy sólo aplica si el REPO lo configuró: es la regla del motor, y sin
 	// este archivo la casilla saldría "no aplica" sin haber probado nada.
 	escribir(t, repo, "mypy.ini", "[mypy]\nwarn_unused_ignores = True\n")
+	// Un proyecto de C# de verdad: `dotnet format` y `dotnet build` trabajan
+	// sobre proyectos, no sobre .cs sueltos, así que sin esto las dos casillas
+	// saldrían "no aplica" sin haber probado nada.
+	escribir(t, repo, "src/App.csproj",
+		"<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup>\n"+
+			"    <TargetFramework>net10.0</TargetFramework>\n"+
+			"    <Nullable>disable</Nullable>\n  </PropertyGroup>\n</Project>\n")
 	escribir(t, repo, ".codeguard/config.yaml",
 		"version: 1\nrulepack: \"2026.08.2\"\nmax_diff_lines: 5000\n"+
 			"paths:\n  migrations: [\"migrations/*.sql\"]\n  migrations_dialect: postgres\n")
