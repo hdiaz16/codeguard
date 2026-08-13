@@ -9,6 +9,7 @@ import (
 
 	"codeguard/internal/engines"
 	"codeguard/internal/finding"
+	"codeguard/internal/gitdiff"
 )
 
 // GoFmt implementa la compuerta de formato para Go (§7: formato BLOQUEA —
@@ -21,15 +22,63 @@ import (
 // sandbox (~6 s medidos) para responder que todo estaba bien. En proceso son
 // milisegundos, no hay binario que pueda faltar, y la paridad con el CI queda
 // por construcción: el CI corre este mismo código.
-type GoFmt struct{}
+type GoFmt struct {
+	// Cache por ARCHIVO. gofmt es el único motor que no lanza un proceso —usa
+	// go/format en memoria— así que cachearlo parecía no valer la pena.
+	//
+	// Sí la vale, y por un motivo que no es el evidente: la huella del archivo
+	// ya viene calculada en el diff, así que un acierto se ahorra LEER el
+	// archivo y parsearlo, no sólo formatearlo. En un diff grande eso son
+	// cientos de lecturas de disco que no ocurren.
+	//
+	// Y hay una razón que pesa más que el rendimiento: con gofmt fuera del
+	// caché, la verificación de invalidación no podía medirse sobre todos los
+	// motores a la vez y había que acotarla. Una medición acotada esconde
+	// justo lo que no se está midiendo.
+	Cache engines.Cache
+}
 
 func (GoFmt) Name() string { return "gofmt" }
 
 func (GoFmt) Applies(in engines.Input) bool { return len(filesWithExt(in, ".go")) > 0 }
 
-func (GoFmt) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
+func (e GoFmt) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
+	archivos := filesWithExt(in, ".go")
+
+	// ── Aciertos de caché ──
+	// Direccionado por contenido: dos archivos idénticos comparten entrada, así
+	// que al reproducir un acierto se reescribe la ruta y se recalcula la
+	// huella para el archivo de ESTA corrida.
 	var findings []finding.Finding
-	for _, cf := range filesWithExt(in, ".go") {
+	pendientes := archivos
+	if e.Cache != nil {
+		var lista []string
+		for _, cf := range archivos {
+			if cf.SHA256 != "" {
+				lista = append(lista, "gofmt:"+cf.SHA256)
+			}
+		}
+		aciertos := e.Cache.Leer(lista)
+		var quedan []gitdiff.ChangedFile
+		for _, cf := range archivos {
+			fs, ok := aciertos["gofmt:"+cf.SHA256]
+			if cf.SHA256 == "" || !ok {
+				quedan = append(quedan, cf)
+				continue
+			}
+			for _, h := range fs {
+				if h.File != cf.Path {
+					h.File = cf.Path
+					h.ComputeFingerprint()
+				}
+				findings = append(findings, h)
+			}
+		}
+		pendientes = quedan
+	}
+
+	nuevos := []finding.Finding{}
+	for _, cf := range pendientes {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -66,7 +115,29 @@ func (GoFmt) Run(ctx context.Context, in engines.Input) ([]finding.Finding, erro
 			LineContent: cf.Path,
 		}
 		f.ComputeFingerprint()
-		findings = append(findings, f)
+		nuevos = append(nuevos, f)
 	}
-	return findings, nil
+
+	if e.Cache != nil {
+		e.Cache.Guardar(porArchivoGoFmt(nuevos, pendientes))
+	}
+	return append(findings, nuevos...), nil
+}
+
+// porArchivoGoFmt deja cada hallazgo bajo la clave de contenido de su archivo,
+// e incluye los archivos LIMPIOS con lista vacía: "analizado y bien formateado"
+// es el resultado que más veces se reutiliza, y es el 99% de los archivos.
+func porArchivoGoFmt(fs []finding.Finding, archivos []gitdiff.ChangedFile) map[string][]finding.Finding {
+	porRuta := map[string][]finding.Finding{}
+	for _, f := range fs {
+		porRuta[f.File] = append(porRuta[f.File], f)
+	}
+	out := map[string][]finding.Finding{}
+	for _, a := range archivos {
+		if a.SHA256 == "" {
+			continue
+		}
+		out["gofmt:"+a.SHA256] = porRuta[a.Path]
+	}
+	return out
 }

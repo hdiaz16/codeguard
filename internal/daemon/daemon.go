@@ -71,9 +71,9 @@ func Engines(cfg *config.Config, inCI bool, cache sgengine.Cache) []engines.Engi
 		// flujo real de valores, no patrones de texto. Lint de severidad
 		// error bloquea (§7), la misma política que govet.
 		&stengine.Engine{Cache: cache},
-		linters.GoFmt{},
-		linters.GoVet{},
-		linters.Ruff{},
+		linters.GoFmt{Cache: cache},
+		linters.GoVet{Cache: cache},
+		linters.Ruff{Cache: cache},
 		// Tipos en Python, la última casilla que le faltaba al lenguaje: ruff ve
 		// formato y lint, nadie veía los tipos. Sólo aplica si el repo YA
 		// configuró mypy (mypy.ini, [mypy] en setup.cfg o [tool.mypy] en
@@ -90,7 +90,7 @@ func Engines(cfg *config.Config, inCI bool, cache sgengine.Cache) []engines.Engi
 		// reglas; si no configura ninguno no aplica, y el caché es por archivo
 		// con la huella de esa config dentro de la clave.
 		linters.ESLint{Cache: cache},
-		linters.DotnetFormat{},
+		linters.DotnetFormat{Cache: cache},
 		// Compilación de C#: hasta aquí un `; expected` en un .cs llegaba entero
 		// al CI, porque dotnet format sólo mira el formato. Compila el .csproj
 		// tocado (nunca la solución) con --no-restore y -t:Rebuild, así que el

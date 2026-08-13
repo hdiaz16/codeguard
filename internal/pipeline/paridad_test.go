@@ -285,14 +285,7 @@ func diferencia(a, b map[string]hallazgo) map[string]hallazgo {
 // producto.
 func copiarRulepack(t *testing.T, repo string) {
 	t.Helper()
-	origen := filepath.Join(raizDelRepo(t), "rulepacks", "2026.08.2")
-	if _, err := os.Stat(origen); err != nil {
-		t.Skipf("no encuentro el rulepack en el árbol: %v", err)
-	}
-	destino := filepath.Join(repo, "rulepacks", "2026.08.2")
-	if err := os.CopyFS(destino, os.DirFS(origen)); err != nil {
-		t.Fatalf("no se pudo copiar el rulepack: %v", err)
-	}
+	copiarRulepackComo(t, repo, "2026.08.2")
 }
 
 // correrComoCI ejecuta con GITHUB_ACTIONS=true, que es lo que hace que el run

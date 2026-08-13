@@ -2,11 +2,15 @@ package linters
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"codeguard/internal/engines"
 	"codeguard/internal/finding"
@@ -15,7 +19,18 @@ import (
 // DotnetFormat implementa la compuerta de formato para C# (§7: BLOQUEA).
 // Requiere el SDK de .NET; si falta con archivos .cs tocados, el orquestador
 // registra la capa como degradada.
-type DotnetFormat struct{}
+type DotnetFormat struct {
+	// Cache por MÓDULO, no por archivo: `dotnet format` se invoca una vez sobre
+	// el repo entero y decide con la configuración (.editorconfig) y los
+	// proyectos, no archivo a archivo.
+	//
+	// Faltaba, y es de los caros: lanza el SDK de .NET, que arranca MSBuild.
+	// La clave lleva el contenido de los .cs, los .csproj/.sln y el
+	// .editorconfig — cambiar una regla de estilo en el .editorconfig cambia el
+	// veredicto sin tocar una sola línea de C#, y sin eso en la clave el caché
+	// serviría el resultado de la configuración anterior.
+	Cache engines.Cache
+}
 
 func (DotnetFormat) Name() string { return "dotnet-format" }
 
@@ -31,9 +46,15 @@ type dnfReport []struct {
 	} `json:"FileChanges"`
 }
 
-func (DotnetFormat) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
+func (e DotnetFormat) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
 	if _, err := exec.LookPath("dotnet"); err != nil {
 		return nil, fmt.Errorf("SDK de .NET no disponible: %w", err)
+	}
+	clave := claveDotnetFormat(in.RepoRoot)
+	if e.Cache != nil && clave != "" {
+		if fs, ok := e.Cache.Leer([]string{clave})[clave]; ok {
+			return fs, nil
+		}
 	}
 	report := filepath.Join(os.TempDir(), "codeguard-dnf.json")
 	defer os.Remove(report)
@@ -73,5 +94,33 @@ func (DotnetFormat) Run(ctx context.Context, in engines.Input) ([]finding.Findin
 			findings = append(findings, f)
 		}
 	}
+
+	if e.Cache != nil && clave != "" {
+		e.Cache.Guardar(map[string][]finding.Finding{clave: findings})
+	}
 	return findings, nil
+}
+
+// claveDotnetFormat identifica una comprobación de formato: el contenido de
+// todo lo que `dotnet format` mira. Vacía = no cacheable.
+//
+// El .editorconfig entra a propósito: es donde vive el estilo, así que cambiar
+// una regla ahí cambia el veredicto sin tocar una línea de C#. Dejarlo fuera
+// haría que el caché siguiera aplicando el estilo anterior — una regla nueva
+// que no se aplica a nada ya analizado.
+func claveDotnetFormat(repoRoot string) string {
+	huella := engines.HuellaModulo(repoRoot, ".", func(rel string) bool {
+		base := strings.ToLower(path.Base(rel))
+		return base == ".editorconfig" ||
+			strings.HasSuffix(base, ".cs") ||
+			strings.HasSuffix(base, ".csproj") ||
+			strings.HasSuffix(base, ".sln") ||
+			strings.HasSuffix(base, ".props") ||
+			strings.HasSuffix(base, ".targets")
+	})
+	if huella == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(huella))
+	return "dotnet-format:" + hex.EncodeToString(sum[:])
 }

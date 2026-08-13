@@ -2,13 +2,17 @@ package linters
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"codeguard/internal/engines"
 	"codeguard/internal/finding"
+	"codeguard/internal/gitdiff"
 )
 
 // Ruff cubre dos compuertas de §7 para Python: lint de errores (ruff check,
@@ -16,6 +20,22 @@ import (
 // formato (ruff format --check → BLOQUEA).
 type Ruff struct {
 	Binary string
+	// Cache es por ARCHIVO: ruff evalúa cada .py por su cuenta, así que tocar
+	// 1 de 200 cuesta 1.
+	//
+	// Faltaba, y no era gratis: ruff es un proceso externo que se lanzaba dos
+	// veces (check y format) sobre TODOS los archivos Python del diff en cada
+	// commit, incluidos los que nadie tocó desde la última vez. Se destapó al
+	// verificar la invalidación del caché: los cuatro ejes se comprobaban sobre
+	// semgrep y ruff quedaba fuera de la medición, que es tanto como decir que
+	// nadie sabía si acertaba.
+	//
+	// La clave lleva dentro la configuración de ruff DEL REPO (ruff.toml,
+	// pyproject.toml, setup.cfg). Sin eso, cambiar una regla en pyproject no
+	// invalidaría nada y ruff seguiría dando el veredicto de la configuración
+	// anterior — el mismo fallo que ya costó una corrección invisible con
+	// govulncheck.
+	Cache engines.Cache
 }
 
 func (Ruff) Name() string { return "ruff" }
@@ -39,12 +59,56 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 	if bin == "" {
 		bin = "ruff"
 	}
-	var paths []string
-	for _, f := range filesWithExt(in, ".py") {
-		paths = append(paths, filepath.Join(in.RepoRoot, filepath.FromSlash(f.Path)))
+	archivos := filesWithExt(in, ".py")
+
+	// ── Aciertos de caché ──
+	//
+	// La clave va por CONTENIDO y no por ruta: dos archivos idénticos comparten
+	// entrada. Al reproducir un acierto hay que reescribir la ruta y recalcular
+	// la huella para el archivo de ESTA corrida, igual que hacen semgrep,
+	// eslint y javafmt.
+	var findings []finding.Finding
+	pendientes := archivos
+	if e.Cache != nil {
+		cfgHash := huellaConfigRuff(in.RepoRoot)
+		claves := make(map[string]string, len(archivos)) // ruta → clave
+		var lista []string
+		for _, f := range archivos {
+			if f.SHA256 == "" {
+				continue // sin huella no es cacheable
+			}
+			k := "ruff:" + cfgHash + ":" + f.SHA256
+			claves[f.Path] = k
+			lista = append(lista, k)
+		}
+		aciertos := e.Cache.Leer(lista)
+		var quedan []gitdiff.ChangedFile
+		for _, f := range archivos {
+			k, tieneClave := claves[f.Path]
+			fs, ok := aciertos[k]
+			if !tieneClave || !ok {
+				quedan = append(quedan, f)
+				continue
+			}
+			for _, h := range fs {
+				if h.File != f.Path {
+					h.File = f.Path
+					h.ComputeFingerprint()
+				}
+				findings = append(findings, h)
+			}
+		}
+		pendientes = quedan
+	}
+	if len(pendientes) == 0 {
+		return findings, nil
 	}
 
-	var findings []finding.Finding
+	var paths []string
+	for _, f := range pendientes {
+		paths = append(paths, filepath.Join(in.RepoRoot, filepath.FromSlash(f.Path)))
+	}
+	nuevos := []finding.Finding{}
 
 	// ── lint de errores ──
 	checkOut, err := runTool(ctx, in.RepoRoot, bin, append([]string{"check", "--output-format", "json", "--exit-zero"}, paths...)...)
@@ -76,7 +140,7 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 			LineContent: d.Code + " " + d.Message,
 		}
 		f.ComputeFingerprint()
-		findings = append(findings, f)
+		nuevos = append(nuevos, f)
 	}
 
 	// ── formato ──
@@ -122,7 +186,53 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 			LineContent: rel,
 		}
 		f.ComputeFingerprint()
-		findings = append(findings, f)
+		nuevos = append(nuevos, f)
 	}
-	return findings, nil
+
+	if e.Cache != nil {
+		e.Cache.Guardar(porArchivoRuff(nuevos, pendientes, huellaConfigRuff(in.RepoRoot)))
+	}
+	return append(findings, nuevos...), nil
+}
+
+// porArchivoRuff reparte los hallazgos por su archivo y los deja bajo la clave
+// de contenido con la que se buscarán la próxima vez.
+//
+// Guarda TAMBIÉN los archivos limpios, con lista vacía: "analizado y sin nada"
+// es el resultado que más veces se reutiliza, y no guardarlo dejaría el caché
+// acertando sólo en los archivos con problemas — justo al revés de lo útil.
+func porArchivoRuff(fs []finding.Finding, archivos []gitdiff.ChangedFile, cfgHash string) map[string][]finding.Finding {
+	porRuta := map[string][]finding.Finding{}
+	for _, f := range fs {
+		porRuta[f.File] = append(porRuta[f.File], f)
+	}
+	out := map[string][]finding.Finding{}
+	for _, a := range archivos {
+		if a.SHA256 == "" {
+			continue
+		}
+		out["ruff:"+cfgHash+":"+a.SHA256] = porRuta[a.Path]
+	}
+	return out
+}
+
+// huellaConfigRuff resume la configuración de ruff QUE VIVE EN EL REPO.
+//
+// Va dentro de la clave porque ruff obedece a esos archivos: cambiar una regla
+// en pyproject.toml cambia el veredicto sin que cambien ni el contenido del .py
+// ni la configuración de CodeGuard. Sin esto, el caché serviría el resultado de
+// la configuración anterior y la regla nueva no se aplicaría a nada que ya
+// estuviera analizado — una corrección que no llega, que es el fallo que este
+// proyecto lleva persiguiendo.
+func huellaConfigRuff(repoRoot string) string {
+	h := sha256.New()
+	for _, nombre := range []string{"ruff.toml", ".ruff.toml", "pyproject.toml", "setup.cfg"} {
+		b, err := os.ReadFile(filepath.Join(repoRoot, nombre))
+		if err != nil {
+			continue
+		}
+		h.Write([]byte(nombre))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
 }
