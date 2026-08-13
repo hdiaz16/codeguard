@@ -27,8 +27,41 @@ type Diff struct {
 	Lines   int    // líneas de diff (aprox: añadidas + eliminadas)
 }
 
+// run invoca git con core.quotePath desactivado.
+//
+// Por defecto git ENTRECOMILLA y escapa en octal cualquier ruta con bytes no
+// ASCII: `docs/Plan - Remediación.md` sale como
+//
+//	"docs/Plan - Remediaci\303\263n.md"
+//
+// —con las comillas dentro de la cadena— y esa cadena literal, comillas y
+// todo, viajaba tal cual hasta los motores como si fuera una ruta. semgrep
+// respondía `Invalid scanning root` y moría, y con él se caía el análisis
+// ENTERO del commit: no el archivo con acento, los 230. El commit pasaba con
+// una línea de "capas no revisadas: semgrep:error" y las 119 reglas de la casa
+// sin aplicar.
+//
+// En un equipo que escribe en español esto no es un caso raro, es el martes.
+// Y falla de la peor manera posible: un solo archivo con ñ o acento en el
+// nombre apaga la compuerta para todo lo demás, en silencio salvo por una
+// línea que nadie lee.
+//
+// core.quotePath=false hace que git emita los bytes UTF-8 tal cual, que es lo
+// que Go y los motores esperan.
+//
+// Va en `run` y no en cada llamada por lo que enseñó este fallo: la bandera YA
+// estaba puesta en `Rastreados`, con su prueba y todo, desde que alguien se
+// topó con esto. Nadie la puso en `read`, que es justo la que corre en cada
+// commit. Un arreglo que no se generaliza deja el mismo agujero abierto al
+// lado, y encima con la falsa tranquilidad de que "eso ya lo arreglamos".
+//
+// Alcance, para que quede dicho: esto cubre los no-ASCII, que es lo que
+// rompía. Git sigue entrecomillando rutas con comillas dobles o saltos de
+// línea, pero Windows no permite esos caracteres en un nombre de archivo y
+// CodeGuard sólo se distribuye para Windows. El día que haya build de Linux,
+// esto necesita `-z` como ya hace `Rastreados`.
 func run(repoRoot string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", append([]string{"-c", "core.quotePath=false"}, args...)...)
 	proc.SinVentana(cmd)
 	cmd.Dir = repoRoot
 	var out, errb bytes.Buffer
@@ -122,7 +155,9 @@ func SHA256De(repoRoot, rel string) string {
 // El separador NUL (-z) cubre además el nombre con salto de línea, que partir
 // por "\n" rompería igual de silenciosamente.
 func Rastreados(repoRoot string, patrones ...string) ([]string, error) {
-	args := append([]string{"-c", "core.quotePath=false", "ls-files", "-z"}, patrones...)
+	// core.quotePath ya lo pone `run` para todos: aquí sólo queda el -z, que
+	// además protege de nombres con espacios o saltos de línea.
+	args := append([]string{"ls-files", "-z"}, patrones...)
 	out, err := run(repoRoot, args...)
 	if err != nil {
 		return nil, err

@@ -310,6 +310,21 @@ func lotes(objetivos []string, limite int) [][]string {
 	return out
 }
 
+// ajustesPropios devuelve la ruta del settings.yml que usa SÓLO CodeGuard.
+//
+// El directorio se crea si falta; si no se puede (disco lleno, política), se
+// devuelve la ruta igual: semgrep se quejará de eso, y un aviso concreto es
+// mejor que caer al archivo compartido y volver a competir por él en silencio.
+func ajustesPropios() string {
+	base, err := os.UserCacheDir() // %LOCALAPPDATA% en Windows
+	if err != nil {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, "CodeGuard", "semgrep")
+	_ = os.MkdirAll(dir, 0o755)
+	return filepath.Join(dir, "settings.yml")
+}
+
 // correrLote invoca semgrep una vez sobre los objetivos dados y devuelve sus
 // hallazgos y las reglas del pack que no compilaron.
 func (e *Engine) correrLote(ctx context.Context, bin, rules string, in engines.Input, objetivos []string) ([]finding.Finding, []string, error) {
@@ -319,7 +334,24 @@ func (e *Engine) correrLote(ctx context.Context, bin, rules string, in engines.I
 	cmd.Dir = in.RepoRoot
 	// Sin esto, el CLI de Python lee las reglas YAML con la codificación
 	// regional de Windows (cp1252) y los mensajes con acentos salen rotos.
-	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
+	//
+	// SEMGREP_SETTINGS_FILE nos da un archivo PROPIO. Por defecto semgrep abre
+	// y ESCRIBE ~/.semgrep/settings.yml, que no es nuestro: lo comparte con el
+	// plugin del IDE, con un `semgrep` que el desarrollador corra a mano y con
+	// cualquier otra herramienta que lo use. Escribir en el estado de las
+	// herramientas ajenas no es asunto nuestro, y nos deja expuestos a lo que
+	// otro proceso le haga a ese archivo.
+	//
+	// Honestidad sobre el alcance: esto es higiene, no el arreglo de un fallo
+	// observado. Se llegó aquí sospechando que la contención sobre ese archivo
+	// causaba un `semgrep:error` real, y el control lo desmintió — seis
+	// semgrep simultáneos compartiendo settings terminaron los seis sin un solo
+	// PermissionError. La causa de aquel error era otra y está arreglada en
+	// gitdiff (rutas entrecomilladas por git). Se mantiene la separación porque
+	// quitar un recurso mutable compartido es bueno por sí solo, no porque
+	// arregle nada medido.
+	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8",
+		"SEMGREP_SETTINGS_FILE="+ajustesPropios())
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	out := salida.Stdout
 	// Semgrep sale con 1 cuando hay hallazgos bloqueantes; el JSON sigue siendo válido.
