@@ -28,6 +28,7 @@
   "motores": {
     "gitleaks": {
       "critico": true,
+      "repo": "gitleaks/gitleaks",
       "versiones": [
         {
           "version": "8.30.0",
@@ -49,6 +50,7 @@
     },
     "trivy": {
       "critico": false,
+      "repo": "aquasecurity/trivy",
       "versiones": [
         {
           "version": "0.71.0",
@@ -70,6 +72,7 @@
     },
     "google-java-format": {
       "critico": false,
+      "repo": "google/google-java-format",
       "versiones": [
         {
           "version": "1.36.1",
@@ -84,6 +87,7 @@
     },
     "pmd": {
       "critico": false,
+      "repo": "pmd/pmd",
       "versiones": [
         {
           "version": "7.26.0",
@@ -129,11 +133,13 @@
     "go": {
       "govulncheck": {
         "modulo": "golang.org/x/vuln/cmd/govulncheck",
-        "version": "v1.6.0"
+        "version": "v1.6.0",
+        "modulo_raiz": "golang.org/x/vuln"
       },
       "staticcheck": {
         "modulo": "honnef.co/go/tools/cmd/staticcheck",
-        "version": "v0.7.0"
+        "version": "v0.7.0",
+        "modulo_raiz": "honnef.co/go/tools"
       }
     }
   }

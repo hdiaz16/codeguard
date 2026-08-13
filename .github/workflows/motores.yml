@@ -1,0 +1,172 @@
+name: Motores (vigía semanal)
+
+# El CI principal corre en push y pull_request, y eso deja un hueco que no se
+# ve: un CVE nuevo en una version que ya tenemos fijada no depende de que
+# nosotros toquemos el repo. Aparece un martes cualquiera, y si nadie empuja
+# nada en tres semanas, nadie se entera en tres semanas. Repartimos esos
+# binarios a las maquinas del equipo mientras tanto.
+#
+# Este workflow corre SOLO por tiempo y hace dos cosas distintas:
+#
+#   1. Audita las versiones fijadas contra la base de vulnerabilidades de hoy.
+#      Si aparece algo critico o alto sin aceptar, TUMBA el job. Es la misma
+#      compuerta del CI principal, pero disparada por el calendario en vez de
+#      por nuestra actividad.
+#
+#   2. Compara lo fijado con lo ultimo que publicaron rio arriba. Esto NO tumba
+#      el job: estar una version por detras no es un fallo, y convertirlo en
+#      rojo obligaria a actualizar por obligacion en vez de por criterio. Pero
+#      quedarse atras sin saberlo si es un problema: trivy estaba dos releases
+#      por detras y esa diferencia valia 26 hallazgos.
+on:
+  schedule:
+    # Lunes 07:00 UTC. Temprano en la semana, para que si algo sale rojo haya
+    # cinco dias habiles por delante y no se descubra un viernes por la tarde.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+jobs:
+  vigilar:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Construir CodeGuard
+        run: go build -o codeguard.exe ./cmd/codeguard
+
+      # Igual que el CI principal: lo que se descarga se descarga tambien aqui,
+      # y lo que se compila se compila. Auditar un binario distinto del que
+      # corre la gente seria auditar otra cosa.
+      - name: Instalar los motores tal como los recibe una maquina
+        shell: pwsh
+        run: |
+          $m = Get-Content internal/engines/identidad/motores.json -Raw | ConvertFrom-Json
+          $engines = "$env:LOCALAPPDATA\CodeGuard\engines"
+          New-Item -ItemType Directory -Force $engines | Out-Null
+
+          foreach ($n in @("gitleaks", "trivy")) {
+            $v = $m.motores.$n.versiones | Select-Object -Last 1
+            Invoke-WebRequest -Uri $v.url -OutFile "$env:TEMP\$n.zip" -UseBasicParsing
+            $h = (Get-FileHash "$env:TEMP\$n.zip" -Algorithm SHA256).Hash.ToLower()
+            if ($h -ne $v.sha256_zip) {
+              Write-Host "::error::el zip de $n no coincide con el checksum fijado ($h)"
+              exit 1
+            }
+            Expand-Archive "$env:TEMP\$n.zip" "$env:TEMP\$n" -Force
+            Copy-Item "$env:TEMP\$n\$n.exe" $engines -Force
+          }
+
+          $v = $m.motores.'google-java-format'.versiones | Select-Object -Last 1
+          Invoke-WebRequest -Uri $v.url -OutFile "$engines\$($v.instalado)" -UseBasicParsing
+          $h = (Get-FileHash "$engines\$($v.instalado)" -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $v.sha256_zip) {
+            Write-Host "::error::google-java-format no coincide con el checksum fijado ($h)"
+            exit 1
+          }
+
+          $v = $m.motores.pmd.versiones | Select-Object -Last 1
+          Invoke-WebRequest -Uri $v.url -OutFile "$env:TEMP\pmd.zip" -UseBasicParsing
+          $h = (Get-FileHash "$env:TEMP\pmd.zip" -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $v.sha256_zip) {
+            Write-Host "::error::el zip de PMD no coincide con el checksum fijado ($h)"
+            exit 1
+          }
+          Expand-Archive "$env:TEMP\pmd.zip" $engines -Force
+
+          foreach ($n in @("govulncheck", "staticcheck")) {
+            $spec = $m.paquetes.go.$n
+            go install "$($spec.modulo)@$($spec.version)"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          Copy-Item "$(go env GOPATH)\bin\govulncheck.exe" $engines -Force
+          Copy-Item "$(go env GOPATH)\bin\staticcheck.exe" $engines -Force
+
+          $pins = @()
+          foreach ($q in $m.paquetes.pip.PSObject.Properties) { $pins += "$($q.Name)==$($q.Value)" }
+          pip install @pins
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      # Esto SI tumba el job. Un CVE nuevo en algo que repartimos es accionable
+      # el dia que aparece, no el dia que a alguien le toque empujar codigo.
+      - name: Auditar las versiones fijadas contra la base de hoy
+        run: ./codeguard.exe engines --auditar
+
+      # Esto NO tumba el job, a proposito: informa.
+      - name: Mirar si rio arriba hay algo mas nuevo
+        if: always()
+        shell: pwsh
+        run: |
+          $m = Get-Content internal/engines/identidad/motores.json -Raw | ConvertFrom-Json
+          $atras = @()
+
+          function UltimaEnGitHub($repo) {
+            try {
+              $j = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" `
+                -Headers @{ "User-Agent" = "codeguard"; "Authorization" = "Bearer $env:GH_TOKEN" } -TimeoutSec 30
+              # PMD etiqueta como pmd_releases/7.26.0; el resto como v7.26.0.
+              return ($j.tag_name -replace '^pmd_releases/', '' -replace '^v', '')
+            } catch { return $null }
+          }
+
+          foreach ($n in $m.motores.PSObject.Properties.Name) {
+            $motor = $m.motores.$n
+            if (-not $motor.repo) { continue }
+            $fijada = ($motor.versiones | Select-Object -Last 1).version
+            $ultima = UltimaEnGitHub $motor.repo
+            if (-not $ultima) { Write-Host "  ?  $n : no se pudo consultar $($motor.repo)"; continue }
+            if ($ultima -ne $fijada) {
+              $atras += "$n : fijada $fijada, publicada $ultima"
+            } else {
+              Write-Host "  ok $n $fijada"
+            }
+          }
+
+          # Los modulos de Go se preguntan al PROXY, no a GitHub. Se probo con
+          # GitHub primero y cantaba dos falsas alarmas cada semana: golang/vuln
+          # publica releases de GitHub que no son las del modulo (decia 1.1.4
+          # con v1.6.0 fijada) y dominikh/go-tools etiqueta por fecha, 2026.1,
+          # mientras el modulo va por v0.7.0. Numeraciones distintas, ninguna
+          # comparable. El proxy devuelve exactamente lo que instalaria
+          # `go install @latest`, que es la pregunta que queremos hacer.
+          foreach ($n in $m.paquetes.go.PSObject.Properties.Name) {
+            $spec = $m.paquetes.go.$n
+            if (-not $spec.modulo_raiz) { continue }
+            try {
+              $ultima = (Invoke-RestMethod "https://proxy.golang.org/$($spec.modulo_raiz)/@latest" -TimeoutSec 30).Version
+            } catch { Write-Host "  ?  $n : no se pudo consultar el proxy de Go"; continue }
+            if ($ultima -ne $spec.version) { $atras += "$n : fijada $($spec.version), publicada $ultima" }
+            else { Write-Host "  ok $n $($spec.version)" }
+          }
+
+          foreach ($q in $m.paquetes.pip.PSObject.Properties) {
+            try {
+              $ultima = (Invoke-RestMethod "https://pypi.org/pypi/$($q.Name)/json" -TimeoutSec 30).info.version
+            } catch { Write-Host "  ?  $($q.Name) : no se pudo consultar PyPI"; continue }
+            if ($ultima -ne $q.Value) { $atras += "$($q.Name) : fijada $($q.Value), publicada $ultima" }
+            else { Write-Host "  ok $($q.Name) $($q.Value)" }
+          }
+
+          if ($atras.Count -eq 0) {
+            Write-Host "todos los motores estan en la ultima version publicada"
+            exit 0
+          }
+          # Aviso, no error: estar por detras es una decision, no un fallo. Lo
+          # que no puede pasar es estar por detras SIN SABERLO.
+          Write-Host "::warning::hay $($atras.Count) motor(es) por detras de lo publicado rio arriba"
+          foreach ($a in $atras) { Write-Host "::warning::$a" }
+          Write-Host ""
+          Write-Host "Para subir uno: descarga su checksums.txt, aniade una entrada mas al"
+          Write-Host "arreglo de versiones en motores.json (las viejas se quedan), y corre"
+          Write-Host "`engines --auditar` antes de empaquetar."
+        env:
+          GH_TOKEN: ${{ github.token }}
