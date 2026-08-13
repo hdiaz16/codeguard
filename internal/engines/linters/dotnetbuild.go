@@ -198,34 +198,46 @@ func (e DotnetBuild) Run(ctx context.Context, in engines.Input) ([]finding.Findi
 // "limpio" sin haber mirado nada. Con el caché por huella el rebuild se paga
 // una vez por estado del proyecto, no una vez por informe.
 //
-// Y para que Rebuild no sea destructivo, la compilación vive en su propio
-// obj/codeguard: sin esto, el Clean de Rebuild borraría el bin/obj del
-// desarrollador (dejándole una recompilación completa de regalo, o un fallo
-// seco si el depurador tiene tomado un .dll de bin). MSBuildProjectExtensionsPath
-// sigue apuntando al obj/ real porque ahí vive project.assets.json, que es lo
-// único que --no-restore necesita encontrar.
+// Y para que Rebuild no sea destructivo, lo que se compila se ESCRIBE en un
+// directorio privado fuera del repo: sin esto, el Clean de Rebuild borraría el
+// bin/obj del desarrollador (dejándole una recompilación completa de regalo, o
+// un fallo seco si el depurador tiene tomado un .dll de bin).
 func dnbCompilar(ctx context.Context, repoRoot, csproj string) ([]finding.Finding, error) {
 	dirProy := filepath.Join(repoRoot, filepath.FromSlash(path.Dir(csproj)))
+
+	// Se redirige DÓNDE SE ESCRIBE (IntermediateOutputPath / OutputPath) y NO
+	// dónde el SDK cree que está obj/ (BaseIntermediateOutputPath). La distinción
+	// parece cosmética y no lo es.
+	//
+	// El SDK excluye del glob de compilación lo que cuelgue de
+	// $(BaseIntermediateOutputPath) y $(BaseOutputPath). Al mover los Base*, el
+	// obj/ REAL del proyecto dejaba de estar excluido y sus AssemblyInfo.cs de
+	// compilaciones anteriores entraban a la nuestra: ocho errores CS0579
+	// "Duplicate attribute" sobre archivos que el usuario nunca escribió.
+	// Bloqueantes, e inventados. Aparecían en la SEGUNDA corrida —cuando ya hay
+	// algo en obj/—, que es justo la corrida normal: la del que reintenta el
+	// commit después de que le bloqueen.
+	//
+	// Excluirlos a mano no funciona: DefaultItemExcludes es una lista separada por
+	// ';' y la línea de comandos de MSBuild parte los -p: por ese mismo carácter
+	// (MSB1006). Escapado como %3B deja de partirse, pero entonces el ';' es
+	// literal y las dos exclusiones se vuelven UN patrón que no casa con nada —
+	// medido con `dotnet msbuild -getItem:Compile`: los archivos de obj/ seguían
+	// en la lista.
+	//
+	// Dejando los Base* en su valor por defecto, las exclusiones del SDK siguen
+	// siendo las correctas y sólo cambia el destino de la escritura. Medido: los
+	// items compilados son exactamente los del usuario, y dos compilaciones
+	// seguidas dan el mismo resultado.
+	//
+	// project.assets.json sigue en el obj/ real, que es donde --no-restore lo
+	// busca, porque BaseIntermediateOutputPath no se toca.
+	privado := rutaObjPrivado(repoRoot, csproj)
+
 	cmd := exec.CommandContext(ctx, "dotnet", "build", path.Base(csproj),
 		"--no-restore", "--nologo", "-v", "quiet", "-clp:NoSummary", "-t:Rebuild",
-		"-p:BaseIntermediateOutputPath=obj/codeguard/",
-		"-p:MSBuildProjectExtensionsPath=obj/",
-		"-p:BaseOutputPath=obj/codeguard/bin/",
-		// obj/ y bin/ fuera del compilado, EXPLÍCITAMENTE.
-		//
-		// El SDK excluye por defecto lo que haya bajo BaseIntermediateOutputPath
-		// y BaseOutputPath; al moverlos a obj/codeguard/ para no destrozar el
-		// obj/ del desarrollador, el obj/ REAL deja de estar excluido y sus .cs
-		// generados —AssemblyInfo, los atributos del TargetFramework— entran a
-		// la compilación junto a los nuestros.
-		//
-		// El resultado son errores CS0579 "Duplicate attribute" que NO existen
-		// en el código del usuario: ocho errores inventados sobre archivos que
-		// él nunca escribió. Y bloqueantes, porque son errores de compilación.
-		// Salió en la verificación de extremo a extremo, en la SEGUNDA corrida
-		// —la primera no los tiene porque el obj/ todavía está vacío—, que es
-		// justamente la corrida normal: el desarrollador que reintenta el commit.
-		"-p:DefaultItemExcludes=$(DefaultItemExcludes);obj/**;bin/**")
+		"-p:IntermediateOutputPath="+privado,
+		"-p:OutputPath="+privado+"bin"+string(os.PathSeparator))
 	cmd.Dir = dirProy
 	cmd.Env = proc.Entorno()
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
@@ -557,4 +569,15 @@ func dnbRecorte(texto string) string {
 		s = s[:300] + "…"
 	}
 	return s
+}
+
+// rutaObjPrivado devuelve el directorio intermedio de CodeGuard para un
+// proyecto: fuera del repo, en el temporal, y con un nombre derivado de la ruta
+// del .csproj para que dos proyectos no se pisen.
+//
+// Termina en separador porque MSBuild lo exige en las rutas de salida.
+func rutaObjPrivado(repoRoot, csproj string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(filepath.Join(repoRoot, filepath.FromSlash(csproj)))))
+	dir := filepath.Join(os.TempDir(), "codeguard-obj", hex.EncodeToString(sum[:8]))
+	return dir + string(os.PathSeparator)
 }

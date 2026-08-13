@@ -78,7 +78,7 @@ func TestElCacheInvalidaEnSusCuatroEjes(t *testing.T) {
 		exigirQueElVenenoSeSirva(t, bin, repo, datos)
 
 		copiarRulepackComo(t, repo, "2026.08.9")
-		escribir(t, repo, ".codeguard/config.yaml", configCon("2026.08.9", 5000))
+		escribir(t, repo, ".codeguard/config.yaml", configCon("2026.08.9", 50000))
 		git(t, repo, "add", "-A")
 
 		// Aquí la invalidación es TOTAL: el rulepack entra en la clave de todas
@@ -95,7 +95,7 @@ func TestElCacheInvalidaEnSusCuatroEjes(t *testing.T) {
 		envenenar(t, datos)
 		exigirQueElVenenoSeSirva(t, bin, repo, datos)
 
-		escribir(t, repo, ".codeguard/config.yaml", configCon("2026.08.2", 7000))
+		escribir(t, repo, ".codeguard/config.yaml", configCon("2026.08.2", 70000))
 		git(t, repo, "add", "-A")
 
 		exigirQueVuelvan(t, reales, analizarHuellas(t, bin, repo, datos),
@@ -194,7 +194,13 @@ func prepararCache(t *testing.T) (bin, repo, datos string) {
 	bin, repo = prepararInvariante(t)
 	datos = t.TempDir()
 	copiarRulepack(t, repo)
-	escribir(t, repo, ".codeguard/config.yaml", configCon("2026.08.2", 5000))
+
+	// El límite va MUY por encima de lo que este fixture puede llegar a tener: el
+	// eje del rulepack copia un rulepack entero más (2197 líneas) y con el límite
+	// ajustado el producto degradaba a sólo-secretos, con razón. Aquí no se mide
+	// el limitador —tiene su prueba— y estorbar con él sólo produce rojos que
+	// acusan al inocente.
+	escribir(t, repo, ".codeguard/config.yaml", configCon("2026.08.2", 50000))
 	escribir(t, repo, "app/inseguro.py", elDefecto)
 	git(t, repo, "add", "-A")
 	return bin, repo, datos
@@ -250,6 +256,21 @@ func analizarHuellas(t *testing.T, bin, repo, datos string) map[string]hallazgo 
 	exigirQueLoAnaliceElBinarioDePrueba(t, salida)
 	if strings.Contains(salida, "rulepack-ausente") {
 		t.Fatalf("el rulepack no está donde el producto lo busca; la corrida no vale:\n%s", salida)
+	}
+
+	// Una corrida degradada NO mide el caché, y se parece muchísimo a un caché
+	// roto: si el diff pasa de max_diff_lines el producto corre SÓLO secretos
+	// —comportamiento correcto y deliberado—, así que los hallazgos de los demás
+	// motores no vuelven y la comparación los cuenta como «el caché sirvió lo
+	// viejo».
+	//
+	// Pasó de verdad: copiar el segundo rulepack mete 2197 líneas más al diff, se
+	// pasaba del límite del fixture, y el eje del rulepack salía rojo acusando al
+	// caché de lo que hacía el limitador. Se distingue en vez de suponerlo.
+	if strings.Contains(salida, "diff_too_large") {
+		t.Fatalf("esta corrida se degradó a sólo-secretos: no ha medido el caché.\n"+
+			"El fixture se pasa de max_diff_lines, así que el resultado no dice nada "+
+			"sobre invalidación. Sube el límite del fixture; no interpretes esto.\n%s", salida)
 	}
 
 	var nuevos []string

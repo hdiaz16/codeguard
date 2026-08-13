@@ -200,6 +200,32 @@ func violaciones() []violacion {
 			requiere:  "red la primera vez (descargar el módulo)",
 		},
 		{
+			// Se prueba con BIOME, no con eslint, y es una decisión medida: el
+			// motor corre "el que el repo haya configurado", y biome es un solo
+			// paquete npm mientras que un eslint de verdad arrastra su
+			// configuración y sus plugins. Lo que hay que verificar es el
+			// cableado del motor —que detecta la configuración del repo, corre
+			// la herramienta y traduce su salida—, y biome lo ejercita entero
+			// por una fracción del coste.
+			//
+			// El nombre del motor en el log es "eslint" aunque corra biome;
+			// dentro del hallazgo viaja la herramienta real.
+			motor:   "eslint",
+			archivo: "malo.ts",
+			contenido: "export function malo(a: number) {\n" +
+				"  const sinUsar = 1;\n  if (a == 2) {\n    return 1;\n  }\n  return 0;\n}\n",
+			porQue:   "biome: variable sin usar y comparación con ==",
+			requiere: "biome instalado en el repo (npm install)",
+		},
+		{
+			motor:   "tsc",
+			archivo: "tipos.ts",
+			contenido: "export function suma(a: number, b: number): number {\n" +
+				"  return a + b;\n}\n\nconst r: string = suma(1, 2);\n",
+			porQue:   "tsc: number asignado a string (TS2322)",
+			requiere: "typescript instalado en el repo (npm install)",
+		},
+		{
 			// El hueco que trivy NO cubre: sin packages.lock.json no encuentra
 			// nada en un .csproj. La "violación" vive en el propio proyecto —la
 			// dependencia declarada— y este .cs sólo existe para que el motor
@@ -234,10 +260,14 @@ func violaciones() []violacion {
 // Los motores que el arnés todavía no sabe provocar. Se nombran a propósito:
 // un motor que nadie prueba y que además nadie MENCIONA desaparece del informe,
 // y entonces "todo verde" significa menos de lo que parece.
-var sinPruebaTodavia = map[string]string{
-	"tsc":    "necesita un proyecto TypeScript con tsconfig",
-	"eslint": "sólo aplica si el repo configura eslint o biome",
-}
+// Los motores que el arnés todavía no sabe provocar.
+//
+// Está VACÍO, y esa es la meta de la fase 4: al empezar tenía seis entradas
+// —trivy, govulncheck, tsc, eslint, dotnet-build y dotnet-vuln—, cada una
+// nombrando lo que le faltaba. Se deja el mapa en vez de borrarlo porque el
+// día que se añada un motor nuevo, su casilla tiene que poder decir "sin
+// probar" en lugar de desaparecer de la tabla.
+var sinPruebaTodavia = map[string]string{}
 
 var (
 	reLinea     = regexp.MustCompile(`([a-z0-9\-]+): (\d+) hallazgo\(s\)`)
@@ -380,9 +410,15 @@ func montarRepo(t *testing.T) string {
 	for _, v := range violaciones() {
 		escribir(t, repo, v.archivo, v.contenido)
 	}
+	prepararProyectoTS(t, repo)
 	// El módulo tiene que resolverse: sin go.sum, govulncheck y staticcheck no
 	// pueden cargar los paquetes y las dos casillas saldrían sin probar por un
 	// motivo que no es suyo.
+	//
+	// Va aquí y no en repoBase: el go.mod CON dependencia lo escribe esta
+	// función. Estuvo un rato en repoBase y dejaba un go.sum sin commitear en
+	// el árbol de trabajo de todas las demás pruebas, que sí lo notaron —la de
+	// paridad y la del caché se pusieron rojas por eso, no por lo suyo.
 	resolverModuloGo(t, repo)
 	git(t, repo, "add", "-A")
 	return repo
@@ -456,6 +492,7 @@ func repoBase(t *testing.T) string {
 	// `dotnet build` se invoca con --no-restore a propósito: restaurar en el
 	// camino del commit sería ir a la red. Un repo real se restaura al clonar.
 	restaurarProyectoDotnet(t, repo)
+
 	return repo
 }
 
@@ -627,4 +664,44 @@ func cuentaDe(salida, motor string) int {
 		}
 	}
 	return 0
+}
+
+// prepararProyectoTS deja un proyecto TypeScript con su typescript instalado.
+//
+// El motor invoca `npx --no-install tsc` a propósito: el camino del commit NO
+// puede ir a la red. Eso significa que tsc sólo corre si el repo tiene
+// typescript entre sus dependencias, que es exactamente como está cualquier
+// repo de TypeScript de verdad — y por eso el fixture hace `npm install` en vez
+// de dejar que npx lo descargue: si lo descargara, la prueba estaría
+// verificando un camino que en producción está cerrado.
+//
+// Si npm no está o falla, la casilla sale sin cazar y se ve en la tabla.
+func prepararProyectoTS(t *testing.T, repo string) {
+	t.Helper()
+	escribir(t, repo, "tsconfig.json",
+		"{\n  \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"target\": \"ES2020\" }\n}\n")
+	escribir(t, repo, "package.json",
+		"{\n  \"name\": \"fixture\",\n  \"private\": true,\n"+
+			"  \"devDependencies\": {\n"+
+			"    \"typescript\": \"5.9.2\",\n"+
+			"    \"@biomejs/biome\": \"2.3.14\"\n  }\n}\n")
+	// La configuración de biome es lo que hace que el motor de JS/TS APLIQUE.
+	//
+	// Sin ella decide que el repo no eligió linter y no corre — que es su
+	// comportamiento correcto, y también la razón de que la casilla llevara toda
+	// la fase 4 sin probar: nadie le había puesto delante un repo que sí lo
+	// configurara.
+	escribir(t, repo, "biome.json", "{\n  \"linter\": { \"enabled\": true }\n}\n")
+	escribir(t, repo, ".gitignore", "obj/\nbin/\nnode_modules/\n")
+
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Log("sin npm: la casilla de tsc saldrá sin probar")
+		return
+	}
+	c := exec.Command("npm", "install", "--silent", "--no-audit", "--no-fund")
+	c.Dir = repo
+	c.Env = sinGOROOT(os.Environ())
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Logf("npm install falló (¿sin red?): la casilla de tsc saldrá sin probar: %v\n%s", err, out)
+	}
 }
