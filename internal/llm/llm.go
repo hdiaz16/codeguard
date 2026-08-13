@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"codeguard/internal/config"
+	"codeguard/internal/secreto"
 )
 
 type Client struct {
@@ -26,21 +27,53 @@ type Client struct {
 	http     *http.Client
 }
 
+// ClaveDe resuelve la clave del modelo, primero de la bóveda del sistema y
+// luego del entorno.
+//
+// El orden importa y la caída al entorno NO es un descuido: es lo que permite
+// que quien exporta la clave a mano para una prueba, o la inyecta en el CI por
+// variable, siga funcionando sin migrar nada. Lo que se deja de hacer es
+// ESCRIBIRLA ahí (ver cmd/daemon/configllm.go).
+//
+// La bóveda se consulta en cada llamada en vez de cachearse al arrancar, y eso
+// también es a propósito: la versión anterior leía la clave del entorno del
+// proceso, así que el daemon arrancaba sin ella cada vez que se reiniciaba
+// —varias veces por semana, una por actualización— y la capa semántica se
+// apagaba sola. El log decía "sin API key" mientras la clave llevaba días
+// guardada. Leer en el momento de usarla no tiene ese modo de fallo.
+func ClaveDe(cfg config.LLM) string {
+	if cfg.APIKeyEnv == "" {
+		return ""
+	}
+	if v, err := secreto.Leer(cfg.APIKeyEnv); err == nil && v != "" {
+		return v
+	}
+	return os.Getenv(cfg.APIKeyEnv)
+}
+
 // New devuelve nil (sin error) cuando la capa no se puede usar: sin endpoint,
 // o con un proveedor que exige key y no la encuentra. Nunca es un requisito
 // para commitear (P2), así que su ausencia degrada y no rompe.
 //
 // Un modelo local (Ollama, LM Studio) no lleva key: exigirla dejaría fuera
 // justo la opción en la que el código no sale de la máquina.
-func New(cfg config.LLM) *Client {
+func New(cfg config.LLM) *Client { return NewConClave(cfg, ClaveDe(cfg)) }
+
+// NewConClave construye el cliente con una clave EXPLÍCITA, sin consultar la
+// bóveda ni el entorno.
+//
+// Existe para probar una clave recién pegada en el formulario, que todavía no
+// está guardada en ningún sitio. Antes eso se hacía metiéndola un momento en
+// el entorno del proceso y quitándola después; con la bóveda por delante, ese
+// truco dejó de funcionar en silencio: `New` habría leído la clave GUARDADA e
+// ignorado la que el usuario acaba de escribir. Habría respondido "OK" con la
+// clave vieja, que es la peor respuesta posible — la que hace pensar que ya
+// está arreglado.
+func NewConClave(cfg config.LLM, key string) *Client {
 	if cfg.Endpoint == "" {
 		return nil
 	}
 	prov, _ := BuscarProveedor(cfg.Provider)
-	key := ""
-	if cfg.APIKeyEnv != "" {
-		key = os.Getenv(cfg.APIKeyEnv)
-	}
 	if key == "" && requiereKey(cfg, prov) {
 		return nil
 	}

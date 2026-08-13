@@ -219,6 +219,14 @@ func main() {
 	daemon.Version = version
 	abrirLog(refrescadas)
 
+	// Y ya con el log abierto, se mueve a la bóveda la clave que las versiones
+	// anteriores dejaron en HKCU\Environment en texto plano. Va aquí porque es
+	// el único sitio por el que pasa toda instalación existente al actualizar:
+	// esperar a que el usuario abra la pantalla de configuración dejaría la
+	// copia vieja expuesta indefinidamente en las máquinas de quien no la
+	// vuelva a tocar, que son la mayoría.
+	migrarClaveSiHaceFalta()
+
 	// El escritorio nace antes que la aplicación: Wails pide el manejador HTTP
 	// al construirse y ese manejador sirve el estado que vive en el escritorio.
 	e := nuevoEscritorio()

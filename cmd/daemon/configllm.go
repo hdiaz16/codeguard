@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"codeguard/internal/config"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/llm"
+	"codeguard/internal/secreto"
 )
 
 // Configuración del modelo desde la interfaz. Tres reglas que no se negocian:
@@ -78,8 +81,12 @@ func leerConfigLLM(repoRoot string) estadoConfigLLM {
 		// (otra sesión, otro arranque del daemon), está en el registro y este
 		// proceso no la tiene. Decir "sin configurar" en ese caso era una
 		// mentira que dejó la capa LLM dormida durante días.
+		//
+		// Con la clave en la bóveda ese modo de fallo desaparece —se lee en el
+		// momento de usarla—, pero el refresco se queda por las instalaciones
+		// que aún no han migrado y por las claves puestas a mano en el entorno.
 		proc.RefrescarVariables()
-		e.HayKey = os.Getenv(cfg.LLM.APIKeyEnv) != ""
+		e.HayKey = llm.ClaveDe(cfg.LLM) != ""
 	}
 	// Lo que dice el repo, leído sin la anulación personal encima.
 	if delEquipo := llmDelRepo(repoRoot); delEquipo != "" {
@@ -190,11 +197,9 @@ func guardarLLMLocal(g guardarConfigLLM) error {
 		if g.APIKeyEnv == "" {
 			return fmt.Errorf("para guardar la clave hace falta el nombre de la variable de entorno")
 		}
-		if err := guardarVariableUsuario(g.APIKeyEnv, g.APIKey); err != nil {
-			return fmt.Errorf("no se pudo guardar la clave en tu entorno: %w", err)
+		if err := guardarClave(g.APIKeyEnv, g.APIKey); err != nil {
+			return err
 		}
-		// Que el daemon la vea sin reiniciar sesión.
-		os.Setenv(g.APIKeyEnv, g.APIKey)
 	}
 	if err := os.MkdirAll(filepath.Dir(ruta), 0o755); err != nil {
 		return err
@@ -217,16 +222,113 @@ llm:
 	return os.WriteFile(ruta, []byte(contenido), 0o644)
 }
 
-// guardarVariableUsuario escribe en el entorno del usuario (HKCU\Environment),
-// que es lo mismo que hace `setx` pero sin su límite de 1024 caracteres —
-// varias claves modernas lo superan.
-func guardarVariableUsuario(nombre, valor string) error {
+// guardarClave deja la clave en el Administrador de credenciales del usuario y
+// se asegura de que NO quede una copia suelta en el entorno.
+//
+// Antes se escribía en HKCU\Environment, en texto plano, que es donde la
+// dejaría `setx`. El entorno acotado de los motores impedía que la clave bajara
+// a gitleaks o a semgrep, pero no impedía nada de lado: cualquier programa del
+// usuario la leía con un `Get-ChildItem Env:`.
+//
+// Las dos mitades del cambio importan por igual, y la segunda es la que se
+// olvida: guardar en la bóveda sin BORRAR la copia vieja del registro deja el
+// secreto exactamente igual de expuesto que antes, con la diferencia de que
+// ahora nadie mira ahí. Por eso se borra aunque acabe de escribirse en la
+// bóveda, y por eso borrar la variable no aborta la operación si falla — la
+// clave ya está guardada, y dejarla a medias sería peor.
+func guardarClave(nombre, valor string) error {
+	if err := secreto.Guardar(nombre, valor); err != nil {
+		return fmt.Errorf("no se pudo guardar la clave en el Administrador de credenciales: %w", err)
+	}
+	if err := borrarVariableUsuario(nombre); err != nil {
+		log.Printf("aviso: la clave quedó guardada, pero no se pudo borrar la copia vieja de %s en el entorno: %v", nombre, err)
+	}
+	// Que este proceso la vea sin releer la bóveda a mitad de la petición.
+	os.Setenv(nombre, valor)
+	return nil
+}
+
+// borrarVariableUsuario quita el valor de HKCU\Environment. Que no exista no es
+// un error: la mayoría de las instalaciones nuevas no tendrán nada que migrar.
+func borrarVariableUsuario(nombre string) error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.SET_VALUE)
 	if err != nil {
 		return err
 	}
 	defer k.Close()
-	return k.SetStringValue(nombre, valor)
+	if err := k.DeleteValue(nombre); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// migrarClaveSiHaceFalta mira qué variable usa la configuración de esta máquina
+// y migra esa, además de las de los proveedores conocidos.
+//
+// Se cubren los proveedores conocidos y no sólo el activo porque cambiar de
+// proveedor no borra la clave del anterior: quien probó Azure y se pasó a
+// Anthropic tiene DOS claves en el registro, y la que dejó de usar es
+// justamente la que nadie va a volver a tocar.
+func migrarClaveSiHaceFalta() {
+	vistas := map[string]bool{}
+	migrar := func(v string) {
+		if v == "" || vistas[v] {
+			return
+		}
+		vistas[v] = true
+		MigrarClaveDelEntorno(v)
+	}
+	if cfg, err := config.Load("."); err == nil && cfg != nil {
+		migrar(cfg.LLM.APIKeyEnv)
+	}
+	for _, p := range llm.Proveedores {
+		migrar(p.VarEntorno)
+	}
+}
+
+// MigrarClaveDelEntorno mueve a la bóveda una clave que quedó en el registro de
+// una versión anterior, y borra el original.
+//
+// Se llama al arrancar el daemon. Es silenciosa cuando no hay nada que migrar,
+// que es el caso de cualquier instalación nueva; sólo habla cuando hace algo,
+// porque un aviso que sale siempre deja de leerse.
+func MigrarClaveDelEntorno(nombreVar string) {
+	if nombreVar == "" {
+		return
+	}
+	// Lo que hay en el registro se lee SIEMPRE, aunque la bóveda ya tenga algo.
+	//
+	// La primera versión salía aquí en cuanto encontraba la clave en la bóveda,
+	// y así dejaba la copia del registro intacta para siempre en cualquier
+	// máquina donde las dos coexistieran — que es exactamente el fallo del que
+	// avisa el comentario de guardarClave, cometido tres funciones más abajo.
+	// Se descubrió copiando la clave real a la bóveda para una comprobación: el
+	// original se quedaba, y nadie iba a volver a mirarlo.
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE)
+	if err != nil {
+		return
+	}
+	valor, _, err := k.GetStringValue(nombreVar)
+	k.Close()
+	if err != nil || valor == "" {
+		return // no hay nada que migrar ni que limpiar
+	}
+
+	// Si la bóveda ya tiene una clave, esa MANDA: puede ser una más nueva,
+	// guardada desde la pantalla después de que el registro quedara obsoleto.
+	// Pisarla con la del registro devolvería una clave caducada y un 401
+	// imposible de explicar. Pero la copia vieja se borra igual.
+	if _, err := secreto.Leer(nombreVar); err != nil {
+		if err := secreto.Guardar(nombreVar, valor); err != nil {
+			log.Printf("no se pudo migrar %s al Administrador de credenciales: %v", nombreVar, err)
+			return
+		}
+	}
+	if err := borrarVariableUsuario(nombreVar); err != nil {
+		log.Printf("%s está en la bóveda pero no se pudo borrar del entorno: %v", nombreVar, err)
+		return
+	}
+	log.Printf("%s se movió del entorno del usuario al Administrador de credenciales", nombreVar)
 }
 
 // probarConfigLLM traduce el formulario y delega en el paquete llm, que es

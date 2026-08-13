@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -24,19 +23,17 @@ func Probar(cfg config.LLM, clavePegada string) (string, error) {
 		return "", fmt.Errorf("falta el modelo")
 	}
 
-	if clavePegada != "" && cfg.APIKeyEnv != "" {
-		previo, habia := os.LookupEnv(cfg.APIKeyEnv)
-		os.Setenv(cfg.APIKeyEnv, clavePegada)
-		defer func() {
-			if habia {
-				os.Setenv(cfg.APIKeyEnv, previo)
-			} else {
-				os.Unsetenv(cfg.APIKeyEnv)
-			}
-		}()
+	// La clave pegada gana sobre lo guardado, y se pasa explícita en vez de
+	// inyectarla un momento en el entorno del proceso como se hacía antes.
+	// Aquel truco dejó de funcionar en cuanto la clave pasó a leerse de la
+	// bóveda: se habría probado la GUARDADA en vez de la que el usuario acaba
+	// de escribir, y un "OK" así es peor que un error, porque manda a cerrar el
+	// formulario creyendo que ya está.
+	clave := clavePegada
+	if clave == "" {
+		clave = ClaveDe(cfg)
 	}
-
-	c := New(cfg)
+	c := NewConClave(cfg, clave)
 	if c == nil {
 		prov, _ := BuscarProveedor(cfg.Provider)
 		if prov.NecesitaKey || cfg.Provider == "" {

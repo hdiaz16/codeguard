@@ -11,6 +11,7 @@ import (
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/ipc"
 	"codeguard/internal/llm"
+	"codeguard/internal/secreto"
 )
 
 func configCmd() *cobra.Command {
@@ -100,8 +101,14 @@ func mostrarConfigLLM() error {
 	switch {
 	case cfg.LLM.APIKeyEnv == "":
 		fmt.Println("  clave      no hace falta")
+	case claveEnBoveda(cfg.LLM.APIKeyEnv):
+		// Se distingue de la del entorno porque el remedio es distinto: una
+		// clave en la bóveda la ve cualquier proceso al leerla, así que si algo
+		// no funciona no es "abre una terminal nueva".
+		fmt.Printf("  clave      %s ✓ guardada en el Administrador de credenciales\n", cfg.LLM.APIKeyEnv)
 	case os.Getenv(cfg.LLM.APIKeyEnv) != "":
-		fmt.Printf("  clave      %s ✓ configurada\n", cfg.LLM.APIKeyEnv)
+		fmt.Printf("  clave      %s ✓ configurada (en el entorno)\n", cfg.LLM.APIKeyEnv)
+		fmt.Println("             el agente la moverá al Administrador de credenciales al arrancar")
 	case definidaEnElUsuario(cfg.LLM.APIKeyEnv):
 		// Windows sólo entrega las variables de usuario a los procesos que
 		// arrancan DESPUÉS de definirlas. Decir "vacía" aquí manda al dev a
@@ -121,4 +128,12 @@ func nonEmptyOr(s, alterno string) string {
 		return alterno
 	}
 	return s
+}
+
+// claveEnBoveda dice si la clave vive en el Administrador de credenciales.
+// Multiplataforma sin build tags: el paquete secreto ya responde que no hay
+// bóveda fuera de Windows.
+func claveEnBoveda(variable string) bool {
+	v, err := secreto.Leer(variable)
+	return err == nil && v != ""
 }
