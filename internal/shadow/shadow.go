@@ -218,7 +218,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 					}
 				}
 			}
-			res, err := client.CompleteStream(ctx, model, systemPrompt, user, timeout, 0, onDelta)
+			res, err := client.CompleteStream(ctx, model, systemPrompt, user, timeout, techoSombra, onDelta)
 			if err != nil {
 				call.Status = "error"
 				if ctx.Err() != nil || strings.Contains(err.Error(), "deadline") {
@@ -297,13 +297,36 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 // O sea que la cola de latencia llega a diez veces la mediana, y un plazo de
 // 20 s la corta. Un minuto la cubre con margen sin dejar una llamada colgada
 // para siempre.
+// El piso subió de 1 a 3 minutos el día que se le dio techo de salida real a
+// los modelos razonadores (ver techoSombra): FW-Kimi-K3 emite ~75 tokens/s
+// (medido: 2 383 tokens en 31,7 s), así que un pilar que aproveche el techo
+// tarda 2-3 minutos. Con el piso de un minuto, subir el techo sólo habría
+// movido el fallo de "truncada" a "timeout". Nadie espera a la sombra: el
+// commit ya se respondió.
 func plazoSombra(cfg *config.Config) time.Duration {
 	plazo := time.Duration(cfg.LLM.TimeoutMs) * time.Millisecond
-	if minimo := time.Minute; plazo < minimo {
+	if minimo := 3 * time.Minute; plazo < minimo {
 		return minimo
 	}
 	return plazo
 }
+
+// techoSombra es el máximo de tokens de SALIDA por pilar.
+//
+// Con el default del cliente (4000) el pilar de calidad fallaba SIEMPRE con
+// modelos razonadores: el razonamiento consume del mismo presupuesto que la
+// respuesta, y el JSON llegaba cortado. Medido con FW-Kimi-K3 el día que se
+// verificó la integración: data cupo con 1 942 tokens, security con 2 383, y
+// quality reventó el techo — "respuesta truncada por max_tokens (4000)".
+//
+// La consecuencia no era sólo perder un pilar: sin los TRES pilares el
+// resultado no se cachea (a propósito — un parcial cacheado se vuelve
+// permanente), así que cada commit del mismo diff volvía a pagar las tres
+// llamadas. Un pilar truncado convertía el caché en decorado.
+//
+// 16000 da holgura de sobra para el razonamiento más el JSON; el costo por
+// token de salida sólo se paga por lo que el modelo emite de verdad.
+const techoSombra = 16000
 
 // verify implementa la etapa 6 (anti-alucinación, directo de RADAR).
 func verify(req *ipc.Request, pillar finding.Pillar, content string, deterministic []finding.Finding) ([]finding.Finding, int) {

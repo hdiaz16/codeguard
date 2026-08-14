@@ -136,14 +136,20 @@ func TestConTodosLosPilaresSiSeCachea(t *testing.T) {
 
 // El plazo de la sombra no es el interactivo: nadie la está esperando, y
 // cortarla a los 20 s tira una llamada ya pagada en tokens.
+//
+// El piso es de TRES minutos desde que los pilares tienen techo de salida real
+// (techoSombra): un razonador a ~75 tokens/s que aproveche el techo tarda 2-3
+// minutos. Esta prueba fijaba el piso viejo de un minuto, y con él, subir el
+// techo sólo movía el fallo de "respuesta truncada" a "timeout".
 func TestPlazoSombraTienePiso(t *testing.T) {
 	casos := []struct {
 		timeoutMs int
 		quiere    time.Duration
 	}{
-		{0, time.Minute},          // sin configurar
-		{20000, time.Minute},      // el default del equipo: por debajo del piso
-		{90000, 90 * time.Second}, // configurado por encima: se respeta
+		{0, 3 * time.Minute},      // sin configurar
+		{20000, 3 * time.Minute},  // el default del equipo: por debajo del piso
+		{90000, 3 * time.Minute},  // 90 s: también por debajo del piso nuevo
+		{300000, 5 * time.Minute}, // configurado por encima: se respeta
 	}
 	for _, c := range casos {
 		cfg := &config.Config{}
