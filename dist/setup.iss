@@ -10,7 +10,7 @@
 ; =============================================================================
 
 #define MyAppName "CodeGuard"
-#define MyAppVersion "1.8.0"
+#define MyAppVersion "1.9.2"
 ; reglas.iss lo genera build-dist.ps1 contando el rulepack: el numero que se le
 ; promete al usuario no se escribe a mano (llego a decir 112 con 119 instaladas)
 #include "reglas.iss"
@@ -54,7 +54,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Messages]
 ; copy minimo: el asistente habla claro y corto
 spanish.WelcomeLabel1=CodeGuard
-spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus {#MyRuleCount} reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk y ruff (vía pip)%n  •  govulncheck y staticcheck, que se COMPILAN: un par de minutos%n%nTodos los motores son necesarios: sin ellos la paridad con el CI se rompe.
+spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus {#MyRuleCount} reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk, ruff y mypy (vía pip)%n  •  govulncheck y staticcheck, que se COMPILAN: un par de minutos%n%nTodos los motores son necesarios: sin ellos la paridad con el CI se rompe.
 spanish.FinishedHeadingLabel=Listo.
 spanish.FinishedLabelNoIcons=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)
 spanish.FinishedLabel=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)
@@ -102,8 +102,24 @@ Filename: "taskkill.exe"; Parameters: "/F /IM {#MyDaemonExe}"; \
     Flags: runhidden; RunOnceId: "PararDaemon"
 
 [UninstallDelete]
-; lo que engines.ps1 descargo despues de instalar
-Type: filesandordirs; Name: "{app}\engines"
+; Los motores NO se borran, y es deliberado.
+;
+; Se borraban, y cada reinstalación volvía a bajar 60 MB de trivy. En una red
+; corporativa lenta eso fue una hora y una instalación incompleta: la descarga
+; se truncó, el checksum no cuadró —correctamente— y el equipo quedó sin la
+; compuerta de CVE.
+;
+; Borrarlos no aporta nada de seguridad: cada instalación verifica el SHA-256 de
+; lo que encuentra contra motores.json ANTES de darlo por bueno, y lo reemplaza
+; si no coincide. O sea que conservar un binario ya verificado es exactamente
+; igual de seguro y muchísimo más rápido.
+;
+; Se conservan por el mismo criterio que la base de datos y la configuración:
+; desinstalar el agente no tiene por qué costarle al usuario una hora de red.
+; Para dejarlo del todo limpio: borrar %LOCALAPPDATA%\CodeGuard a mano.
+;
+; Sí se van los zips a medias: no sirven para nada si no se va a reinstalar.
+Type: filesandordirs; Name: "{app}\descargas"
 
 [Code]
 const
@@ -281,7 +297,7 @@ end;
 // codigo de salida. Si algo falla, degrada y avisa: jamas rompe el setup (P4).
 procedure EjecutarMotores();
 var
-  LogFile, FlagFile, Linea, Codigo: String;
+  LogFile, FlagFile, Linea, Codigo, Detalle: String;
   Lineas: TArrayOfString;
   R, Espera, N: Integer;
 begin
@@ -302,8 +318,20 @@ begin
     WizardForm.StatusLabel.Caption := 'Instalando motores (gitleaks, trivy, semgrep, squawk, ruff) y compilando govulncheck y staticcheck...';
   WizardForm.StatusLabel.Refresh;
 
+  // El tope era de 15 minutos y era el verdadero fallo de las dos
+  // instalaciones que salieron "incompletas": en una red corporativa lenta el
+  // zip de trivy (60 MB a 8-35 KB/s) necesita cuarenta y pico minutos, así que
+  // el asistente se rendía, anunciaba que los motores no habían quedado, y el
+  // trabajo SEGUÍA corriendo debajo — llegando a terminar bien un rato después.
+  //
+  // Un asistente que afirma un fracaso que no ha comprobado es peor que uno
+  // lento: manda al usuario a commitear creyendo que le faltan compuertas, o a
+  // reinstalar encima de una instalación que iba bien.
+  //
+  // Ahora espera una hora, y si se agota NO dice que falló: dice lo único que
+  // le consta, que sigue en marcha, y cómo comprobarlo.
   Espera := 0;
-  while (not FileExists(FlagFile)) and (Espera < 3600) do  // tope: 15 min
+  while (not FileExists(FlagFile)) and (Espera < 14400) do  // tope: 60 min
   begin
     if LoadStringsFromFile(LogFile, Lineas) then
     begin
@@ -331,14 +359,39 @@ begin
       Codigo := Trim(Lineas[0]);
   end;
   WizardForm.FilenameLabel.Caption := '';
-  if Codigo = '0' then
+  if Codigo = '' then
+  begin
+    // Se agotó la espera SIN que el runner dejara su .done: no ha fallado, no
+    // ha terminado. Decir cualquiera de las dos cosas sería inventarse un dato.
+    WizardForm.StatusLabel.Caption := 'Los motores siguen instalándose en segundo plano.';
+    MsgBox('Los motores TODAVÍA se están instalando.' + #13#10#13#10 +
+           'La descarga va lenta en esta red, pero sigue en marcha: puedes cerrar' + #13#10 +
+           'este asistente sin cortarla.' + #13#10#13#10 +
+           'Para ver cómo va:      codeguard status' + #13#10 +
+           'Si algo quedó a medias: codeguard repair  (reanuda, no reempieza)',
+           mbInformation, MB_OK);
+  end
+  else if Codigo = '0' then
     WizardForm.StatusLabel.Caption := 'Motores instalados y verificados.'
   else
   begin
     WizardForm.StatusLabel.Caption := 'Motores incompletos — CodeGuard degrada, no bloquea.';
-    MsgBox('Algún motor no quedó completo. CodeGuard funcionará degradado.' + #13#10 +
-           'Detalle: %TEMP%\codeguard-motores.log' + #13#10 +
-           'Reintenta cuando quieras con: codeguard repair', mbInformation, MB_OK);
+    // Qué falta y qué deja de revisarse, no "algún motor".
+    //
+    // El mensaje anterior no decía cuál, ni qué compuerta se apagaba, ni si
+    // reintentar servía de algo. El usuario se iba a commitear creyendo que
+    // tenía un producto entero. engines.ps1 deja el detalle escrito aquí.
+    Detalle := '';
+    if LoadStringsFromFile(ExpandConstant('{%TEMP}\codeguard-motores.faltan'), Lineas) then
+    begin
+      for N := 0 to GetArrayLength(Lineas) - 1 do
+        Detalle := Detalle + Lineas[N] + #13#10;
+    end;
+    if Detalle = '' then
+      Detalle := 'Detalle: %TEMP%\codeguard-motores.log' + #13#10 +
+                 'Reintenta con: codeguard repair' + #13#10;
+    MsgBox('La instalación quedó INCOMPLETA.' + #13#10#13#10 + Detalle,
+           mbInformation, MB_OK);
   end;
   WizardForm.StatusLabel.Refresh;
 end;

@@ -30,7 +30,15 @@ Get-ChildItem dist\rulepacks -Directory -Recurse -Filter testdata | Remove-Item 
 $reglas = (Select-String -Path "dist\rulepacks\*\semgrep\*.yaml" -Pattern '^\s*- id:\s*\S+').Count
 if ($reglas -lt 1) { throw "no se pudo contar las reglas del rulepack" }
 Set-Content -Path "dist\reglas.iss" -Encoding UTF8 -Value "#define MyRuleCount `"$reglas`""
-Write-Host "==> el asistente anunciara $reglas reglas" -ForegroundColor Cyan
+
+# El acuerdo tambien se GENERA, por el mismo motivo que la pantalla de
+# bienvenida: llego a prometer 112 reglas cuando ya eran 130. Un numero
+# escrito a mano en un documento de consentimiento envejece solo, y ese es el
+# peor sitio donde puede pasar: es lo que el usuario acepta.
+$plantilla = Get-Content "dist\acuerdo.plantilla.txt" -Raw -Encoding UTF8
+if ($plantilla -notmatch "\{REGLAS\}") { throw "acuerdo.plantilla.txt ya no tiene el marcador {REGLAS}: el numero volveria a escribirse a mano" }
+Set-Content -Path "dist\acuerdo.txt" -Encoding UTF8 -NoNewline -Value ($plantilla -replace "\{REGLAS\}", $reglas)
+Write-Host "==> el asistente y el acuerdo anunciaran $reglas reglas" -ForegroundColor Cyan
 
 # motores.json: fuente de verdad de hashes, compartida con engines.ps1 y el
 # setup. Se copia desde el agente para que nunca diverjan.

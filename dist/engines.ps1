@@ -10,6 +10,9 @@
 # =============================================================================
 param(
     [string]$EnginesDir = (Join-Path $env:LOCALAPPDATA "CodeGuard\engines"),
+    # Los zips a medias viven aquí y NO en %TEMP%: sobreviven al asistente para
+    # que un reintento reanude en vez de repetir la descarga entera.
+    [string]$DescargasDir = (Join-Path $env:LOCALAPPDATA "CodeGuard\descargas"),
     [string]$MotoresJson = (Join-Path $PSScriptRoot "motores.json"),
     [switch]$SkipTrivy   # trivy pesa ~60 MB; opcional en la primera ola
 )
@@ -70,22 +73,74 @@ function LimpiarTemporales([string]$nombre) {
 New-Item -ItemType Directory -Force $EnginesDir | Out-Null
 $catalogo = (Get-Content $MotoresJson -Raw | ConvertFrom-Json).motores
 
-# ── Descarga con reintentos ──────────────────────────────────────────────────
-# Reintentar sobre el archivo parcial dejaba un zip corrupto que fallaba la
-# verificacion con un mensaje que acusaba al publicador de algo que no hizo.
-# Se retira antes de cada reintento. Lo usan los tres instaladores de abajo.
-function Descargar([string]$url, [string]$destino) {
-    $intento = 0
-    while ($true) {
-        try { Invoke-WebRequest -Uri $url -OutFile $destino -UseBasicParsing; return }
-        catch {
-            $intento++
-            if ($intento -ge 3) { throw }
-            Write-Host "    la descarga fallo ($($_.Exception.Message)); reintento $intento de 2..." -ForegroundColor Yellow
-            if (Test-Path $destino) { Remove-Item -LiteralPath $destino -Force -ErrorAction SilentlyContinue }
-            Start-Sleep 4
+# ── Descarga que REANUDA ─────────────────────────────────────────────────────
+# La version anterior reintentaba desde CERO y borraba el parcial entre
+# intentos. Con eso, una red que corta a mitad de archivo no falla: es
+# IMPOSIBLE que termine nunca, por muchos reintentos que se le den.
+#
+# Pasó, y costó una instalación entera: en una red corporativa el zip de trivy
+# (60 MB) bajaba a 8-35 KB/s y se cortaba; cada reintento volvía a empezar, y a
+# la tercera el script se rindió con un archivo truncado que —claro— no cuadraba
+# con el checksum del publicador. El mensaje acusaba a la cadena de suministro
+# de lo que hacía la red.
+#
+# Ahora se reanuda con curl (-C -), que viene en Windows 10+ y sabe pedir "desde
+# el byte N". Y el parcial se GUARDA entre corridas, en vez de tirarse: si el
+# asistente se cierra con 28 de 60 MB bajados, el siguiente intento sigue desde
+# ahí en lugar de repetir media hora de descarga.
+#
+# Devuelve $true si el archivo llegó COMPLETO, $false si se cortó. Quien llama
+# distingue las dos cosas, que no son iguales: un archivo cortado se reanuda; un
+# archivo completo que no cuadra con su hash es un problema de integridad y no
+# se reintenta jamás — se aborta y se dice por qué.
+function DescargarConReanudacion([string]$url, [string]$destino) {
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if (-not $curl) {
+        # Sin curl no hay reanudación posible: se hace lo de antes, que al menos
+        # funciona en redes sanas.
+        try { Invoke-WebRequest -Uri $url -OutFile $destino -UseBasicParsing; return $true }
+        catch { return $false }
+    }
+
+    $antes = if (Test-Path $destino) { (Get-Item $destino).Length } else { 0 }
+    if ($antes -gt 0) {
+        Write-Host ("    reanudando desde {0:N1} MB ya descargados" -f ($antes / 1MB)) -ForegroundColor DarkGray
+    }
+
+    # Se baja A TRAMOS de 45 s en vez de en una sola llamada larga, y por dos
+    # motivos que costaron una instalación cada uno:
+    #
+    #  1. El asistente muestra la ÚLTIMA LÍNEA del log como señal de vida. Una
+    #     descarga de 40 minutos no escribe ninguna, así que parecía colgado —y
+    #     el usuario cerraba el asistente creyendo que estaba muerto—. Cada
+    #     tramo imprime cuánto lleva, y la ventana se mueve.
+    #  2. Cortar cada 45 s y reanudar es más robusto que una conexión larga en
+    #     una red que las mata: se retoma desde el byte exacto.
+    #
+    # Se para cuando el archivo llega entero, o cuando TRES tramos seguidos no
+    # avanzan ni un byte — ahí ya no es lentitud, es que no hay descarga.
+    $sinAvanzar = 0
+    for ($tramo = 1; $tramo -le 90; $tramo++) {
+        $inicio = if (Test-Path $destino) { (Get-Item $destino).Length } else { 0 }
+
+        # --fail para que un 404 o un 403 no acabe guardado como si fuera el zip.
+        & $curl.Source -sL --fail --retry 2 --retry-all-errors --retry-delay 2 `
+            -C - --connect-timeout 20 --max-time 45 -o $destino $url 2>$null
+        if ($LASTEXITCODE -eq 0) { return $true }
+
+        $ahora = if (Test-Path $destino) { (Get-Item $destino).Length } else { 0 }
+        $kbs = [math]::Round(($ahora - $inicio) / 1KB / 45)
+        if ($ahora -le $inicio) {
+            $sinAvanzar++
+            Write-Host ("    sin avance ({0} de 3) en {1:N1} MB" -f $sinAvanzar, ($ahora / 1MB)) -ForegroundColor Yellow
+            if ($sinAvanzar -ge 3) { return $false }
+        } else {
+            $sinAvanzar = 0
+            Write-Host ("    bajando: {0:N1} MB ({1} KB/s)" -f ($ahora / 1MB), $kbs)
         }
     }
+    Write-Host "    la descarga no terminó en el tiempo previsto" -ForegroundColor Yellow
+    return $false
 }
 
 # ── La huella de un arbol de archivos ────────────────────────────────────────
@@ -137,23 +192,58 @@ function Install-Motor($name) {
         # descarga nueva ya esta verificada. Un fallo a medias no deja hueco.
     }
 
-    # Restos de un setup cancelado a la mitad: se van ANTES de descargar.
-    LimpiarTemporales $name
-    $tmp = Join-Path $env:TEMP "cg-$name.zip"
+    # El zip a medias vive FUERA de %TEMP%, en un caché propio, y sobrevive a
+    # un asistente cerrado: es lo que permite reanudar en vez de repetir.
+    New-Item -ItemType Directory -Force $DescargasDir | Out-Null
+    $tmp = Join-Path $DescargasDir "$name-$($v.version).zip"
     $dir = Join-Path $env:TEMP "cg-$name"
+    if (Test-Path $dir) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
     try {
         Step "Descargando $name $($v.version)"
-        Descargar $v.url $tmp
+
+        # Hasta seis vueltas: cada una reanuda donde quedó la anterior. Se sale
+        # en cuanto el archivo llega ENTERO — el hash se comprueba después,
+        # porque sobre un archivo incompleto no significa nada.
+        # Seis vueltas como mucho, pero se corta antes si una vuelta ENTERA no
+        # consiguió bajar ni un byte: ahí no hay lentitud que esperar, hay una
+        # red que no responde, y insistir sólo alarga la agonía.
+        #
+        # Medido: sin esta salida, un endpoint muerto daba 18 intentos y más de
+        # dos minutos y medio de "sin avance" — desde el asistente, indistinguible
+        # de un cuelgue.
+        $completo = $false
+        for ($vuelta = 1; $vuelta -le 6 -and -not $completo; $vuelta++) {
+            $antes = if (Test-Path $tmp) { (Get-Item $tmp).Length } else { 0 }
+            $completo = DescargarConReanudacion $v.url $tmp
+            if ($completo) { break }
+            $despues = if (Test-Path $tmp) { (Get-Item $tmp).Length } else { 0 }
+            if ($despues -le $antes) {
+                Write-Host "    la descarga no avanza: se deja de insistir" -ForegroundColor Yellow
+                break
+            }
+            Start-Sleep 3
+        }
+        if (-not $completo) {
+            throw @"
+${name}: la red no dejó terminar la descarga.
+Lo bajado se CONSERVA en $tmp, así que reintentar sigue desde ahí y no
+empieza de cero:  codeguard repair
+"@
+        }
 
         $zh = Sha256Archivo $tmp
         if ($zh -ne $v.sha256_zip) {
+            # Archivo COMPLETO que no cuadra: esto ya no es la red cortando, y
+            # no se reintenta. Se borra para que el intento siguiente no herede
+            # un parcial envenenado, y se dice exactamente qué pasó.
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
             throw @"
 $name no coincide con el checksum publicado por sus autores.
   descargado: $zh
   esperado:   $($v.sha256_zip)
-La descarga se descarto sin abrir. Puede ser una version distinta a la que
-fijamos, un espejo alterado o una red que modifica el trafico. No se instala
-nada hasta aclararlo.
+La descarga llegó ENTERA y aun así no cuadra, así que no es un corte de red: es
+una version distinta a la que fijamos, un espejo alterado o una red que modifica
+el trafico. No se instala nada hasta aclararlo.
 "@
         }
         Ok "${name}: checksum del publicador verificado"
@@ -170,17 +260,40 @@ nada hasta aclararlo.
         }
         Copy-Item $found.FullName $exe -Force
         Ok "$name $((Get-Item $exe).Length / 1MB -as [int]) MB - verificado"
+        # Ya instalado y verificado: el zip deja de hacer falta. Sólo aquí — en
+        # cualquier otro camino se conserva para poder reanudar.
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
     finally {
-        # Pase lo que pase —exito, checksum roto, red caida— los temporales no
-        # se quedan. Antes solo se limpiaban en los caminos felices, y un fallo
-        # dejaba el zip a medias para envenenar el siguiente intento.
-        LimpiarTemporales $name
+        if (Test-Path $dir) { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue }
     }
 }
 
-Install-Motor "gitleaks"
-if (-not $SkipTrivy) { Install-Motor "trivy" }
+# ── Que un motor caiga no puede llevarse a los demás ──────────────────────────
+# Antes, trivy fallando abortaba el script entero y govulncheck y staticcheck
+# —que van después y no tienen nada que ver— no llegaban a instalarse nunca. Una
+# instalación quedaba sin TRES compuertas por culpa de una descarga.
+#
+# El catálogo ya dice cuáles son críticos: gitleaks lo es (la compuerta de
+# secretos es fail-closed, sin él no hay producto) y ahí sí se aborta. Los demás
+# se apuntan y se sigue, y al final se dice qué falta y qué deja de revisarse.
+$script:Faltantes = @()
+
+function Intentar([string]$que, [scriptblock]$accion, [string]$sinEsto) {
+    try { & $accion }
+    catch {
+        $critico = $catalogo.$que.critico -eq $true
+        if ($critico) { throw }   # gitleaks: sin él no se sigue
+        Write-Host "    $que NO quedó instalado" -ForegroundColor Yellow
+        Write-Host ("    " + ($_.Exception.Message -split "`n")[0]) -ForegroundColor Yellow
+        $script:Faltantes += [pscustomobject]@{ Motor = $que; Sin = $sinEsto }
+    }
+}
+
+Intentar "gitleaks" { Install-Motor "gitleaks" } "la compuerta de secretos"
+if (-not $SkipTrivy) {
+    Intentar "trivy" { Install-Motor "trivy" } "la compuerta de CVE en dependencias"
+}
 
 # ── Blindaje 5: los comandos nativos no son excepciones ──────────────────────
 # Con $ErrorActionPreference = "Stop" y la salida redirigida a un archivo —que
@@ -295,7 +408,17 @@ if (-not $goBin) {
             $inicio = Get-Date
             $r = Correr "go" @("install", $m.paquete)
             if ($r.Codigo -ne 0) {
-                throw "go install $($m.nombre) fallo (codigo $($r.Codigo)):`n$($r.Salida)"
+                # Uno que no compila no se lleva al otro por delante: se apunta
+                # y se sigue. Los dos son motores distintos con compuertas
+                # distintas, y perder las dos por un fallo de red al bajar un
+                # módulo sería regalar cobertura.
+                Write-Host "    $($m.nombre) NO se pudo compilar" -ForegroundColor Yellow
+                Write-Host ("    " + (($r.Salida -split "`n")[0])) -ForegroundColor Yellow
+                $script:Faltantes += [pscustomobject]@{
+                    Motor = $m.nombre
+                    Sin   = $m.que
+                }
+                continue
             }
             Ok "$($m.nombre) listo en $([int]((Get-Date) - $inicio).TotalSeconds) s"
         }
@@ -416,3 +539,35 @@ if (-not $javaBin) {
     Install-Jar "google-java-format"
     Install-Arbol "pmd"
 }
+
+# ── El parte final: qué falta y qué deja de revisarse ─────────────────────────
+# "Algun motor no quedo completo" no le sirve a nadie: no dice cuál, ni qué se
+# apaga con él, ni qué hacer. Y el usuario ya se fue a commitear creyendo que
+# tiene un producto entero.
+#
+# Se escribe también a un archivo aparte para que el asistente lo enseñe en su
+# ventana: el log completo está en UTF-16 y con trazas de PowerShell dentro, y
+# nadie lo abre.
+$faltanTxt = Join-Path $env:TEMP "codeguard-motores.faltan"
+Remove-Item $faltanTxt -Force -ErrorAction SilentlyContinue
+
+if ($script:Faltantes.Count -gt 0) {
+    Write-Host ""
+    Write-Host "INSTALACION INCOMPLETA" -ForegroundColor Yellow
+    $lineas = @()
+    foreach ($f in $script:Faltantes) {
+        $lineas += "  falta $($f.Motor) - sin el no corre $($f.Sin)"
+    }
+    $lineas += ""
+    $lineas += "CodeGuard funciona, pero esas compuertas NO revisan nada, y el CI si las"
+    $lineas += "corre: un commit puede pasar aqui y morir alla."
+    $lineas += ""
+    $lineas += "Reintenta con:  codeguard repair"
+    $lineas += "Lo ya descargado se conserva, asi que reanuda y no vuelve a empezar."
+    $lineas | ForEach-Object { Write-Host $_ -ForegroundColor Yellow }
+    Set-Content -Path $faltanTxt -Value ($lineas -join "`r`n") -Encoding UTF8
+    exit 2
+}
+
+Write-Host ""
+Ok "todos los motores aplicables quedaron instalados y verificados"
