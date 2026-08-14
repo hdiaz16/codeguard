@@ -26,6 +26,13 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      # En un repositorio PRIVADO la acción de CodeQL consulta la API de
+      # Actions para adjuntar los resultados a su corrida, y descarga los packs
+      # de consultas del registro. Sin estos dos permisos el análisis corre
+      # entero y falla justo al subir el SARIF, con un "Resource not accessible
+      # by integration" que no dice qué permiso falta.
+      actions: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
