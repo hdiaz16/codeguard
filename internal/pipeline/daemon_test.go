@@ -183,8 +183,17 @@ func huellasPorElPipe(t *testing.T, bin, repo, datos, pipe string) (map[string]h
 	// Por eso se compara EN RÉGIMEN, con las dos rutas calientes, que además es
 	// como vive el producto: el daemon existe precisamente para estar caliente.
 	if strings.Contains(salida, ":plazo") {
-		t.Fatalf("a esta corrida el plazo le cortó motores (%s): compararla mediría el "+
-			"cronómetro, no el cableado.\n%s", capasDe(salida), salida)
+		// Skip y no Fatal, y la diferencia importa: esto es «no pude medir», no
+		// «está mal». Pasó de verdad — la suite completa salió ROJA porque esta
+		// prueba corrió mientras otro daemon actualizaba la base de trivy y
+		// había tres llamadas reales al modelo en vuelo: los motores de Go
+		// tardaron 29,9 s y el tope de 30 los cortó. Un rojo que significa «la
+		// máquina estaba ocupada» enseña a reintentar los rojos, que es la
+		// lección exactamente contraria a la de este arnés. El skip sale en el
+		// resumen de la suite, así que tampoco desaparece en silencio.
+		t.Skipf("a esta corrida el plazo le cortó motores (%s): compararla mediría el "+
+			"cronómetro, no el cableado. Máquina saturada; reintenta en frío.\n%s",
+			capasDe(salida), salida)
 	}
 	return hallazgosDelRun(t, rutaDB, nuevos[0]), salida
 }
