@@ -9,6 +9,7 @@ import (
 	"os/exec"
 
 	"codeguard/internal/engines/proc"
+	"codeguard/internal/trivydb"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -74,20 +75,18 @@ func WarmTrivyDB(ctx context.Context) {
 	start := time.Now()
 	c, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(c, "trivy", "image", "--download-db-only")
-	proc.SinVentana(cmd)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("trivy: no se pudo refrescar la DB: %v (%s)", err, firstLine(string(out)))
+	// La baja CodeGuard, no trivy. `trivy --download-db-only` pasa por
+	// oras-go, que arrastra un CVE sin corrección publicada, y esta rutina era
+	// una de las dos únicas rutas donde ese código tocaba datos de la red — y
+	// además corría sin la contención de los motores. Con la descarga propia
+	// (internal/trivydb: digests verificados antes de abrir nada), trivy pasa
+	// a correr SIEMPRE con --skip-db-update y la excepción de oras deja de
+	// tener ruta viva.
+	if err := trivydb.Actualizar(c, filepath.Join(os.Getenv("LOCALAPPDATA"), "trivy")); err != nil {
+		log.Printf("trivy: no se pudo refrescar la DB: %v", err)
 		return
 	}
 	log.Printf("trivy: base de vulnerabilidades actualizada (%.0f s)", time.Since(start).Seconds())
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i > 0 {
-		return s[:i]
-	}
-	return s
 }
 
 // WarmSemgrep paga el arranque en frío de semgrep fuera del camino del commit.

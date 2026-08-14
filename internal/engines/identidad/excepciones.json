@@ -86,10 +86,10 @@
       "artefacto": "trivy",
       "paquete": "oras.land/oras-go/v2",
       "version": "v2.6.1",
-      "motivo": "ESTE ES DISTINTO DE LOS DEMAS Y CONVIENE LEERLO ANTES DE FIRMAR. oras es la libreria con la que trivy se BAJA su base de vulnerabilidades desde ghcr.io, asi que a diferencia del resto si esta en una ruta que ejecutamos. El CVE es acceso a archivos fuera de destino mediante enlaces duros en un tarball manipulado: para explotarlo hay que servirle a trivy un artefacto OCI falso, o sea comprometer el registro de Aqua o interceptar la conexion. La auditoria corre con --skip-db-update y no descarga nada; la descarga ocurre en la actualizacion periodica de la base, que es un momento acotado. Aun asi el riesgo residual no es cero, y quien firme deberia saber que aqui esta aceptando algo alcanzable, no algo inerte.",
-      "evidencia": "trivy 0.73.0 es la ultima publicada (subio oras de 2.6.0 a 2.6.1, que corrige CVE-2026-50151 pero no este). Nuestras invocaciones llevan --skip-db-update: ver auditoria.go y el campo SkipDBUpdate de internal/engines/trivy.",
+      "motivo": "Era el unico con una ruta de red viva y desde el 2026-08-14 ya no la tiene: la actualizacion de la base dejo de pasar por oras. La baja CodeGuard con su propio cliente OCI (internal/trivydb, net/http de la libreria estandar), que verifica el manifiesto contra su digest y hashea el blob MIENTRAS baja — nada se abre antes de que coincida, y la extraccion va con lista blanca de nombres y topes de tamano. trivy corre SIEMPRE con --skip-db-update: en el gancho, en el warmup del daemon y en el CI. El CVE (acceso fuera de destino via enlaces duros en un tarball manipulado) sigue DENTRO del binario de trivy porque upstream no ha publicado correccion, pero el codigo vulnerable ya no procesa datos remotos en ninguna invocacion nuestra: queda en la misma categoria que las otras cinco — presente en el binario, sin ruta para llegarle.",
+      "evidencia": "internal/trivydb con cinco pruebas adversarias (blob alterado, manifiesto sustituido, tar con ../, tar incompleto) y dos de integracion contra ghcr.io real: la base bajo verificada (1.2 GB) y trivy cazo 3 CVE usandola con --skip-db-update. grep de --download-db-only en el arbol: cero usos; el flag --skip-db-update es incondicional en internal/engines/trivy/trivy.go y warmup.go llama a trivydb.Actualizar.",
       "aceptada_por": "",
-      "hasta": "2026-09-30"
+      "hasta": "2026-11-30"
     }
   ]
 }

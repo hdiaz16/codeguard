@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
+	"codeguard/internal/trivydb"
 )
 
 type Engine struct {
@@ -97,10 +99,24 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 			}
 		}
 	}
-	args := []string{"fs", "--scanners", "vuln", "--format", "json", "--quiet"}
-	if e.SkipDBUpdate {
-		args = append(args, "--skip-db-update")
+	// --skip-db-update va SIEMPRE, y no es un matiz: dejar que trivy se
+	// actualice solo hace pasar datos del registro remoto por oras-go, que
+	// arrastra un CVE sin corrección publicada (la excepción #6). Cuando toca
+	// refrescar (el CI, donde SkipDBUpdate llega en falso), la base la baja
+	// CodeGuard con su propio cliente OCI (internal/trivydb), que verifica cada
+	// digest antes de abrir nada.
+	if !e.SkipDBUpdate {
+		if err := trivydb.Actualizar(ctx, dirCacheTrivy()); err != nil {
+			// Sin base no hay escaneo posible: trivy fallaría con un mensaje
+			// ajeno ("--skip-db-update cannot be specified on the first run").
+			// Con base vieja se sigue: detectar con la base de ayer gana por
+			// mucho a no detectar, y el fallo queda dicho en vez de callado.
+			if _, statErr := os.Stat(filepath.Join(dirCacheTrivy(), "db", "metadata.json")); statErr != nil {
+				return nil, fmt.Errorf("no hay base de vulnerabilidades y no se pudo bajar: %w", err)
+			}
+		}
 	}
+	args := []string{"fs", "--scanners", "vuln", "--format", "json", "--quiet", "--skip-db-update"}
 	args = append(args, in.RepoRoot)
 
 	cmd := exec.CommandContext(ctx, bin, args...)
@@ -154,4 +170,15 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 		e.Cache.Guardar(map[string][]finding.Finding{clave: findings})
 	}
 	return findings, nil
+}
+
+// dirCacheTrivy es donde trivy espera su base: %LOCALAPPDATA%/trivy en
+// Windows. Se calcula aquí y no se recibe por configuración porque tiene que
+// coincidir EXACTAMENTE con donde trivy la va a leer.
+func dirCacheTrivy() string {
+	if base := os.Getenv("LOCALAPPDATA"); base != "" {
+		return filepath.Join(base, "trivy")
+	}
+	home, _ := os.UserCacheDir()
+	return filepath.Join(home, "trivy")
 }
