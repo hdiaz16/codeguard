@@ -1,0 +1,19 @@
+# Configuración de CodeQL — qué se analiza y qué no.
+#
+# El corpus del rulepack (rulepacks/*/testdata/) es código deliberadamente
+# vulnerable: es el fixture con el que cada una de las 130 reglas de la casa
+# demuestra que caza lo que promete. Un SSRF ahí dentro no es un fallo, es el
+# caso de prueba — lleva encima su anotación `# ruleid: python-ssrf`.
+#
+# Escanearlo no aporta nada y cuesta mucho: son cinco lenguajes de código malo a
+# propósito, así que CodeQL levantaría decenas de alertas críticas que nadie
+# puede arreglar sin romper las pruebas de las reglas. Una consola de seguridad
+# con ruido es una consola que se deja de mirar, y entonces la alerta de verdad
+# pasa desapercibida entre las falsas.
+#
+# Se excluye el corpus y NADA MÁS: el código del producto se analiza entero.
+name: CodeGuard
+
+paths-ignore:
+  - rulepacks/**/testdata/**
+  - dist/rulepacks/**/testdata/**
