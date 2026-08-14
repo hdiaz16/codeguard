@@ -212,8 +212,16 @@ func calentar(t *testing.T, bin, repo, datos, pipe string) {
 // creyendo que midió el daemon. Se espera a que el pipe CONTESTE.
 func arrancarDaemon(t *testing.T, binDaemon, datos, pipe string) {
 	t.Helper()
+	arrancarDaemonCon(t, binDaemon, datos, pipe, entornoConPipe(t, datos, pipe))
+}
+
+// arrancarDaemonCon es la misma función con el entorno explícito: la fase 5.3
+// necesita añadirle la clave del proveedor falso, sin la cual llm.New devuelve
+// nil y la capa LLM se apaga en silencio.
+func arrancarDaemonCon(t *testing.T, binDaemon, datos, pipe string, entorno []string) {
+	t.Helper()
 	c := exec.Command(binDaemon)
-	c.Env = entornoConPipe(t, datos, pipe)
+	c.Env = entorno
 	if err := c.Start(); err != nil {
 		t.Fatalf("no se pudo arrancar el daemon: %v", err)
 	}

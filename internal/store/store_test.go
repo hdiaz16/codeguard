@@ -343,3 +343,53 @@ func TestFileCacheGetPorTandas(t *testing.T) {
 		t.Fatalf("se perdieron aciertos entre tandas: %d de 950", len(got))
 	}
 }
+
+// Un hallazgo del modelo NUNCA se guarda como bloqueante, diga lo que diga el
+// struct que llega.
+//
+// P2 se defiende en dos sitios: shadow.verify() construye el hallazgo con
+// Blocking:false, y este INSERT escribe blocking = 0 literal. La segunda capa
+// existe porque la primera está a un descuido de distancia — basta que alguien
+// copie el campo del modelo "para no perder información".
+//
+// Esta prueba pide la segunda capa a propósito: se le pasa un hallazgo marcado
+// como bloqueante y se comprueba que en la base entra como aviso. Se escribió
+// después de descubrir que la prueba de extremo a extremo NO cazaba una
+// regresión en verify() sola, porque este literal la tapaba: cada capa necesita
+// su propio control.
+func TestUnHallazgoDelModeloNuncaSeGuardaComoBloqueante(t *testing.T) {
+	s := bd(t)
+	repoID := CanonicalRepoID("local/prueba")
+	if err := s.UpsertRepo(repoID, "", "prueba"); err != nil {
+		t.Fatal(err)
+	}
+	guardarRun(t, s, "run-llm", repoID, "pass", nil)
+
+	insistente := finding.Finding{
+		Engine: "llm", RuleKey: "ad-hoc", Pillar: finding.Security,
+		Severity: finding.Error, Blocking: true, // el modelo insiste
+		File: "app/x.py", Line: 1, Message: "el modelo dice que esto es gravísimo",
+		Source: finding.LLM, Verified: true,
+	}
+	if err := s.SaveLLMFindings("run-llm", []finding.Finding{insistente}); err != nil {
+		t.Fatal(err)
+	}
+
+	var blocking int
+	var source string
+	err := s.db.QueryRow(
+		`SELECT blocking, source FROM findings WHERE run_id = ? AND engine = 'llm'`,
+		"run-llm").Scan(&blocking, &source)
+	if err != nil {
+		t.Fatalf("el hallazgo del modelo no se guardó: %v", err)
+	}
+	if blocking != 0 {
+		t.Error("un hallazgo del modelo entró a la base como BLOQUEANTE.\n" +
+			"El modelo aconseja, no decide: con esto, un modelo que se pone " +
+			"nervioso empieza a rechazar commits buenos y nadie sabe por qué.")
+	}
+	if source != "llm" {
+		t.Errorf("el hallazgo se guardó con source=%q y debe ser 'llm': "+
+			"si se confunde con uno determinista, deja de poder filtrarse", source)
+	}
+}

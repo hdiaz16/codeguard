@@ -84,16 +84,45 @@ func TestElGanchoYElCIVenLoMismo(t *testing.T) {
 	// Lo que el CI ve de más está permitido SÓLO para los motores que la spec
 	// declara "avisa en local, bloquea en CI". Cualquier otro es una grieta.
 	permitidosEnCI := map[string]bool{"trivy": true, "govulncheck": true, "dotnet-vuln": true}
-	var grietas []string
+
+	// Un motor que se DEGRADÓ en una de las dos rutas no se puede comparar: no
+	// corrió, así que su silencio no dice nada sobre el cableado.
+	//
+	// Pasó de verdad y costó entenderlo: con la suite entera en marcha —varios
+	// daemons, semgrep, compilaciones de C#— staticcheck no cabía en el tope de
+	// 30 s del gancho y el CI, que no tiene esa prisa, sí lo corría. La prueba
+	// acusaba de romper la paridad a un desacuerdo que era el cronómetro de la
+	// máquina. Aislada pasaba siempre, que es la peor clase de roja: la que
+	// enseña a reintentar en vez de a mirar.
+	//
+	// Esto NO afloja la prueba: la degradación es explícita —el producto la
+	// nombra motor por motor—, así que un motor que dejara de correr sin
+	// marcarse seguiría saliendo como grieta. Y lo excluido se dice en voz alta,
+	// porque una casilla que no se comparó no es una casilla verde.
+	degradados := motoresDegradados(salidaHook, salidaCI)
+
+	var grietas, sinComparar []string
 	for h, m := range soloCI {
-		if !permitidosEnCI[m.motor] {
+		switch {
+		case degradados[m.motor] != "":
+			sinComparar = append(sinComparar, m.motor+" ("+degradados[m.motor]+")")
+		case !permitidosEnCI[m.motor]:
 			grietas = append(grietas, m.describe(h))
 		}
 	}
 	for h, m := range soloLocal {
+		if etiqueta := degradados[m.motor]; etiqueta != "" {
+			sinComparar = append(sinComparar, m.motor+" ("+etiqueta+")")
+			continue
+		}
 		grietas = append(grietas, "sólo en local: "+m.describe(h))
 	}
 	sort.Strings(grietas)
+	if len(sinComparar) > 0 {
+		sort.Strings(sinComparar)
+		t.Logf("  SIN COMPARAR (se degradaron en una de las dos rutas): %s",
+			strings.Join(unicos(sinComparar), ", "))
+	}
 
 	if len(grietas) > 0 {
 		t.Errorf("las dos rutas NO ven lo mismo (%d diferencia(s)):\n  %s\n\n"+
@@ -313,4 +342,86 @@ func correrComoCI(t *testing.T, bin, repo, datos string, args ...string) (string
 		t.Fatalf("no se pudo ejecutar %s %v: %v", bin, args, err)
 	}
 	return string(out), codigo
+}
+
+// motoresDegradados devuelve, de lo que imprimieron las dos rutas, qué motores
+// NO llegaron a correr y por qué.
+//
+// Las dos lo dicen con palabras distintas —el gancho "capas no revisadas:" y el
+// CI "capas degradadas:"— y las dos con etiquetas motor:motivo. Se leen las dos
+// formas a propósito: quedarse con una dejaría medio problema invisible.
+func motoresDegradados(salidas ...string) map[string]string {
+	fuera := map[string]string{}
+	for _, salida := range salidas {
+		for _, l := range strings.Split(salida, "\n") {
+			var lista string
+			switch {
+			case strings.Contains(l, "capas no revisadas:"):
+				lista = l[strings.Index(l, "capas no revisadas:")+len("capas no revisadas:"):]
+			case strings.Contains(l, "capas degradadas:"):
+				lista = l[strings.Index(l, "capas degradadas:")+len("capas degradadas:"):]
+			default:
+				continue
+			}
+			for _, etiqueta := range strings.Split(lista, ",") {
+				etiqueta = strings.TrimSpace(etiqueta)
+				motor, motivo, hay := strings.Cut(etiqueta, ":")
+				if !hay || motor == "" {
+					continue
+				}
+				// daemon:offline no habla de ningún motor: dice por dónde corrió
+				// el análisis, y es lo NORMAL en estas pruebas.
+				if motor == "daemon" {
+					continue
+				}
+				fuera[motor] = motivo
+			}
+		}
+	}
+	return fuera
+}
+
+func unicos(xs []string) []string {
+	visto := map[string]bool{}
+	var out []string
+	for _, x := range xs {
+		if !visto[x] {
+			visto[x] = true
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+// El parser de capas degradadas es pequeño y peligroso: si devolviera de más,
+// apagaría la comparación de paridad entera sin que nadie lo notara — la prueba
+// seguiría verde diciendo "las dos rutas ven lo mismo" tras haber excluido
+// todo. Por eso tiene su propia prueba.
+func TestLasCapasDegradadasSeLeenDeLasDosRedacciones(t *testing.T) {
+	hook := "CodeGuard  secretos ✓\n" +
+		"CodeGuard  capas no revisadas: staticcheck:plazo, trivy:error, daemon:offline\n"
+	ci := "capas degradadas: govulncheck:plazo\n"
+
+	fuera := motoresDegradados(hook, ci)
+
+	for motor, motivo := range map[string]string{
+		"staticcheck": "plazo", "trivy": "error", "govulncheck": "plazo",
+	} {
+		if fuera[motor] != motivo {
+			t.Errorf("%s debía salir como degradado por %q y salió %q", motor, motivo, fuera[motor])
+		}
+	}
+	// daemon:offline dice por dónde corrió el análisis, no qué motor faltó. Si
+	// se colara, "daemon" pasaría a excluirse como si fuera un motor.
+	if _, hay := fuera["daemon"]; hay {
+		t.Error("daemon:offline se leyó como si fuera un motor degradado")
+	}
+	// Y lo más importante: NO puede inventarse motores. Un parser generoso
+	// excluye motores sanos de la comparación y deja la paridad sin probar.
+	if len(fuera) != 3 {
+		t.Errorf("se leyeron %d motores degradados y sólo había 3: %v", len(fuera), fuera)
+	}
+	if len(motoresDegradados("CodeGuard  listo — commit permitido")) != 0 {
+		t.Error("una corrida sin degradaciones produjo motores degradados")
+	}
 }
