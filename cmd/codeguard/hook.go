@@ -58,6 +58,64 @@ func lastRunFile(repoRoot string) string {
 	return filepath.Join(repoRoot, ".git", "codeguard-lastrun")
 }
 
+// arbolPreparado devuelve el hash del árbol que hay AHORA en el índice.
+//
+// Es la identidad de lo que se está a punto de commitear: si cambia, lo
+// analizado ya no es lo que se commitea.
+//
+// Devuelve "" si git no puede darlo; quien llama trata eso como "no puedo
+// afirmar que sea el mismo contenido", que es la respuesta prudente.
+func arbolPreparado(repoRoot string) string {
+	out, err := exec.Command("git", "-C", repoRoot, "write-tree").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// guardarRunID deja el run id JUNTO AL ÁRBOL que se analizó.
+//
+// El árbol va con él porque el run id sobrevive a commits abortados: pre-commit
+// lo escribe, y sólo lo borran el bloqueo y post-commit. Si alguien analiza,
+// aborta el commit (cerrar el editor del mensaje sin guardar es el caso normal),
+// CAMBIA el código y commitea con --no-verify, prepare-commit-msg —que
+// --no-verify NO salta— pegaba el trailer del análisis viejo: post-commit veía
+// un trailer, daba el commit por revisado y el salto no se registraba.
+//
+// Medido en TestUnTrailerNoSobreviveAUnCambioDeContenido: con un secreto metido
+// después del análisis, el commit entraba al historial marcado como analizado.
+//
+// Con el árbol dentro, el trailer significa lo que tiene que significar: ESTE
+// contenido pasó por CodeGuard. Si el contenido es el mismo, el trailer es
+// legítimo aunque el gancho se saltara — porque el análisis de ese contenido
+// existe de verdad.
+func guardarRunID(repoRoot, runID string) {
+	// Best-effort: si no se puede dejar el run id, el trailer del commit no lo
+	// llevará, pero el análisis y el veredicto son los mismos.
+	_ = os.WriteFile(lastRunFile(repoRoot),
+		[]byte(runID+"\t"+arbolPreparado(repoRoot)), 0o644)
+}
+
+// leerRunIDVigente devuelve el run id sólo si el árbol guardado con él coincide
+// con el que hay ahora en el índice.
+func leerRunIDVigente(repoRoot string) string {
+	b, err := os.ReadFile(lastRunFile(repoRoot))
+	if err != nil {
+		return ""
+	}
+	runID, arbol, hay := strings.Cut(strings.TrimSpace(string(b)), "\t")
+	// Sin árbol no se puede afirmar que el análisis sea de este contenido. Pasa
+	// con los archivos que dejó una versión anterior del agente, y con los
+	// repos donde `git write-tree` falló.
+	if !hay || arbol == "" {
+		return ""
+	}
+	if arbol != arbolPreparado(repoRoot) {
+		return ""
+	}
+	return runID
+}
+
 func preCommitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:  "pre-commit",
@@ -118,9 +176,7 @@ func runPreCommit() error {
 
 	// ── Run id para el trailer (prepare-commit-msg) ──
 	runID := store.NewULID()
-	// Best-effort: si no se puede dejar el run id, el trailer del commit no lo
-	// llevará, pero el análisis y el veredicto son los mismos.
-	_ = os.WriteFile(lastRunFile(repoRoot), []byte(runID), 0o644)
+	guardarRunID(repoRoot, runID)
 
 	// ── Señal de código generado por IA (RADAR): variables de entorno de la
 	// herramienta que invoca el commit. Sube el riesgo (+20) y se etiqueta. ──
@@ -293,9 +349,11 @@ func prepareCommitMsgCmd() *cobra.Command {
 			if err != nil {
 				return nil
 			}
-			runID, err := os.ReadFile(lastRunFile(repoRoot))
-			if err != nil {
-				return nil // no hubo análisis (repo no enrolado, diff vacío...)
+			// Vigente = del MISMO contenido que se va a commitear. Un
+			// análisis de otro árbol no dice nada sobre este commit.
+			runID := leerRunIDVigente(repoRoot)
+			if runID == "" {
+				return nil // no hubo análisis, o fue de otro contenido
 			}
 			msgFile := args[0]
 			msg, err := os.ReadFile(msgFile)
