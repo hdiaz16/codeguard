@@ -140,6 +140,7 @@ func runPreCommit() error {
 		Branch:          gitBranch(repoRoot),
 		StagedFiles:     diff.Files,
 		DiffUnified:     diff.Unified,
+		DiffLines:       diff.Lines,
 		RulepackVersion: cfg.Rulepack,
 		ConfigHash:      cfg.Hash,
 		AIGenerated:     aiGenerated,

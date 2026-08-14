@@ -221,7 +221,17 @@ func (h hallazgo) describe(huella string) string {
 	if h.bloqueante {
 		b = "BLOQUEA"
 	}
-	return h.motor + "/" + h.regla + " en " + h.archivo + " (" + b + ", " + huella[:12] + "…)"
+	// Una huella vacía o corta NO puede tumbar el mensaje: recortaba a ciegas y
+	// la primera vez que la base guardó un hallazgo SIN huella —lo hacía la ruta
+	// del daemon— el diagnóstico panicó en vez de enseñar el hallazgo. Un
+	// mensaje de error que revienta tapa justo lo que hay que ver.
+	corta := huella
+	if len(corta) > 12 {
+		corta = corta[:12] + "…"
+	} else if corta == "" {
+		corta = "SIN HUELLA"
+	}
+	return h.motor + "/" + h.regla + " en " + h.archivo + " (" + b + ", " + corta + ")"
 }
 
 // hallazgosDe lee de la base lo que registró una ruta, indexado por huella.

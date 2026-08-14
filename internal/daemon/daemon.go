@@ -393,7 +393,7 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	}
 	res, err := pipeline.Run(ctx, pipeline.Options{
 		Config:       cfg,
-		Diff:         &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified},
+		Diff:         &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified, Lines: req.DiffLines},
 		Secrets:      nil, // ya corrió en el hook
 		Engines:      Engines(cfg, false, cache),
 		Rulepack:     rulepack,

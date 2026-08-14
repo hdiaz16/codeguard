@@ -284,6 +284,17 @@ func runsConBypass(t *testing.T, rutaDB string) int {
 // LOCALAPPDATA.
 func entornoAislado(t *testing.T, datos string) []string {
 	t.Helper()
+	return entornoConPipe(t, datos, `\\.\pipe\codeguard-verificacion-sin-daemon`)
+}
+
+// entornoConPipe aísla además el pipe.
+//
+// Es parámetro porque la fase 5 necesita las DOS rutas: casi todas las pruebas
+// apuntan a un pipe que no existe —para que conteste el binario recién
+// compilado y no el daemon instalado en la máquina— y la prueba del daemon
+// levanta el suyo y apunta ahí.
+func entornoConPipe(t *testing.T, datos, pipe string) []string {
+	t.Helper()
 	var out []string
 	for _, e := range sinGOROOT(os.Environ()) {
 		if strings.HasPrefix(strings.ToUpper(e), "LOCALAPPDATA=") {
@@ -291,8 +302,7 @@ func entornoAislado(t *testing.T, datos string) []string {
 		}
 		out = append(out, e)
 	}
-	return append(out, "LOCALAPPDATA="+datos,
-		`CODEGUARD_PIPE=\\.\pipe\codeguard-verificacion-sin-daemon`)
+	return append(out, "LOCALAPPDATA="+datos, "CODEGUARD_PIPE="+pipe)
 }
 
 // ── andamiaje ────────────────────────────────────────────────────────────

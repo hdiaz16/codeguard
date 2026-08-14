@@ -24,17 +24,24 @@ type Request struct {
 	ProtocolVersion int `json:"protocol_version"`
 	// Command vacío = analizar (el caso normal). "open-graph" pide al daemon
 	// que abra el explorador en SU ventana — nada de navegador.
-	Command         string                `json:"command,omitempty"`
-	RunID           string                `json:"run_id"`
-	RepoRoot        string                `json:"repo_root"`
-	RepoID          string                `json:"repo_id"`
-	Branch          string                `json:"branch"`
-	StagedFiles     []gitdiff.ChangedFile `json:"staged_files"`
-	DiffUnified     string                `json:"diff_unified"`
-	RulepackVersion string                `json:"rulepack_version"`
-	ConfigHash      string                `json:"config_hash"`
-	AIGenerated     bool                  `json:"ai_generated"`
-	DeadlineMs      int                   `json:"deadline_ms"`
+	Command     string                `json:"command,omitempty"`
+	RunID       string                `json:"run_id"`
+	RepoRoot    string                `json:"repo_root"`
+	RepoID      string                `json:"repo_id"`
+	Branch      string                `json:"branch"`
+	StagedFiles []gitdiff.ChangedFile `json:"staged_files"`
+	DiffUnified string                `json:"diff_unified"`
+	// DiffLines es el tamaño del cambio en líneas. Viaja porque el otro lado no
+	// puede deducirlo: el daemon reconstruía el diff con Files y Unified y
+	// Lines se quedaba en CERO, así que por la ruta del daemon —la de todos los
+	// días— no existían ni el aviso de "cambio demasiado grande" (§P4) ni la
+	// degradación a sólo-secretos por diff enorme, que sí existen sin daemon.
+	// Dos comportamientos documentados apagados por un campo que no cruzaba.
+	DiffLines       int    `json:"diff_lines"`
+	RulepackVersion string `json:"rulepack_version"`
+	ConfigHash      string `json:"config_hash"`
+	AIGenerated     bool   `json:"ai_generated"`
+	DeadlineMs      int    `json:"deadline_ms"`
 }
 
 type Response struct {
@@ -52,6 +59,72 @@ type Response struct {
 	// sin motivo ("no puedo garantizar que pase el CI") es de los que se
 	// aprenden a ignorar: nadie puede arreglar lo que no se nombra.
 	ParityReason string `json:"parity_reason,omitempty"`
+}
+
+// ── La huella cruza el pipe ──────────────────────────────────────────────
+//
+// finding.Finding marca Fingerprint y LineContent como json:"-" para que no
+// ensucien el informe. El pipe usa el MISMO struct, así que por aquí los dos
+// campos se caían: el daemon calculaba la huella en su proceso, la mandaba, y
+// al otro lado llegaba vacía. El gancho guardaba entonces en la base hallazgos
+// SIN HUELLA — y por la ruta del daemon pasa el commit de todos los días.
+//
+// No rompía la baseline (el daemon aplica las supresiones antes de responder),
+// pero sí lo que se GRABA: la huella es lo único que identifica un hallazgo
+// entre corridas, y es la columna que `codeguard sync` empuja al central y de
+// la que depende la calibración. Meses de datos sin la clave que los une.
+//
+// Se arregla aquí y no cambiando el tag de finding.Finding: el informe y el
+// SARIF no tienen por qué llevar el contenido de la línea señalada, y ese tag
+// es de ellos. Lo que viaja por el pipe es asunto del pipe.
+//
+// Compatible en las dos direcciones: un daemon viejo no manda "fp" y el gancho
+// nuevo lo recibe vacío —exactamente lo de hoy—, y un gancho viejo ignora el
+// campo que no conoce.
+type hallazgoEnCable struct {
+	finding.Finding
+	Fingerprint string `json:"fp"`
+	LineContent string `json:"linea,omitempty"`
+}
+
+// respuestaPlana evita la recursión infinita: Marshal sobre Response llamaría a
+// MarshalJSON otra vez.
+type respuestaPlana Response
+
+// sobre lleva los campos de Response con Findings sustituido. El Findings de
+// fuera gana al de dentro por profundidad, que es como encoding/json resuelve
+// el choque de nombres.
+type sobre struct {
+	respuestaPlana
+	Findings []hallazgoEnCable `json:"findings"`
+}
+
+func (r Response) MarshalJSON() ([]byte, error) {
+	s := sobre{respuestaPlana: respuestaPlana(r)}
+	for _, f := range r.Findings {
+		s.Findings = append(s.Findings, hallazgoEnCable{
+			Finding:     f,
+			Fingerprint: f.Fingerprint,
+			LineContent: f.LineContent,
+		})
+	}
+	return json.Marshal(s)
+}
+
+func (r *Response) UnmarshalJSON(b []byte) error {
+	var s sobre
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	*r = Response(s.respuestaPlana)
+	r.Findings = nil
+	for _, h := range s.Findings {
+		f := h.Finding
+		f.Fingerprint = h.Fingerprint
+		f.LineContent = h.LineContent
+		r.Findings = append(r.Findings, f)
+	}
+	return nil
 }
 
 // PipeName devuelve \\.\pipe\codeguard-<SID del usuario actual>.
