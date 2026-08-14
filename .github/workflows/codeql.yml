@@ -51,6 +51,19 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           config-file: ./.github/codeql/codeql-config.yml
+          # Seguridad + calidad, que es lo que corría el default setup.
+          #
+          # Con sólo la suite de seguridad, las alertas de calidad que había
+          # levantado el default setup quedaban huérfanas: su configuración ya
+          # no existía, nadie las volvía a evaluar y GitHub avisaba de que
+          # CodeQL reportaba warnings. Y no se podían limpiar — los análisis del
+          # default setup vienen marcados deletable=false y sus alertas de
+          # calidad no están en la API.
+          #
+          # Corriéndolas aquí se cierran solas: el corpus está excluido y las
+          # cinco que había eran fixtures nuestros, así que el análisis da cero
+          # y GitHub las marca como resueltas.
+          queries: security-and-quality
 
       - uses: github/codeql-action/autobuild@c16c0f3f2812ec4bb3750a5ed64873fe2ce0fbef # codeql-bundle-v2.26.3
 
