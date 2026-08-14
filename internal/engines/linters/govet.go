@@ -74,6 +74,29 @@ func (e GoVet) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 		return nil, fmt.Errorf("go vet no corrió: %w", err)
 	}
 	var findings []finding.Finding
+
+	// Un fallo de CARGA no es un repo limpio, y hasta aquí lo parecía.
+	//
+	// runTool se traga el código de salida a propósito: los linters salen
+	// distinto de cero justamente cuando encuentran algo. Pero `go vet` también
+	// sale distinto de cero cuando no consigue cargar los paquetes —dos
+	// paquetes distintos en un mismo directorio, un import roto, un módulo mal
+	// resuelto— y entonces NO ANALIZA NADA, ni siquiera los paquetes que sí
+	// compilaban. El motor devolvía "0 hallazgos" y el informe daba la capa por
+	// revisada.
+	//
+	// Medido: un repo con `go vet ./...` señalando un Sprintf mal formado daba
+	// govet: 0 en el agente, porque otro directorio del diff no cargaba.
+	// staticcheck, ante exactamente el mismo repo, sí se declaraba degradado;
+	// dos motores con el mismo problema y respuestas opuestas.
+	//
+	// La señal es fiable: cuando vet encuentra algo, TODA línea suya casa con
+	// vetLine. Si no casó ninguna y aun así escribió algo, lo que escribió es un
+	// error de carga.
+	if crudo := strings.TrimSpace(out); crudo != "" && !vetLine.MatchString(crudo) {
+		return nil, fmt.Errorf("go vet no pudo analizar %s: %s",
+			strings.Join(paquetes, " "), recorteVet(crudo))
+	}
 	for _, line := range strings.Split(out, "\n") {
 		m := vetLine.FindStringSubmatch(strings.TrimSpace(line))
 		if m == nil {
@@ -122,4 +145,17 @@ func claveVet(repoRoot string, paquetes []string) string {
 	}
 	sum := sha256.Sum256([]byte(huella + "|" + strings.Join(paquetes, ",")))
 	return "govet:" + hex.EncodeToString(sum[:])
+}
+
+// recorteVet deja el mensaje de error en una línea legible: el fallo de carga
+// de go vet puede traer rutas largas y varias líneas, y lo que se necesita es
+// saber qué pasó, no el volcado entero.
+func recorteVet(s string) string {
+	if i := strings.IndexByte(s, '\n'); i > 0 {
+		s = s[:i]
+	}
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return strings.TrimSpace(s)
 }
