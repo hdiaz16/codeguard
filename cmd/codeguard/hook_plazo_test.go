@@ -57,6 +57,7 @@ func TestElGanchoNoLanzaNingunMotorSinPlazo(t *testing.T) {
 	}
 }
 
+// Nota: verificado contra el daemon 1.12.0 por el camino del producto.
 // esContextBackground reconoce tanto context.Background() como el
 // context.TODO() que a veces se cuela en su lugar. Los dos son "sin plazo".
 func esContextBackground(e ast.Expr) bool {
