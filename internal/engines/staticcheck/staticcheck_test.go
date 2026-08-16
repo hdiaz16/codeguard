@@ -270,6 +270,54 @@ func main() {
 	}
 }
 
+// EL CONTROL DEL ARREGLO DEL SILENCIO, y el que más falta hacía.
+//
+// staticcheck limpio no escribe NADA y sale con 0 (medido: 0 bytes). Eso es
+// indistinguible de un impostor que no hizo nada, así que ante ese silencio el
+// motor le pregunta a la herramienta quién es. Y ahí está el riesgo de este
+// arreglo, que es el inverso del fallo que cierra: si el patrón que reconoce la
+// respuesta estuviera mal escrito, TODOS los commits limpios de Go verían su capa
+// de staticcheck en naranja, cada vez, sin que ninguna otra prueba lo notara —
+// los dos tests de integración que ya había ejercitan módulos con hallazgos y uno
+// que no compila; ninguno pasa por el caso limpio.
+//
+// Tiene que correr con el binario de VERDAD: con un doble, la respuesta a
+// -version la escribiría yo, y probaría mi propia expectativa contra sí misma.
+func TestIntegracionModuloLimpioSigueSiendoLimpio(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integración: compila el módulo y tarda unos segundos")
+	}
+	if _, err := exec.LookPath("staticcheck"); err != nil {
+		t.Skip("staticcheck no está en PATH")
+	}
+	root := t.TempDir()
+	escribir := func(nombre, contenido string) {
+		t.Helper()
+		ruta := filepath.Join(root, filepath.FromSlash(nombre))
+		if err := os.MkdirAll(filepath.Dir(ruta), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(ruta, []byte(contenido), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	escribir("go.mod", "module limpio\n\ngo 1.21\n")
+	escribir("main.go", "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(sumar(1, 2)) }\n\n"+
+		"func sumar(a, b int) int { return a + b }\n")
+
+	fs, err := (&Engine{}).Run(context.Background(), engines.Input{
+		RepoRoot: root,
+		Files:    []gitdiff.ChangedFile{{Path: "main.go", Status: "M"}},
+	})
+	if err != nil {
+		t.Fatalf("staticcheck analizó un módulo limpio y el motor se declaró incapaz.\n"+
+			"Con esto, cada commit limpio de Go pinta la capa en naranja: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Errorf("un módulo limpio no tiene hallazgos, y salieron %d: %+v", len(fs), fs)
+	}
+}
+
 // TestIntegracionCompilacionRotaDegrada: un módulo que no compila no produce
 // hallazgos a medias — el motor entero se degrada con el detalle y el error
 // real lo señalan gofmt/govet.

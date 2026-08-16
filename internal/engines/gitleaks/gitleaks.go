@@ -9,10 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
+	"codeguard/internal/gitref"
 )
 
 type Engine struct {
@@ -32,6 +35,23 @@ func (e *Engine) Applies(engines.Input) bool { return true }
 // de reparación, sección 14) de "corrió y no encontró nada".
 var ErrUnavailable = errors.New("gitleaks no disponible")
 
+// rango arma el "base..head" de --log-opts sólo si ambos extremos siguen
+// siendo referencias y no se han convertido en opciones de git por el camino
+// (H009: gitleaks parte --log-opts por espacios y le da cada trozo a `git
+// log`). El criterio vive en internal/gitref, que es el mismo que aplica
+// gitdiff antes de leer el diff: una sola frontera, no dos que se separen.
+//
+// La política de qué hacer cuando falla sí es de aquí: se envuelve en
+// ErrUnavailable para que el pipeline BLOQUEE fail-closed (§14) en vez de dar
+// el escaneo por bueno. gitref no sabe nada de eso, y así debe seguir.
+func (e *Engine) rango() (string, error) {
+	r, err := gitref.ValidarRango(e.Base, e.Head)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	return r, nil
+}
+
 type leak struct {
 	RuleID      string `json:"RuleID"`
 	Description string `json:"Description"`
@@ -39,6 +59,41 @@ type leak struct {
 	StartLine   int    `json:"StartLine"`
 	EndLine     int    `json:"EndLine"`
 	Match       string `json:"Match"`
+}
+
+// coloresDeConsola son las secuencias ANSI con que gitleaks pinta su registro.
+// Se quitan antes de leerlo porque el nivel viene envuelto en ellas
+// (`\x1b[32mINF\x1b[0m`) y sin quitarlas ningún campo es igual a "ERR".
+var coloresDeConsola = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// erroresDeGitleaks devuelve las líneas de su registro con nivel ERR o FTL, que
+// son las que dicen que algo no llegó a mirarse.
+//
+// Se comparan CAMPOS y no subcadenas: buscar "ERR" en el texto lo encontraría
+// dentro de una ruta o de un mensaje cualquiera, y un falso positivo aquí bloquea
+// todos los commits del repo. Se devuelven como mucho tres: el motivo cabe en un
+// mensaje, el volcado entero no.
+func erroresDeGitleaks(stderr []byte) []string {
+	var fallos []string
+	for _, linea := range strings.Split(string(coloresDeConsola.ReplaceAll(stderr, nil)), "\n") {
+		linea = strings.TrimSpace(linea)
+		if linea == "" {
+			continue
+		}
+		for _, campo := range strings.Fields(linea) {
+			// WRN no cuenta: "WRN leaks found: 1" es el camino con hallazgos.
+			if campo != "ERR" && campo != "FTL" {
+				continue
+			}
+			if len(fallos) < 3 {
+				fallos = append(fallos, linea)
+			} else {
+				return fallos
+			}
+			break
+		}
+	}
+	return fallos
 }
 
 func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
@@ -65,7 +120,11 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	case "staged":
 		args = append(args, "--pre-commit", "--staged")
 	case "range":
-		args = append(args, "--log-opts", e.Base+".."+e.Head)
+		rango, err := e.rango()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--log-opts", rango)
 	default:
 		return nil, fmt.Errorf("%w: modo desconocido %q", ErrUnavailable, e.Mode)
 	}
@@ -80,20 +139,80 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	var exitErr *exec.ExitError
 	switch {
 	case runErr == nil:
-		return nil, nil // sin hallazgos
+		// Código 0 = gitleaks terminó y no encontró nada. NO se devuelve aquí:
+		// hay que leer el reporte igual que en el caso con hallazgos. El porqué
+		// está en el bloque de abajo, que es el arreglo.
 	case errors.As(runErr, &exitErr) && exitErr.ExitCode() == 9:
 		// exit 9 = hallazgos (lo fijamos con --exit-code); cualquier otro código es error real
 	default:
 		return nil, fmt.Errorf("%w: %v: %s", ErrUnavailable, runErr, out)
 	}
 
+	// EL REPORTE, Y NO EL CÓDIGO DE SALIDA, ES LA PRUEBA DE QUE GITLEAKS MIRÓ.
+	//
+	// Hasta aquí el camino del código 0 devolvía (nil, nil) sin abrir nada, y eso
+	// hacía indistinguibles dos cosas: «gitleaks escaneó el índice y no hay
+	// secretos» y «lo que corrió no era gitleaks, y terminó contento». La segunda
+	// apaga la ÚNICA compuerta bloqueante del producto —la que decide si una
+	// credencial sale del portátil— y la apaga pintando verde.
+	//
+	// No es una avería imaginada: es la misma clase que se cobró a govet y a tsc
+	// el mismo día, y el arnés de internal/daemon la reproduce sustituyendo la
+	// herramienta por un impostor que sale con 0 sin escribir una palabra.
+	//
+	// La señal estaba delante todo el tiempo: gitleaks escribe --report-path
+	// SIEMPRE, también cuando no encuentra nada. Medido con 8.30.1 sobre un
+	// índice limpio: sale 0 y deja `[]` —tres bytes— en el archivo. Y el temporal
+	// lo creamos nosotros vacío unas líneas más arriba, así que una herramienta
+	// que salga con 0 sin escribir deja cero bytes ahí, y cero bytes no son JSON.
+	// Por eso no hace falta comprobar la identidad del binario por separado: el
+	// reporte ES la prueba de identidad, y sale gratis.
+	// Y EL RESQUICIO QUE EL REPORTE NO CIERRA, QUE ES PEOR QUE EL ORIGINAL.
+	//
+	// El reporte demuestra que gitleaks CORRIÓ. No demuestra que MIRARA. Lo
+	// encontró el validador y está reproducido aquí: con el `.git/index`
+	// corrupto, el `git diff` que gitleaks lanza por dentro falla, y gitleaks
+	// **sale con 0 y escribe su reporte con `[]` dentro**. El mismo índice, con
+	// git sano, daba código 9 y 529 bytes de reporte con el secreto. O sea que
+	// «escaneé y no hay secretos» y «no pude leer nada» vuelven a producir bytes
+	// idénticos, un nivel más abajo. Igual con un rango que no resuelve, o con una
+	// ruta que no es un repo.
+	//
+	// Lo que sí los separa (medido en los dos casos): gitleaks CUENTA lo que le
+	// pasó por stderr, con nivel.
+	//
+	//	limpio de verdad → INF 0 commits scanned · INF no leaks found
+	//	con hallazgos    → WRN leaks found: 1              (código 9)
+	//	índice corrupto  → ERR [git] fatal: index file… · ERR error="stderr is not empty"
+	//
+	// Así que en el camino del código 0 —el único donde el silencio se
+	// interpreta como limpieza— una sola línea ERR o FTL invalida el veredicto.
+	// WRN queda fuera a propósito: «leaks found» es WRN y es el camino NORMAL.
+	//
+	// Esto BLOQUEA el commit (ErrUnavailable, §14 fail-closed), y es lo correcto:
+	// la promesa de la etapa 1 no es «busqué», es «nada sale sin escanear».
+	if runErr == nil {
+		if fallos := erroresDeGitleaks(salida.Stderr); len(fallos) > 0 {
+			return nil, fmt.Errorf("%w: dijo que no había secretos, pero antes contó %d "+
+				"error(es) propios, así que no escaneó lo que se le pidió: %s. "+
+				"Un «sin secretos» de una corrida que falló no es un «sin secretos» — "+
+				"comprueba el repositorio (`git status`, `git fsck`) y vuelve a intentarlo",
+				ErrUnavailable, len(fallos), strings.Join(fallos, " · "))
+		}
+	}
+
 	raw, err := os.ReadFile(report.Name())
 	if err != nil {
-		return nil, fmt.Errorf("%w: sin reporte: %v", ErrUnavailable, err)
+		return nil, fmt.Errorf("%w: no dejó reporte que leer: %v", ErrUnavailable, err)
 	}
 	var leaks []leak
 	if err := json.Unmarshal(raw, &leaks); err != nil {
-		return nil, fmt.Errorf("%w: reporte ilegible: %v", ErrUnavailable, err)
+		// El tamaño va en el mensaje porque separa las dos averías de un vistazo:
+		// 0 bytes es "salió bien sin escribir nada" (no era gitleaks); con bytes
+		// dentro, es un formato que no esperábamos (una versión que cambió).
+		return nil, fmt.Errorf("%w: terminó con éxito pero su reporte no es el de gitleaks "+
+			"(%d bytes en %s): %v — ejecuta `codeguard repair`",
+			ErrUnavailable, len(raw), filepath.Base(report.Name()), err)
 	}
 
 	findings := make([]finding.Finding, 0, len(leaks))

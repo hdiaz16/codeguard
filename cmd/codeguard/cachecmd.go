@@ -20,7 +20,11 @@ func abrirCache(repoRoot string, cfg *config.Config) (cache sgengine.Cache, cerr
 		return nil, func() {}
 	}
 	remote := gitRemote(repoRoot)
-	cache = daemon.CachePorArchivo(st, store.CanonicalRepoID(remote), remote, filepath.Base(repoRoot), cfg)
+	// RepoIDDe y no CanonicalRepoID a secas: sin el respaldo, un repo sin remote
+	// cacheaba bajo la cadena vacía —o sea, en el mismo cajón que TODOS los
+	// demás repos sin remote de la máquina—, y el caché por archivo se
+	// compartiría entre proyectos distintos.
+	cache = daemon.CachePorArchivo(st, store.RepoIDDe(repoRoot, remote), remote, filepath.Base(repoRoot), cfg)
 	return cache, func() { _ = st.Close() }
 }
 

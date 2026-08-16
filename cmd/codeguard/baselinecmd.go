@@ -113,6 +113,40 @@ func mostrarLoQueSeAcepta(fs []finding.Finding) {
 		}
 	}
 
+	// Los BLOQUEANTES se nombran uno a uno, cualquiera que sea su pilar.
+	//
+	// El conteo por pilar tapaba lo que importa: un validador midió un repo
+	// donde `init --force` aceptaba 17 hallazgos de datos, y de esos 17 había
+	// CUATRO que existen para frenar daño —ban-drop-column, ban-drop-table,
+	// adding-required-field, require-concurrent-index-creation— mezclados con
+	// doce de higiene repetida (lock_timeout, statement_timeout…). La línea
+	// «data 17» los presentaba igual. La palabra "deuda" tapaba un DROP COLUMN
+	// exactamente igual que un timeout que falta, y a partir de ese momento
+	// ninguno de los cuatro vuelve a frenar un commit.
+	var bloqueantes []finding.Finding
+	for _, f := range fs {
+		if f.Blocking {
+			bloqueantes = append(bloqueantes, f)
+		}
+	}
+	if len(bloqueantes) > 0 {
+		sort.Slice(bloqueantes, func(a, b int) bool {
+			if bloqueantes[a].File != bloqueantes[b].File {
+				return bloqueantes[a].File < bloqueantes[b].File
+			}
+			return bloqueantes[a].Line < bloqueantes[b].Line
+		})
+		fmt.Printf("\n%d de ellos son BLOQUEANTES y no volverán a frenar un commit:\n", len(bloqueantes))
+		const tope = 15
+		for i, f := range bloqueantes {
+			if i == tope {
+				fmt.Printf("  … y %d más (el informe completo: codeguard report --avisos)\n", len(bloqueantes)-tope)
+				break
+			}
+			fmt.Printf("  [%s] %s:%d\n", f.RuleKey, f.File, f.Line)
+		}
+	}
+
 	if len(seguridad) == 0 {
 		return
 	}
@@ -129,7 +163,9 @@ func mostrarLoQueSeAcepta(fs []finding.Finding) {
 			fmt.Printf("  … y %d más (el informe completo: codeguard report --avisos)\n", len(seguridad)-tope)
 			break
 		}
-		fmt.Printf("  %s:%d  [%s] %s\n", f.File, f.Line, f.RuleKey, f.Message)
+		// El mismo texto ajeno que en el hook: mensaje de regla, rulepack que
+		// puede ser el vendoreado en el repo.
+		fmt.Printf("  %s:%d  [%s] %s\n", f.File, f.Line, f.RuleKey, mensajeDeHallazgo(f.Message))
 	}
 	fmt.Println("\nSi alguno se arregla en un minuto, arréglalo AHORA y vuelve a correr esto:")
 	fmt.Println("lo que entre aquí deja de bloquear para siempre, en tu máquina y en el CI.")

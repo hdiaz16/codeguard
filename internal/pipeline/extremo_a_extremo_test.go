@@ -35,6 +35,8 @@ package pipeline_test
 //	DEGRADADO   falló o no cupo en el plazo
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +46,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 // violacion es qué se le pone delante a un motor y qué debe responder.
@@ -52,9 +56,20 @@ type violacion struct {
 	archivo   string
 	contenido string
 	porQue    string // para que un fallo diga algo útil, no "esperaba 1, hubo 0"
-	// requiere: dependencia externa. Si falta, el motor NO APLICA — y eso no es
-	// un fallo, pero se reporta. Nunca se calla.
+	// requiere: dependencia externa, en prosa, para que el informe la nombre. Si
+	// falta, el motor NO APLICA — y eso no es un fallo, pero se reporta. Nunca se
+	// calla.
 	requiere string
+	// presente responde si esa dependencia está DE VERDAD en esta máquina.
+	//
+	// Existe porque `requiere` sola no sirve para decidir: es prosa, y el arnés
+	// la usaba como si fuera una comprobación —"declara que necesita el SDK de
+	// .NET, luego lo absuelvo"—. Con el SDK instalado y el motor roto, 0
+	// hallazgos salía como NO APLICA en vez de ¡NO CAZÓ!. La dependencia hay que
+	// mirarla, no creérsela.
+	//
+	// nil = sin dependencia externa: el motor tiene que correr siempre.
+	presente func(repo string) bool
 }
 
 // El módulo con una dependencia vulnerable FIJADA, y el código que la llama.
@@ -154,8 +169,14 @@ func violaciones() []violacion {
 			contenido: "public class Malformato {\n" +
 				"public static void main(String[] args){\n" +
 				"System.out.println(   \"hola\"   );\n}\n}\n",
-			porQue:   "google-java-format: llaves y sangría fuera de estilo",
-			requiere: "JDK + google-java-format instalados",
+			porQue: "google-java-format: llaves y sangría fuera de estilo",
+			// Dice "que pueda ejecutar" y no "instalado" porque en esta máquina las
+			// dos cosas están instaladas y AUN ASÍ el motor no puede correr: el jar
+			// de la 1.36.1 es class file 65 (JDK 21) y el JDK es 17 (61). Un
+			// informe que dijera "falta google-java-format" mandaría a instalar lo
+			// que ya está.
+			requiere: "un JDK capaz de EJECUTAR el jar de google-java-format (el 1.36.1 exige JDK 21)",
+			presente: conJava("google-java-format"),
 		},
 		{
 			motor:   "pmd",
@@ -164,6 +185,7 @@ func violaciones() []violacion {
 				"        int noSeUsa = 5;\n    }\n}\n",
 			porQue:   "PMD: variable local asignada y nunca usada",
 			requiere: "JDK + PMD instalados",
+			presente: conJava("pmd"),
 		},
 		{
 			motor:   "mypy",
@@ -173,6 +195,7 @@ func violaciones() []violacion {
 				"resultado: str = suma(1, 2)\n",
 			porQue:   "mypy: int asignado a str, con mypy.ini presente en el repo",
 			requiere: "mypy instalado Y configurado por el repo",
+			presente: enElPath("mypy"),
 		},
 		{
 			// El manifiesto con una dependencia vulnerable fijada. yaml.v2
@@ -184,6 +207,7 @@ func violaciones() []violacion {
 			contenido: modConDependenciaVulnerable,
 			porQue:    "trivy: dependencia con CVE declarada en el manifiesto",
 			requiere:  "red la primera vez (descargar el módulo)",
+			presente:  conModuloResuelto,
 		},
 		{
 			// Y el MISMO módulo, pero llamando al símbolo vulnerable.
@@ -198,6 +222,7 @@ func violaciones() []violacion {
 			contenido: usaSimboloVulnerable,
 			porQue:    "govulncheck: llama a yaml.Unmarshal, símbolo vulnerable alcanzable",
 			requiere:  "red la primera vez (descargar el módulo)",
+			presente:  conModuloResuelto,
 		},
 		{
 			// Se prueba con BIOME, no con eslint, y es una decisión medida: el
@@ -216,6 +241,7 @@ func violaciones() []violacion {
 				"  const sinUsar = 1;\n  if (a == 2) {\n    return 1;\n  }\n  return 0;\n}\n",
 			porQue:   "biome: variable sin usar y comparación con ==",
 			requiere: "biome instalado en el repo (npm install)",
+			presente: enElRepo("biome.cmd"),
 		},
 		{
 			motor:   "tsc",
@@ -224,6 +250,7 @@ func violaciones() []violacion {
 				"  return a + b;\n}\n\nconst r: string = suma(1, 2);\n",
 			porQue:   "tsc: number asignado a string (TS2322)",
 			requiere: "typescript instalado en el repo (npm install)",
+			presente: enElRepo("tsc.cmd"),
 		},
 		{
 			// El hueco que trivy NO cubre: sin packages.lock.json no encuentra
@@ -235,6 +262,7 @@ func violaciones() []violacion {
 			contenido: "public class Vulnerable { public void M() { } }\n",
 			porQue:    "dotnet-vuln: System.Net.Http 4.3.0, aviso de severidad alta",
 			requiere:  "SDK de .NET y red la primera vez",
+			presente:  conDotnetRestaurado,
 		},
 		{
 			motor:     "dotnet-format",
@@ -242,6 +270,7 @@ func violaciones() []violacion {
 			contenido: "public class Malformato{\npublic void M(){\nint x=1;\n}\n}\n",
 			porQue:    "dotnet format: estilo deliberadamente roto",
 			requiere:  "SDK de .NET",
+			presente:  conDotnetRestaurado,
 		},
 		{
 			// La compuerta que le faltaba a C#: hasta que se integró, un
@@ -253,6 +282,7 @@ func violaciones() []violacion {
 				"        return \"texto\";\n    }\n}\n",
 			porQue:   "dotnet build: string devuelto donde se declara int (CS0029)",
 			requiere: "SDK de .NET",
+			presente: conDotnetRestaurado,
 		},
 	}
 }
@@ -312,12 +342,53 @@ func TestElSistemaCompletoEstaCableado(t *testing.T) {
 	git(t, repo, "add", "-A")
 
 	salida, _ = correr(t, bin, repo, "report", "--avisos")
-	informe(t, salida)
+	informe(t, repo, salida)
 }
 
-func informe(t *testing.T, salida string) {
+func informe(t *testing.T, repo, salida string) {
 	t.Helper()
 
+	filas, err := revisarInforme(repo, salida)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, salida)
+	}
+
+	t.Log("")
+	t.Log("  MOTOR                ESTADO      HALLAZGOS  DETALLE")
+	t.Log("  -------------------- ----------- ---------  ------------------------------------")
+	var fallaron []string
+	for _, f := range filas {
+		t.Logf("  %s %s %9d  %s", rellenar(f.motor, 20), rellenar(f.estado, 11), f.hallazgos, f.detalle)
+		if f.falla {
+			fallaron = append(fallaron, f.motor)
+		}
+	}
+	t.Log("")
+
+	if len(fallaron) > 0 {
+		t.Errorf("estos motores corrieron sin ver la violación que tenían delante: %v.\n"+
+			"Un motor que no ve lo que se le pone delante es indistinguible de uno sano "+
+			"mientras el repositorio esté limpio, que es el 99%% del tiempo.", fallaron)
+	}
+}
+
+// fila es una casilla de la tabla del arnés ya resuelta: qué le pasó al motor y
+// si eso tiene que poner la prueba en rojo.
+type fila struct {
+	motor     string
+	estado    string
+	hallazgos int
+	detalle   string
+	falla     bool
+}
+
+// revisarInforme traduce lo que imprimió el producto a la tabla del arnés.
+//
+// Va aparte de informe —que sólo pinta y falla— porque es la parte que DECIDE, y
+// una decisión que no se puede probar sin levantar el repo entero, compilar el
+// binario y correr once motores es una decisión que nadie prueba. Con esto, cada
+// regla de clasificación se ejercita en una tabla y en milisegundos.
+func revisarInforme(repo, salida string) ([]fila, error) {
 	hallazgos := map[string]int{}
 	for _, m := range reLinea.FindAllStringSubmatch(salida, -1) {
 		n, _ := strconv.Atoi(m[2])
@@ -328,7 +399,7 @@ func informe(t *testing.T, salida string) {
 		degradados[m[1]] = true
 	}
 	if len(hallazgos) == 0 && len(degradados) == 0 {
-		t.Fatalf("ningún motor se anunció en la salida: el arnés no mide nada.\n%s", salida)
+		return nil, errors.New("ningún motor se anunció en la salida: el arnés no mide nada.")
 	}
 
 	esperados := map[string]violacion{}
@@ -342,33 +413,174 @@ func informe(t *testing.T, salida string) {
 	}
 	sort.Strings(nombres)
 
-	var noCazaron []string
-	t.Log("")
-	t.Log("  MOTOR                ESTADO      HALLAZGOS  DETALLE")
-	t.Log("  -------------------- ----------- ---------  ------------------------------------")
+	filas := make([]fila, 0, len(nombres))
 	for _, n := range nombres {
 		v, esperado := esperados[n]
+		f := fila{motor: n, hallazgos: hallazgos[n]}
+
+		// La pregunta que decide las dos absoluciones del arnés, hecha UNA vez y
+		// COMPROBADA. Antes cada una se resolvía por su cuenta y ninguna miraba:
+		// el degradado se absolvía siempre, y el 0-hallazgos se absolvía por que
+		// el motor DECLARARA una dependencia.
+		falta := esperado && faltaLaDependencia(v, repo)
+
 		switch {
-		case degradados[n]:
-			t.Logf("  %-20s DEGRADADO   %9d  no llegó a revisar", n, hallazgos[n])
 		case !esperado:
-			t.Logf("  %-20s SIN PRUEBA  %9d  %s", n, hallazgos[n], sinPruebaTodavia[n])
+			f.estado, f.detalle = "SIN PRUEBA", sinPruebaTodavia[n]
+		case degradados[n] && falta:
+			f.estado, f.detalle = "DEGRADADO", "no llegó a revisar; falta "+v.requiere
+		case degradados[n]:
+			f.estado, f.falla = "DEGRADADO", true
+			f.detalle = "no llegó a revisar Y SU DEPENDENCIA ESTÁ: es una regresión"
 		case hallazgos[n] > 0:
-			t.Logf("  %-20s CAZÓ        %9d  %s", n, hallazgos[n], v.porQue)
-		case v.requiere != "":
-			t.Logf("  %-20s NO APLICA   %9d  requiere: %s", n, hallazgos[n], v.requiere)
+			f.estado, f.detalle = "CAZÓ", v.porQue
+		case falta:
+			f.estado, f.detalle = "NO APLICA", "requiere: "+v.requiere
 		default:
-			t.Logf("  %-20s ¡NO CAZÓ!   %9d  %s", n, hallazgos[n], v.porQue)
-			noCazaron = append(noCazaron, n)
+			f.estado, f.detalle, f.falla = "¡NO CAZÓ!", v.porQue, true
+		}
+		filas = append(filas, f)
+	}
+	return filas, nil
+}
+
+// ── comprobación de dependencias ─────────────────────────────────────────────
+//
+// Cada una responde "¿está esto en la máquina donde corre el arnés?". Son las
+// mismas que necesita el producto para poder correr el motor: si mienten, el
+// arnés acusa a un motor sano o absuelve a uno roto.
+
+// faltaLaDependencia responde la pregunta de la que cuelgan las DOS absoluciones
+// del arnés: ¿este motor declara una dependencia externa que no está aquí?
+//
+// Es una variable, y no la expresión suelta que había dentro de revisarInforme,
+// porque sin un punto de sustitución el guardián de arnes_test.go —el que existe
+// para que el arnés no absuelva a un motor cuya dependencia SÍ está— no podía
+// ejercitar NI UNO de sus diez motores, en ninguna máquina. Medido antes de
+// tocar nada: «TOTAL EJERCITADOS: 0 de 10».
+//
+// Eran dos causas y ninguna se arregla instalando herramientas:
+//
+//   - Para trivy, govulncheck y los tres de dotnet, `presente` lee las variables
+//     moduloResuelto y dotnetRestaurado, que rellena el fixture del e2e. Como
+//     Go registra los tests por orden de ARCHIVO y arnes_test.go va antes que
+//     extremo_a_extremo_test.go, cuando el guardián corre valen `false` siempre
+//     — incluso pidiendo el e2e primero en la línea de comandos, comprobado.
+//   - Para eslint y tsc, `presente` busca node_modules en el repo que le pasan,
+//     y el guardián le pasa un t.TempDir() recién creado y vacío.
+//
+// Sustituyéndola, el guardián prueba lo que de verdad es suyo —la TABLA DE
+// DECISIÓN de revisarInforme— de forma determinista, en cualquier máquina y
+// para los diez motores. Que las comprobaciones de verdad estén cableadas lo
+// cubren TestTodaDependenciaDeclaradaEsComprobable y
+// TestElValorPorDefectoPreguntaALaComprobacionDeVerdad.
+var faltaLaDependencia = func(v violacion, repo string) bool {
+	return v.presente != nil && !v.presente(repo)
+}
+
+// enElPath es la dependencia más simple: la herramienta se resuelve por PATH.
+func enElPath(bin string) func(string) bool {
+	return func(string) bool {
+		_, err := exec.LookPath(bin)
+		return err == nil
+	}
+}
+
+// conJava: los motores de Java necesitan el JDK Y su .jar descargado en el
+// directorio de motores, que es de donde los saca el producto.
+//
+// Y necesitan una tercera cosa que esta comprobación daba por hecha: que ESE JDK
+// pueda EJECUTAR ESE jar. Con java en el PATH y el jar en su sitio, este arnés
+// declaraba la dependencia presente y acusaba al motor de regresión — cuando lo
+// que pasa en esta máquina es que el jar de google-java-format 1.36.1 está
+// compilado para JDK 21 (class file 65) y hay JDK 17 (61), así que la JVM muere
+// con UnsupportedClassVersionError antes de mirar un solo archivo.
+//
+// La diferencia importa porque las dos frases mandan a sitios opuestos: «es una
+// regresión» manda a buscar un fallo en el motor, que está bien; «la dependencia
+// está pero tu JDK no puede con ella» manda a instalar un JDK 21, que es lo que
+// de verdad hay que hacer. Y un arnés permanentemente rojo por una causa conocida
+// enseña a ignorar el rojo, que es peor que no tenerlo.
+//
+// Se comprueba EJECUTÁNDOLO, no comparando versiones de class file: el lanzador
+// de Java escribe su queja con el prefijo "Error: " y ese es el criterio que ya
+// usa el motor de verdad (jErrorDeJVM en internal/engines/linters).
+func conJava(prefijoJar string) func(string) bool {
+	return func(string) bool {
+		if _, err := exec.LookPath("java"); err != nil {
+			return false
+		}
+		dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "CodeGuard", "engines")
+		m, _ := filepath.Glob(filepath.Join(dir, prefijoJar+"*.jar"))
+		if len(m) == 0 {
+			return false
+		}
+		return jarEjecutable(m[0])
+	}
+}
+
+// jarEjecutable dice si esta JVM puede cargar el jar. El plazo es corto porque
+// arrancar una JVM para preguntarle la versión no debería tardar más.
+func jarEjecutable(jar string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	salida, _ := exec.CommandContext(ctx, "java", "-jar", jar, "--version").CombinedOutput()
+	// No se juzga el código de salida: hay herramientas que responden a --version
+	// con uno distinto de cero. Lo que descalifica es que la JVM no llegara a
+	// cargar la clase principal.
+	for _, marca := range []string{
+		"UnsupportedClassVersionError", "LinkageError",
+		"Could not find or load main class", "NoClassDefFoundError",
+	} {
+		if strings.Contains(string(salida), marca) {
+			return false
 		}
 	}
-	t.Log("")
+	return true
+}
 
-	if len(noCazaron) > 0 {
-		t.Errorf("estos motores corrieron sin ver la violación que tenían delante: %v.\n"+
-			"Un motor que no ve lo que se le pone delante es indistinguible de uno sano "+
-			"mientras el repositorio esté limpio, que es el 99%% del tiempo.", noCazaron)
+// enElRepo: biome y tsc los instala el propio repositorio con npm, así que la
+// dependencia vive en el fixture y no en la máquina.
+func enElRepo(lanzador string) func(string) bool {
+	return func(repo string) bool {
+		if repo == "" {
+			return false
+		}
+		_, err := os.Stat(filepath.Join(repo, "node_modules", ".bin", lanzador))
+		return err == nil
 	}
+}
+
+// moduloResuelto recuerda si `go mod tidy` pudo bajar el módulo del fixture.
+//
+// El resultado se perdía en un t.Logf, y sin él el arnés no sabe distinguir
+// "trivy no vio el CVE que tenía delante" —una regresión— de "no hubo red para
+// bajar el módulo y no había CVE que ver" — el entorno. Absolvía siempre, así
+// que la casilla de dependencias vulnerables nunca podía ponerse en rojo.
+var moduloResuelto bool
+
+func conModuloResuelto(string) bool { return moduloResuelto }
+
+// dotnetRestaurado: lo mismo para C#. Y aquí "está el SDK" NO basta como
+// comprobación, que fue la primera versión de esto y habría sido un rojo falso:
+// en esta máquina `dotnet` está en el PATH pero el SDK es 8.0 y el fixture apunta
+// a net10.0, así que el restore falla con NETSDK1045 y los motores de C# no
+// tienen nada que analizar. Con el PATH como única prueba, el arnés habría
+// acusado a tres motores sanos de no ver su violación.
+//
+// La dependencia real no es el binario: es que el proyecto se haya restaurado.
+var dotnetRestaurado bool
+
+func conDotnetRestaurado(string) bool { return dotnetRestaurado }
+
+// rellenar alinea la columna contando RUNES y no bytes: los estados llevan
+// acentos ("CAZÓ", "¡NO CAZÓ!") y con %-11s la tabla se descuadraba justo en las
+// casillas que importa leer.
+func rellenar(s string, n int) string {
+	for utf8.RuneCountInString(s) < n {
+		s += " "
+	}
+	return s
 }
 
 // ── andamiaje ────────────────────────────────────────────────────────────
@@ -434,7 +646,12 @@ func resolverModuloGo(t *testing.T, repo string) {
 	c := exec.Command("go", "mod", "tidy")
 	c.Dir = repo
 	c.Env = append(sinGOROOT(os.Environ()), "GOFLAGS=-mod=mod")
-	if out, err := c.CombinedOutput(); err != nil {
+	out, err := c.CombinedOutput()
+	// El resultado se ANOTA, no sólo se cuenta. Perdido en el t.Logf, el arnés no
+	// podía distinguir "trivy no vio el CVE" de "no hubo red", y absolvía las dos
+	// cosas igual.
+	moduloResuelto = err == nil
+	if err != nil {
 		t.Logf("go mod tidy falló (¿sin red?): las casillas de dependencias saldrán sin probar: %v\n%s", err, out)
 	}
 }
@@ -450,7 +667,12 @@ func restaurarProyectoDotnet(t *testing.T, repo string) {
 	c := exec.Command("dotnet", "restore", filepath.Join("src", "App.csproj"))
 	c.Dir = repo
 	c.Env = sinGOROOT(os.Environ())
-	if out, err := c.CombinedOutput(); err != nil {
+	out, err := c.CombinedOutput()
+	// Se ANOTA, igual que con el módulo de Go: tener el SDK en el PATH no
+	// significa que el proyecto se pueda restaurar, y sin restore los motores de
+	// C# no tienen nada que analizar.
+	dotnetRestaurado = err == nil
+	if err != nil {
 		t.Logf("dotnet restore falló (las casillas de C# saldrán sin probar): %v\n%s", err, out)
 	}
 }

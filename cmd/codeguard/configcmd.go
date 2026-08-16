@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,6 +18,7 @@ import (
 
 func configCmd() *cobra.Command {
 	var listar, probar bool
+	var guardarClaveDe string
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Abre la configuración del modelo que aconseja",
@@ -24,6 +27,9 @@ func configCmd() *cobra.Command {
 			"Tu elección se guarda fuera del repositorio: no viaja en ningún commit " +
 			"ni cambia la configuración del equipo.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if guardarClaveDe != "" {
+				return guardarClaveDeStdin(guardarClaveDe)
+			}
 			if probar {
 				return probarConfigActual()
 			}
@@ -43,7 +49,55 @@ func configCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&listar, "ver", false, "mostrar la configuración actual en la terminal")
 	cmd.Flags().BoolVar(&probar, "probar", false, "hacer una llamada real al modelo configurado")
+	cmd.Flags().StringVar(&guardarClaveDe, "guardar-clave", "",
+		"guarda en el Administrador de credenciales la clave que se lea por la entrada estándar (p.ej. --guardar-clave FOUNDRY_API_KEY)")
 	return cmd
+}
+
+// guardarClaveDeStdin mete la clave en la bóveda leyéndola por la ENTRADA
+// ESTÁNDAR, nunca por un argumento.
+//
+// Existe para que el instalador deje de escribirla en texto plano en
+// HKCU\Environment, que era la precondición del agujero que se cerró en esta
+// remediación: cualquier proceso del usuario la leía con un `Get-ChildItem
+// Env:`, y el daemon la heredaba a sus hijos hasta que migraba.
+//
+// Y se lee por stdin y no por parámetro por una segunda razón, independiente de
+// la primera: un argumento de línea de órdenes es visible en la lista de
+// procesos mientras dura, y en PowerShell queda además en el historial del
+// usuario. Con un pipe no aparece en ninguno de los dos sitios.
+func guardarClaveDeStdin(variable string) error {
+	crudo, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("no se pudo leer la clave de la entrada estándar: %w", err)
+	}
+	// Se recorta el salto de línea que añade cualquier pipe, pero NADA más: una
+	// clave puede llevar caracteres que parezcan basura y no lo son.
+	clave := strings.Trim(string(crudo), " \r\n\t")
+	if clave == "" {
+		return fmt.Errorf("no llegó ninguna clave por la entrada estándar: "+
+			"se esperaba algo como `\"$clave\" | codeguard config --guardar-clave %s`", variable)
+	}
+	if !secreto.Disponible() {
+		return fmt.Errorf("el Administrador de credenciales no está disponible en esta máquina: " +
+			"no hay dónde guardar la clave a salvo")
+	}
+	if err := secreto.Guardar(variable, clave); err != nil {
+		return fmt.Errorf("no se pudo guardar %s en el Administrador de credenciales: %w", variable, err)
+	}
+	// Se relee para no dar por buena una escritura que no cuajó: sin esta
+	// comprobación, el instalador diría "guardada" y la capa del modelo
+	// aparecería apagada sin explicación.
+	guardada, err := secreto.Leer(variable)
+	if err != nil {
+		return fmt.Errorf("%s se escribió pero no se pudo releer: %w", variable, err)
+	}
+	if guardada != clave {
+		return fmt.Errorf("el Administrador de credenciales devolvió una clave distinta para %s", variable)
+	}
+	fmt.Println(variable, "guardada en el Administrador de credenciales "+
+		"(no queda copia en el registro ni en el entorno)")
+	return nil
 }
 
 // probarConfigActual comprueba la configuración vigente sin abrir la ventana:

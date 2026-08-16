@@ -63,10 +63,9 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 
 	// ── Aciertos de caché ──
 	//
-	// La clave va por CONTENIDO y no por ruta: dos archivos idénticos comparten
-	// entrada. Al reproducir un acierto hay que reescribir la ruta y recalcular
-	// la huella para el archivo de ESTA corrida, igual que hacen semgrep,
-	// eslint y javafmt.
+	// La clave identifica al archivo por ruta Y contenido (ver claveRuff), así
+	// que un acierto es siempre del MISMO archivo: los hallazgos se reproducen
+	// tal cual, sin reescribir la ruta ni recalcular la huella.
 	var findings []finding.Finding
 	pendientes := archivos
 	if e.Cache != nil {
@@ -77,7 +76,7 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 			if f.SHA256 == "" {
 				continue // sin huella no es cacheable
 			}
-			k := "ruff:" + cfgHash + ":" + f.SHA256
+			k := claveRuff(cfgHash, f.Path, f.SHA256)
 			claves[f.Path] = k
 			lista = append(lista, k)
 		}
@@ -90,13 +89,7 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 				quedan = append(quedan, f)
 				continue
 			}
-			for _, h := range fs {
-				if h.File != f.Path {
-					h.File = f.Path
-					h.ComputeFingerprint()
-				}
-				findings = append(findings, h)
-			}
+			findings = append(findings, fs...)
 		}
 		pendientes = quedan
 	}
@@ -195,8 +188,31 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 	return append(findings, nuevos...), nil
 }
 
+// claveRuff identifica el veredicto de ruff sobre UN archivo, y la construyen
+// tanto la lectura como la escritura: una sola definición, o las dos mitades se
+// desincronizan en silencio y el caché deja de acertar sin que nada falle.
+//
+// Lleva la RUTA dentro, no sólo la configuración y el contenido, porque el
+// veredicto de ruff no es función de (config, contenido): ruff selecciona
+// reglas por patrón de ruta —per-file-ignores, exclude, extend-exclude—, así
+// que el mismo texto en tests/dup.py y en src/dup.py sale limpio en uno y con
+// hallazgo en el otro, por decisión explícita del repo. Sin la ruta, el caché
+// colapsaba en una entrada dos casos que ruff distingue y servía el veredicto
+// del gemelo permisivo: el hallazgo del archivo estricto desaparecía del
+// informe sin dejar rastro.
+//
+// La alternativa —mirar si la config trae per-file-ignores y sólo entonces
+// meter la ruta— se descartó: exigiría parsear TOML y setup.cfg y cubrir
+// exclude, extend-exclude, extend-per-file-ignores y lo que ruff añada mañana.
+// Sería frágil por construcción, y lo que se compra a cambio es sólo compartir
+// entrada entre archivos duplicados —un ahorro marginal— a cambio de arriesgar
+// un fallo de corrección invisible.
+func claveRuff(cfgHash, ruta, sha string) string {
+	return "ruff:" + cfgHash + ":" + ruta + ":" + sha
+}
+
 // porArchivoRuff reparte los hallazgos por su archivo y los deja bajo la clave
-// de contenido con la que se buscarán la próxima vez.
+// con la que se buscarán la próxima vez.
 //
 // Guarda TAMBIÉN los archivos limpios, con lista vacía: "analizado y sin nada"
 // es el resultado que más veces se reutiliza, y no guardarlo dejaría el caché
@@ -211,7 +227,7 @@ func porArchivoRuff(fs []finding.Finding, archivos []gitdiff.ChangedFile, cfgHas
 		if a.SHA256 == "" {
 			continue
 		}
-		out["ruff:"+cfgHash+":"+a.SHA256] = porRuta[a.Path]
+		out[claveRuff(cfgHash, a.Path, a.SHA256)] = porRuta[a.Path]
 	}
 	return out
 }

@@ -10,7 +10,7 @@
 ; =============================================================================
 
 #define MyAppName "CodeGuard"
-#define MyAppVersion "1.9.3"
+#define MyAppVersion "1.10.0"
 ; reglas.iss lo genera build-dist.ps1 contando el rulepack: el numero que se le
 ; promete al usuario no se escribe a mano (llego a decir 112 con 119 instaladas)
 #include "reglas.iss"
@@ -54,7 +54,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Messages]
 ; copy minimo: el asistente habla claro y corto
 spanish.WelcomeLabel1=CodeGuard
-spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus {#MyRuleCount} reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk, ruff y mypy (vía pip)%n  •  govulncheck y staticcheck, que se COMPILAN: un par de minutos%n%nTodos los motores son necesarios: sin ellos la paridad con el CI se rompe.
+spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus {#MyRuleCount} reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk, ruff y mypy (vía pip)%n  •  govulncheck y staticcheck, que se COMPILAN: un par de minutos%n%nSon 9 de los 16 motores. gofmt va dentro de CodeGuard, y los 6 restantes%n(go vet, tsc, eslint y los tres de .NET) usan las herramientas que YA tienes:%nGo, Node y el SDK de .NET. Para tsc y eslint es deliberado — se usa la versión%nde tu proyecto, que es la que corre en el CI; imponer la nuestra rompería la%nparidad en vez de defenderla. Si a tu repo le falta alguna, el agente te lo%ndice en cada análisis en vez de callárselo.
 spanish.FinishedHeadingLabel=Listo.
 spanish.FinishedLabelNoIcons=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)
 spanish.FinishedLabel=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)

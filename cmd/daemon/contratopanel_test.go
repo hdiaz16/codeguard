@@ -1,0 +1,126 @@
+package main
+
+import (
+	"encoding/json"
+	"os"
+	"regexp"
+	"sort"
+	"testing"
+
+	"codeguard/internal/capas"
+	"codeguard/internal/finding"
+)
+
+// El panel lee el payload por NOMBRE de campo JSON. Si un campo se renombra en
+// Go, el HTML no falla: pinta `undefined`, o directamente no pinta — que es
+// peor, porque un panel que se calla se lee como "no hay nada que decir".
+//
+// Ya pasó en este proyecto con el evento del panel al enrolar: la señal se
+// emitía, nadie la recibía, y desde fuera era indistinguible de que no hubiera
+// ocurrido nada. Esta prueba ata los dos lados: cada `p.campo` que el HTML lee
+// tiene que existir en el JSON que Go manda.
+func TestElPanelNoLeeCamposQueGoNoManda(t *testing.T) {
+	html, err := os.ReadFile("frontend/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Un payload con TODO relleno: los campos con omitempty desaparecen del
+	// JSON si van vacíos, y entonces esta prueba no probaría nada de ellos.
+	p := &panelPayload{
+		Repo: "demo", RepoRoot: "C:/repos/demo", Branch: "master",
+		AIGenerated: true, Suppressed: 1,
+		Languages:  []string{"go"},
+		Capas:      []capas.Capa{{Motor: "gitleaks", Estado: capas.Corrio, Hallazgos: 1, Ms: 2, Detalle: "x"}},
+		CapasRepo:  []string{"semgrep", "gofmt"},
+		SecretosEn: []string{"internal/pago/llave.go:3"},
+		OtrosRepos: []proyectoEnLista{{Marca: "✓", Nombre: "demo", Ruta: "C:/repos/demo", Activo: true, Verdict: "pass", Blocking: 1, Advisory: 2, Cuando: "11:00"}},
+		Verdict:    "pass", Reason: "x", Blocking: 1, Advisory: 2, CIParity: true,
+		Degraded:  []string{"x"},
+		Findings:  []panelFinding{{Finding: finding.Finding{File: "a.go"}}},
+		MaxShow:   7,
+		ElapsedMs: 3,
+		At:        "11:00",
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+
+	// Los tres ámbitos que el HTML recorre: el payload, cada proyecto de la
+	// lista y cada capa.
+	repo := primerElemento(t, payload["otros_repos"])
+	capa := primerElemento(t, payload["capas"])
+
+	for _, c := range []struct {
+		nombre string
+		re     *regexp.Regexp
+		campos map[string]any
+	}{
+		{"payload", regexp.MustCompile(`\bp\.([a-z_][a-z_0-9]*)`), payload},
+		{"proyecto de la lista", regexp.MustCompile(`\br\.([a-z_][a-z_0-9]*)`), repo},
+		{"capa", regexp.MustCompile(`\bc\.([a-z_][a-z_0-9]*)`), capa},
+	} {
+		vistos := map[string]bool{}
+		for _, m := range c.re.FindAllStringSubmatch(string(html), -1) {
+			campo := m[1]
+			if vistos[campo] {
+				continue
+			}
+			vistos[campo] = true
+			if _, ok := c.campos[campo]; !ok {
+				t.Errorf("index.html lee %s.%s y ese campo NO viaja en el JSON del %s.\n"+
+					"  El panel pintaría «undefined» o se quedaría mudo, que es peor.\n"+
+					"  campos que sí manda Go: %v",
+					string(c.nombre[0]), campo, c.nombre, claves(c.campos))
+			}
+		}
+		if len(vistos) == 0 {
+			t.Errorf("no se encontró ninguna lectura del %s en index.html: "+
+				"o cambió el nombre de la variable y esta prueba dejó de mirar nada", c.nombre)
+		}
+	}
+}
+
+// Los elementos que el render busca por id tienen que existir en el HTML.
+// Renombrar un id no rompe nada visible: el panel simplemente deja de enseñar
+// esa parte.
+func TestLosElementosQueElPanelBuscaExisten(t *testing.T) {
+	html, err := os.ReadFile("frontend/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	texto := string(html)
+	for _, id := range []string{"verdict", "meta", "parity", "stack", "motores",
+		"proyectos", "tabs", "main", "thinking", "card"} {
+		if !regexp.MustCompile(`id="` + id + `"`).MatchString(texto) {
+			t.Errorf("el panel hace $(%q) y no existe ningún id=%q en index.html", id, id)
+		}
+	}
+}
+
+func primerElemento(t *testing.T, v any) map[string]any {
+	t.Helper()
+	lista, ok := v.([]any)
+	if !ok || len(lista) == 0 {
+		t.Fatalf("esperaba una lista con al menos un elemento, llegó %#v", v)
+	}
+	m, ok := lista[0].(map[string]any)
+	if !ok {
+		t.Fatalf("esperaba un objeto, llegó %#v", lista[0])
+	}
+	return m
+}
+
+func claves(m map[string]any) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

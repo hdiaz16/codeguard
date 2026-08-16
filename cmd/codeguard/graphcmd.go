@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"codeguard/internal/codegraph"
+	"codeguard/internal/engines/proc"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/ipc"
 )
@@ -198,6 +199,18 @@ func goEdges(repoRoot, dir string) (map[string]bool, error) {
 	}
 	c := exec.Command("go", "list", "-f", "{{.ImportPath}}: {{range .Imports}}{{.}} {{end}}", "./...")
 	c.Dir = moduloDir
+	// El entorno acotado, como cualquier otro hijo. Aquí basta con Entorno() y
+	// no hace falta la excepción que se le hace a git: `go list` no depende de
+	// ninguna variable que le diga qué mirar, se lo dice el go.mod de c.Dir.
+	//
+	// Comprobado ejecutándolo, no deducido: sobre este repo devuelve los mismos
+	// 30 paquetes con el entorno acotado que con el completo, y los sigue
+	// devolviendo aunque no haya NINGUNA GO* definida, porque la cadena de
+	// herramientas deduce GOPATH y la caché del perfil del usuario —USERPROFILE
+	// y LOCALAPPDATA, que sí están en la lista. Quitando también el perfil,
+	// falla con "neither GOMODCACHE nor GOPATH is set": la lista blanca retiene
+	// exactamente lo que hace falta, ni una de más.
+	c.Env = proc.Entorno()
 	outB, err := c.Output()
 	if err != nil {
 		return nil, fmt.Errorf("go list falló en %s: %w", dir, err)

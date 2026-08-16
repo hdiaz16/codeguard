@@ -50,10 +50,32 @@ foreach ($p in @($Bin, $Engines)) {
 [Environment]::SetEnvironmentVariable("PATH", $userPath, "User")
 Ok "PATH actualizado (abre una terminal nueva para heredarlo)"
 
-# ── 5. API key del modelo (variable de usuario) ──────────────────────────────
+# ── 5. API key del modelo (Administrador de credenciales) ────────────────────
+#
+# La clave va a la boveda del usuario, NO a HKCU\Environment.
+#
+# Escribirla como variable de usuario la dejaba en texto plano en el registro:
+# cualquier programa del usuario la leia con un `Get-ChildItem Env:`, y todo
+# proceso hijo la heredaba. El daemon la migraba a la boveda al arrancar, pero
+# entre la instalacion y ese arranque habia una ventana real — y si el daemon
+# no arrancaba, la copia se quedaba ahi indefinidamente.
+#
+# Se pasa por la ENTRADA ESTANDAR y no como argumento: un argumento es visible
+# en la lista de procesos mientras dura, y en PowerShell queda ademas en el
+# historial del usuario.
 if ($ApiKey) {
-    [Environment]::SetEnvironmentVariable("FOUNDRY_API_KEY", $ApiKey, "User")
-    Ok "FOUNDRY_API_KEY registrada para tu usuario"
+    $ApiKey | & "$Bin\codeguard.exe" config --guardar-clave FOUNDRY_API_KEY
+    if ($LASTEXITCODE -eq 0) {
+        Ok "FOUNDRY_API_KEY guardada en el Administrador de credenciales"
+    } else {
+        Write-Host "    No se pudo guardar FOUNDRY_API_KEY en el Administrador de credenciales" -ForegroundColor Yellow
+        Write-Host "    Guardala desde la ventana del agente (codeguard config) cuando arranque." -ForegroundColor Yellow
+    }
+    # Que no quede rastro de instalaciones anteriores que si la escribieron ahi.
+    if ([Environment]::GetEnvironmentVariable("FOUNDRY_API_KEY", "User")) {
+        [Environment]::SetEnvironmentVariable("FOUNDRY_API_KEY", $null, "User")
+        Ok "Copia antigua de FOUNDRY_API_KEY borrada del registro"
+    }
 } else {
     Write-Host "    (sin -ApiKey: la capa LLM quedara apagada hasta definir FOUNDRY_API_KEY)" -ForegroundColor Yellow
 }

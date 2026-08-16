@@ -59,7 +59,9 @@
   .shell {
     /* Alto según el contenido, con tope: así una lista larga sigue
        desplazándose dentro de la tarjeta en vez de desbordar la ventana. */
-    max-height: 100%; display: flex; flex-direction: column;
+    /* En fila desde que hay carril de proyectos a la izquierda; la columna
+       de siempre vive ahora dentro de .col. */
+    max-height: 100%; display: flex; flex-direction: row;
     background: var(--d1);
     border-radius: 22px;
     box-shadow: var(--float);
@@ -172,33 +174,93 @@
      nuevo veía "repo" y no tenía forma de saber qué era esa lista. Ahora lleva
      título, el estado va en un punto de color (no un emoji, que cambia de
      forma según la fuente) y el proyecto activo dice su estado con palabras. */
-  .repos { padding: 10px 18px 4px; }
-  .repos .titulo {
-    color: var(--ink-3); font-size: 10px; font-weight: 600;
-    letter-spacing: .07em; text-transform: uppercase; margin-bottom: 7px;
+  /* ── carril de proyectos ──────────────────────────────────────────────
+     Eran botones en fila que se envolvían: con seis repos ocupaban tres
+     líneas sobre el contenido y lo único que decían era el color. En
+     columna caben todos, y cada uno puede decir CUÁNTOS problemas tiene y
+     de cuándo es su último análisis, que es lo que se venía a saber. */
+  .proyectos {
+    width: 170px; flex: none; display: flex; flex-direction: column;
+    background: var(--d0, rgba(0,0,0,.16));
+    border-right: 1px solid rgba(255,255,255,.05);
+    overflow-y: auto;
   }
-  .repos .titulo b { color: var(--ink-2); font-weight: 600; }
-  .repos .fila { display: flex; gap: 6px; flex-wrap: wrap; }
-  .repos .tab {
-    display: inline-flex; align-items: center; gap: 7px;
-    font-size: 11.5px; padding: 5px 11px; border-radius: 999px; cursor: pointer;
-    background: var(--d2); color: var(--ink-2); transition: .15s; white-space: nowrap;
+  .proyectos .titulo {
+    color: var(--ink-3); font-size: 9.5px; font-weight: 600;
+    letter-spacing: .09em; text-transform: uppercase;
+    padding: 15px 12px 8px; flex: none;
   }
-  .repos .tab:hover { background: var(--d3); color: var(--ink); }
-  .repos .tab .punto {
-    width: 7px; height: 7px; border-radius: 50%; flex: none;
-    background: var(--ink-3);
+  .proyectos .fila {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    padding: 7px 12px; transition: background .15s; min-width: 0;
   }
-  .repos .tab.blk  .punto { background: var(--block); }
-  .repos .tab.ok   .punto { background: var(--ok); }
-  .repos .tab.none .punto { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
-  .repos .tab.activo {
-    background: var(--d3); color: var(--ink); font-weight: 600;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.09);
+  .proyectos .fila:hover { background: rgba(255,255,255,.045); }
+  .proyectos .fila .punto {
+    width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3);
   }
-  .repos .tab .estado { color: var(--ink-3); font-weight: 400; }
-  .repos .tab.activo.blk .estado { color: var(--block); }
-  .repos .tab.activo.ok  .estado { color: var(--ok); }
+  .proyectos .fila.blk  .punto { background: var(--block); }
+  .proyectos .fila.ok   .punto { background: var(--ok); }
+  .proyectos .fila.none .punto { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+  .proyectos .fila .nombre {
+    font-size: 11.5px; color: var(--ink-2); flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .proyectos .fila.activo { background: rgba(255,255,255,.07); }
+  .proyectos .fila.activo .nombre { color: var(--ink); font-weight: 600; }
+  /* El conteo es lo que distingue un repo con un bloqueante de otro con
+     nueve. Sin él, la lista sólo sabía decir "hay algo". */
+  .proyectos .fila .cuenta { font-size: 10.5px; font-weight: 600; flex: none; }
+  .proyectos .fila.blk  .cuenta { color: var(--block); }
+  .proyectos .fila.warn .cuenta { color: var(--warn); }
+  .proyectos .fila.none .cuenta { color: var(--ink-3); font-weight: 400; }
+
+  /* ── columna derecha y pestañas ─────────────────────────────────────── */
+  .col { display: flex; flex-direction: column; flex: 1; min-width: 0; overflow: hidden; }
+  .tabs {
+    display: flex; gap: 2px; padding: 0 18px; flex: none;
+    border-bottom: 1px solid rgba(255,255,255,.05);
+  }
+  .tabs button {
+    background: none; border: 0; cursor: pointer; color: var(--ink-3);
+    font: inherit; font-size: 11.5px; padding: 8px 12px 7px;
+    border-bottom: 2px solid transparent; transition: .15s;
+  }
+  .tabs button:hover { color: var(--ink-2); }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--ink-2); font-weight: 600; }
+
+  /* ── stack y motores en la cabecera ─────────────────────────────────── */
+  header .stack { margin-top: 7px; display: flex; gap: 5px; flex-wrap: wrap; }
+  header .stack .lang {
+    font-size: 10px; padding: 2px 7px; border-radius: 4px;
+    background: var(--d3); color: var(--ink-2); letter-spacing: .02em;
+  }
+  header .motores { color: var(--ink-3); font-size: 10.5px; margin-top: 6px; }
+  header .motores b { color: var(--ink-2); font-weight: 600; }
+  header .motores .caida { color: var(--warn); }
+
+  /* ── pestaña Proyecto ───────────────────────────────────────────────── */
+  .ficha { padding: 14px 18px 4px; }
+  .ficha h3 {
+    font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--ink-3); font-weight: 600; margin: 14px 0 8px;
+  }
+  .ficha h3:first-child { margin-top: 0; }
+  .ficha .dato { display: flex; gap: 10px; font-size: 11.5px; padding: 3px 0; }
+  .ficha .dato .k { color: var(--ink-3); width: 110px; flex: none; }
+  .ficha .dato .v { color: var(--ink-2); min-width: 0; word-break: break-word; }
+  .ficha .capa {
+    display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; padding: 4px 0;
+  }
+  .ficha .capa .n { width: 150px; flex: none; color: var(--ink-2); }
+  .ficha .capa .e { flex: 1; color: var(--ink-3); }
+  .ficha .capa.corrio  .e { color: var(--ok); }
+  .ficha .capa.degradada .e, .ficha .capa.ausente .e { color: var(--warn); }
+  .ficha .capa .ms { color: var(--ink-3); font-size: 10.5px; flex: none; }
+  .ficha .nota {
+    color: var(--ink-3); font-size: 10.5px; line-height: 1.45;
+    margin: -2px 0 8px; padding-left: 10px;
+    border-left: 2px solid var(--d3);
+  }
   .degraded { color: var(--ink-3); font-size: 11px; padding: 8px 18px 14px; }
   .traynote { color: var(--ink-3); font-size: 10.5px; text-align: center; padding: 10px 16px 14px; }
   .empty { color: var(--ink-3); text-align: center; padding: 44px 20px; }
@@ -295,6 +357,10 @@
 </head>
 <body>
   <div class="shell" id="card">
+  <!-- El carril se oculta con un solo proyecto: una lista de uno no es una
+       lista, es ancho robado a lo que se lee. -->
+  <aside class="proyectos" id="proyectos" hidden></aside>
+  <div class="col">
   <header>
     <!-- Íconos dibujados, no emojis: un emoji cambia de forma según la fuente
          del sistema y ninguno decía con claridad qué hacía el botón. -->
@@ -350,14 +416,24 @@
     <div class="brand">CodeGuard</div>
     <div class="verdict" id="verdict">esperando el primer análisis…</div>
     <div class="meta" id="meta"></div>
+    <!-- El stack y los motores viven en la cabecera, no en una pestaña: son
+         el contexto de todo lo demás. Qué lenguajes se detectaron decide qué
+         motores corren, y qué motores corren decide qué significa un ✓. -->
+    <div class="stack" id="stack" hidden></div>
+    <div class="motores" id="motores" hidden></div>
     <div id="thinking"><span class="dot"></span><span id="thinking-text"></span></div>
   </header>
   <div id="parity" class="parity" hidden>Tu rule pack no coincide con el del repo; no puedo garantizar que pase el CI.</div>
-  <div id="repos" class="repos" hidden></div>
+  <nav class="tabs" id="tabs">
+    <button data-tab="ahora" class="on">Ahora</button>
+    <button data-tab="historial">Historial</button>
+    <button data-tab="proyecto">Proyecto</button>
+  </nav>
   <main id="main">
     <div class="empty">Haz un commit en un repo enrolado y aquí aparecerá el resultado.</div>
   </main>
   <div class="traynote">✕ solo oculta el panel — CodeGuard sigue vigilando desde el orbe</div>
+  </div>
   </div>
 
 <script type="module">
@@ -402,10 +478,10 @@
         ${snippetHTML(f.snippet)}
         ${f.why ? `<div class="why"><b>Por qué importa:</b> ${esc(f.why)}</div>` : ""}
         ${f.fix_hint ? `<div class="fix"><b>Cómo arreglarlo:</b> ${esc(f.fix_hint)}</div>` : ""}
-        <div class="fb" data-id="${esc(f.id)}">
+        ${f.engine === "gitleaks" ? "" : `<div class="fb" data-id="${esc(f.id)}">
           <button data-v="useful">útil</button>
           <button data-v="false_positive">falso positivo</button>
-        </div>
+        </div>`}
       </div>
     </details>`;
   }
@@ -415,8 +491,154 @@
   // enrolados no son el mismo, y el dev que selecciona uno bloqueado espera
   // ver ese.
   let rootActual = null;
+  // ultimo guarda el último payload para poder repintar al cambiar de
+  // pestaña sin volver a pedirle nada a nadie: el panel es un espejo del
+  // último análisis, no un cliente que consulta.
+  let ultimo = null;
+  let pestana = "ahora";
+
+  // fichaHTML es la pestaña Proyecto: qué es este repo y quién lo vigila.
+  //
+  // Aquí es donde el "no encontró nada" y el "no miró" dejan de confundirse:
+  // cada motor sale con su estado, y el que no pudo mirar dice por qué.
+  function fichaHTML(p) {
+    // El rótulo se omite cuando el detalle ya lo dice: "no instalado — no está
+    // instalado en esta máquina" es la misma frase dos veces.
+    const ESTADO = {
+      "corrio":    "revisó",
+      "no-aplica": "no aplica",
+      "degradada": "no pudo revisar",
+      "ausente":   "",
+    };
+    let h = `<div class="ficha">`;
+    h += `<h3>Proyecto</h3>`;
+    h += dato("repositorio", p.repo);
+    h += dato("rama", p.branch);
+    h += dato("ruta", p.repo_root);
+    h += dato("stack detectado", (p.languages || []).join(" · ") || "sin detectar");
+    h += dato("paridad con el CI", p.ci_parity ? "sí" : "NO — puede pasar aquí y fallar allá");
+    if (p.suppressed > 0) h += dato("deuda en baseline", `${p.suppressed} hallazgo(s) suprimidos`);
+
+    const capas = p.capas || [];
+    if (capas.length) {
+      h += `<h3>Motores en este repo</h3>`;
+      // Primero los que no pudieron: es lo accionable.
+      const orden = { "degradada": 0, "ausente": 1, "corrio": 2, "no-aplica": 3 };
+      const ord = capas.slice().sort((a, b) =>
+        (orden[a.estado] ?? 9) - (orden[b.estado] ?? 9) || a.motor.localeCompare(b.motor));
+      for (const c of ord) {
+        const desc = ESTADO[c.estado] ?? c.estado;
+        // "revisó" sin más es la mitad de la historia: lo que importa de un
+        // motor que revisó es si encontró algo.
+        let detalle;
+        if (c.estado === "corrio") {
+          detalle = c.hallazgos > 0 ? `${desc} · ${c.hallazgos} hallazgo(s)` : `${desc} · sin hallazgos`;
+        } else if (desc && c.detalle) {
+          detalle = `${desc} — ${c.detalle}`;
+        } else {
+          detalle = c.detalle || desc || c.estado;
+        }
+        h += `<div class="capa ${esc(c.estado)}"><span class="n">${esc(c.motor)}</span>` +
+             `<span class="e">${esc(detalle)}</span>` +
+             `<span class="ms">${c.ms ? c.ms + " ms" : ""}</span></div>`;
+      }
+    } else if ((p.capas_repo || []).length) {
+      // Enrolado y sin analizar. Antes aquí sólo se decía "haz un commit", y eso
+      // era rendirse ante una pregunta que SÍ se puede contestar: qué capas
+      // vigilan este repo se sabe con el árbol y el config, sin un solo commit.
+      // El dev recién instalado abría la pestaña Proyecto y no encontraba ni un
+      // motor, así que el producto parecía no saber nada de su repositorio.
+      //
+      // El estado es el mismo para todas —ninguna ha corrido aún— y se dice con
+      // esas palabras, sin reutilizar los estados de un análisis: "no aplica" o
+      // "ausente" aquí serían afirmaciones que nadie ha comprobado.
+      h += `<h3>Motores en este repo</h3>`;
+      for (const motor of p.capas_repo) {
+        h += `<div class="capa"><span class="n">${esc(motor)}</span>` +
+             `<span class="e">vigila este repo · sin análisis todavía</span>` +
+             `<span class="ms"></span></div>`;
+      }
+      h += `<div class="empty">Estas son las capas que le tocan a tu repo por lo que hay en el
+            árbol. Haz un commit y cada una dirá qué miró y qué encontró.</div>`;
+    } else {
+      h += `<h3>Motores en este repo</h3>` +
+        `<div class="empty">Todavía no hay ningún análisis de este proyecto, así que no puedo
+         decir qué motores corrieron. Haz un commit y aquí saldrá cada uno con su estado.</div>`;
+    }
+    return h + `</div>`;
+  }
+
+  function dato(k, v) {
+    return `<div class="dato"><span class="k">${esc(k)}</span><span class="v">${esc(v || "—")}</span></div>`;
+  }
+
+  // ── Historial ──
+  // Lo pide el daemon a la base de datos cuando se abre la pestaña. Mientras no
+  // llega, se dice que se está pidiendo: una pestaña en blanco se lee como "no
+  // hay nada", que es la confusión que este panel existe para deshacer.
+  let historial = null;
+
+  function historialHTML() {
+    if (!historial) {
+      return `<div class="empty">Consultando el historial de este proyecto…</div>`;
+    }
+    if (historial.error) {
+      return `<div class="empty"><b>No pude leer el historial.</b><br><br>${esc(historial.error)}</div>`;
+    }
+    const d = historial.datos || {};
+    const corridas = d.corridas || [];
+    const cerrados = d.cerrados || [];
+    if (!corridas.length) {
+      return `<div class="empty"><b>Todavía no hay historial de este proyecto.</b><br><br>
+        Cada commit deja su registro aquí: veredicto, cuánto tardó y qué se encontró.</div>`;
+    }
+
+    let h = `<div class="ficha">`;
+
+    if (cerrados.length) {
+      h += `<h3>Ya no aparecen (${cerrados.length})</h3>`;
+      // El matiz NO es un tecnicismo: CodeGuard analiza el CAMBIO, no el repo
+      // entero, así que un hallazgo también desaparece cuando su archivo lleva
+      // tiempo sin tocarse. Llamar "resuelto" a eso sería firmar un ✓ sobre
+      // algo que nadie volvió a mirar.
+      h += `<div class="nota">Bloqueantes que dejaron de salir. Ojo: se analiza el cambio,
+        no el repo entero — un hallazgo también deja de aparecer si su archivo no se ha
+        vuelto a tocar.</div>`;
+      for (const x of cerrados.slice(0, 12)) {
+        h += `<div class="capa corrio"><span class="n">${esc(x.regla)}</span>` +
+             `<span class="e">${esc(x.archivo)}${x.linea ? ":" + x.linea : ""}</span>` +
+             `<span class="ms">${esc(cuandoCorto(x.ultima_vez))}</span></div>`;
+      }
+    }
+
+    h += `<h3>Últimos análisis (${corridas.length})</h3>`;
+    for (const run of corridas) {
+      const clase = run.verdict === "block" ? "degradada" : (run.verdict === "skipped" ? "" : "corrio");
+      let qué;
+      if (run.verdict === "block")        qué = `bloqueado · ${run.bloqueantes} problema(s)`;
+      else if (run.verdict === "skipped") qué = `omitido`;
+      else if (run.avisos > 0)            qué = `pasó · ${run.avisos} sugerencia(s)`;
+      else                                qué = `pasó`;
+      // Un commit que se saltó las compuertas se dice SIEMPRE: es la única
+      // línea del historial que habla de algo que nadie revisó.
+      if (run.bypass) qué += " · SE SALTÓ LA REVISIÓN";
+      h += `<div class="capa ${clase}"><span class="n">${esc(cuandoCorto(run.cuando))}</span>` +
+           `<span class="e">${esc(qué)}</span>` +
+           `<span class="ms">${esc(run.rama || "")}</span></div>`;
+    }
+    return h + `</div>`;
+  }
+
+  // La marca de tiempo viene en ISO; en una lista lo que se lee es el día y la
+  // hora, no la zona ni los milisegundos.
+  function cuandoCorto(iso) {
+    if (!iso) return "";
+    const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2})/);
+    return m ? `${m[3]}/${m[2]} ${m[4]}` : String(iso).slice(0, 16);
+  }
 
   function render(p) {
+    ultimo = p;
     rootActual = p.repo_root || null;
     const v = $("verdict");
     if (p.verdict === "block") {
@@ -431,43 +653,114 @@
     const extras = [];
     if (p.ai_generated) extras.push("✦ código generado por IA");
     if (p.suppressed > 0) extras.push(`deuda suprimida: ${p.suppressed}`);
-    $("meta").textContent = `${p.repo} @ ${p.branch} · ${p.at} · ${p.elapsed_ms} ms` +
-      (extras.length ? ` · ${extras.join(" · ")}` : "");
+    // Los campos que pueden faltar no se imprimen: un "undefined ms" en la
+    // cabecera es de lo que peor se ve y de lo más fácil de evitar.
+    const cabecera = [`${p.repo} @ ${p.branch}`];
+    if (p.at) cabecera.push(p.at);
+    if (typeof p.elapsed_ms === "number") cabecera.push(`${p.elapsed_ms} ms`);
+    $("meta").textContent = cabecera.concat(extras).join(" · ");
     $("parity").hidden = p.ci_parity;
 
-    // ── TODOS los proyectos con SU estado, siempre visible ──
-    // "marca|nombre|ruta|activo" — verde ✓, bloqueado ⛔, sin análisis ○.
-    // Cambiar de pestaña cambia de contexto; ninguno afecta a los demás.
-    const tabs = $("repos");
-    if (p.otros_repos && p.otros_repos.length > 1) {
+    // ── el stack: qué cree CodeGuard que es este repo ──
+    // De esto cuelga todo lo demás: los lenguajes detectados deciden qué
+    // motores corren, y qué motores corren decide qué significa un ✓.
+    const stack = $("stack");
+    if (p.languages && p.languages.length) {
+      stack.innerHTML = p.languages.map(l => `<span class="lang">${esc(l)}</span>`).join("");
+      stack.hidden = false;
+    } else {
+      stack.hidden = true;
+    }
+
+    // ── qué capas vigilan este repo, y qué hicieron en ESTE cambio ──
+    //
+    // Son DOS preguntas y durante mucho tiempo sólo se contestaba la segunda.
+    // Un commit que tocaba un README se leía como "1 motor revisó tu cambio" y
+    // parecía que el producto estaba apagado; quien mira el panel pregunta por
+    // su REPO. Por eso el primer número es siempre el del repo (capas_repo,
+    // que se sabe sin analizar nada) y el del cambio va después.
+    //
+    // Los caídos se dicen aparte y nunca dentro del numerador: una capa que no
+    // pudo mirar también termina, y sumarla a "revisaron" sería prometer una
+    // cobertura que no hubo.
+    const motores = $("motores");
+    const capas = p.capas || [];
+    const delRepo = p.capas_repo || [];
+    if (capas.length) {
+      const miraron = capas.filter(c => c.estado === "corrio");
+      const caidas  = capas.filter(c => c.estado === "degradada" || c.estado === "ausente");
+      const total = delRepo.length || capas.length;
+      const sinNada = Math.max(0, total - miraron.length - caidas.length);
+      let txt = `tu repo: <b>${total}</b> capa${total === 1 ? "" : "s"}` +
+                ` · en este commit ${miraron.length === 1 ? "revisó" : "revisaron"} <b>${miraron.length}</b>`;
+      if (sinNada) txt += `, ${sinNada} no ${sinNada === 1 ? "tenía" : "tenían"} nada que mirar`;
+      if (caidas.length) {
+        const u = caidas.length === 1;
+        txt += ` · <span class="caida">${caidas.length} no ${u ? "pudo" : "pudieron"}: ` +
+               `${esc(caidas.map(c => c.motor).join(", "))}</span>`;
+      }
+      motores.innerHTML = txt + ` — ver en <b>Proyecto</b>`;
+      motores.hidden = false;
+    } else if (delRepo.length) {
+      // Enrolado y sin analizar todavía. Antes aquí no se decía NADA, así que
+      // justo después de `codeguard init` —que acaba de anunciar por pantalla
+      // el stack que detectó— el panel enseñaba una cabecera vacía, como si la
+      // herramienta no supiera nada del repo. Y sí lo sabe: para responder qué
+      // capas lo vigilan no hace falta ningún commit.
+      const n = delRepo.length;
+      motores.innerHTML = `tu repo: <b>${n}</b> capa${n === 1 ? "" : "s"} lo ${n === 1 ? "vigila" : "vigilan"}` +
+                          ` · ${esc(delRepo.join(" · "))} — sin análisis todavía`;
+      motores.hidden = false;
+    } else {
+      motores.hidden = true;
+    }
+
+    // ── TODOS los proyectos con SU estado, en el carril de la izquierda ──
+    // Cambiar de proyecto cambia de contexto; ninguno afecta a los demás.
+    const carril = $("proyectos");
+    // >= 1, no > 1. Con el umbral en dos, quien acababa de enrolar SU PRIMER
+    // repo no lo veía nunca en el carril: el panel le enseñaba el proyecto en la
+    // cabecera y la lista de proyectos escondida, como si no estuviera enrolado.
+    // El umbral venía de pensar la lista como "los OTROS proyectos" —de ahí el
+    // nombre del campo—, y eso es mirarlo desde el equipo con seis repos, no
+    // desde el dev que instala hoy. Un solo proyecto también es la lista de
+    // proyectos, y es justo el momento en que hace falta ver que está.
+    if (p.otros_repos && p.otros_repos.length >= 1) {
       // Cada estado se nombra con palabras, no sólo con un color: quien llega
       // nuevo no tiene por qué deducir qué significa un punto.
       const ESTADO = {
-        "⛔": { clase: "blk",  corto: "bloqueado",
-                largo: "bloqueado — el último commit tiene problemas por resolver" },
-        "✓":  { clase: "ok",   corto: "limpio",
-                largo: "limpio — el último commit pasó todas las compuertas" },
-        "○":  { clase: "none", corto: "sin analizar",
-                largo: "enrolado pero sin analizar todavía — haz un commit aquí y verás su estado" },
+        "⛔": { clase: "blk",  largo: "bloqueado — el último commit tiene problemas por resolver" },
+        "✓":  { clase: "ok",   largo: "limpio — el último commit pasó todas las compuertas" },
+        "○":  { clase: "none", largo: "enrolado pero sin analizar todavía — haz un commit aquí y verás su estado" },
       };
-      const chips = p.otros_repos.map(s => {
-        const [marca, nombre, root, activo] = s.split("|");
-        const e = ESTADO[marca] || ESTADO["○"];
-        const esActivo = activo === "1";
-        // El estado en texto sólo en el activo: en los demás sería ruido.
-        const etiqueta = esActivo ? `<span class="estado">· ${e.corto}</span>` : "";
-        return `<span class="tab ${e.clase} ${esActivo ? "activo" : ""}"
-                  data-root="${esc(root)}" role="button" tabindex="0"
-                  title="${esc(nombre)} — ${esc(e.largo)}&#10;${esc(root)}&#10;(clic para ver este proyecto)"
-                  ><span class="punto"></span>${esc(nombre)}${etiqueta}</span>`;
+      const filas = p.otros_repos.map(r => {
+        const e = ESTADO[r.marca] || ESTADO["○"];
+        // El número dice CUÁNTO, que es lo que la marca sola no distinguía.
+        // Los avisos van en su propio tono: no son lo mismo que un bloqueo.
+        let cuenta = "", extra = "";
+        if (r.blocking > 0)      { cuenta = String(r.blocking); }
+        else if (r.advisory > 0) { cuenta = String(r.advisory); extra = " warn"; }
+        else if (r.marca === "○"){ cuenta = "—"; }
+        return `<div class="fila ${e.clase}${extra}${r.activo ? " activo" : ""}"
+                  data-root="${esc(r.ruta)}" role="button" tabindex="0"
+                  title="${esc(r.nombre)} — ${esc(e.largo)}&#10;último análisis: ${esc(r.cuando || "nunca")}&#10;${esc(r.ruta)}&#10;(clic para ver este proyecto)"
+                  ><span class="punto"></span><span class="nombre">${esc(r.nombre)}</span>` +
+               `<span class="cuenta">${esc(cuenta)}</span></div>`;
       }).join("");
-      const n = p.otros_repos.length;
-      tabs.innerHTML =
-        `<div class="titulo">Proyectos que vigilo · <b>${n}</b> — clic para cambiar</div>` +
-        `<div class="fila">${chips}</div>`;
-      tabs.hidden = false;
+      carril.innerHTML =
+        `<div class="titulo">Proyectos · ${p.otros_repos.length}</div>` + filas;
+      carril.hidden = false;
     } else {
-      tabs.hidden = true;
+      carril.hidden = true;
+    }
+
+    if (pestana === "proyecto") {
+      $("main").innerHTML = fichaHTML(p);
+      return;
+    }
+    if (pestana === "historial") {
+      $("main").innerHTML = historialHTML();
+      return;
     }
 
     const blockers = (p.findings || []).filter(f => f.blocking);
@@ -576,14 +869,44 @@
   $("btn-close").addEventListener("click", closeOrganic);
   // cambio de contexto entre proyectos
   function cambiarProyecto(destino) {
-    const t = destino.closest(".tab[data-root]");
+    const t = destino.closest(".fila[data-root]");
     if (!t || !t.dataset.root) return;
     emit("switch-repo", [t.dataset.root]);
   }
-  $("repos").addEventListener("click", e => cambiarProyecto(e.target));
+  $("proyectos").addEventListener("click", e => cambiarProyecto(e.target));
   // Son botones de verdad (role="button"), así que también con teclado.
-  $("repos").addEventListener("keydown", e => {
+  $("proyectos").addEventListener("keydown", e => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); cambiarProyecto(e.target); }
+  });
+
+  // ── pestañas ──
+  // Cambiar de pestaña NO vuelve a pedir nada: se repinta lo último recibido.
+  // El panel es un espejo del último análisis, no un cliente que consulta.
+  $("tabs").addEventListener("click", e => {
+    const b = e.target.closest("button[data-tab]");
+    if (!b) return;
+    pestana = b.dataset.tab;
+    for (const otro of $("tabs").querySelectorAll("button")) {
+      otro.classList.toggle("on", otro === b);
+    }
+    // El historial vive en la base de datos, no en el payload: se pide cada vez
+    // que se abre la pestaña para que refleje el último commit y no una foto.
+    if (pestana === "historial") {
+      historial = null;
+      emit("pedir-historial", rootActual ? [rootActual] : null);
+    }
+    if (ultimo) render(ultimo);
+  });
+
+  Events.On("historial", (e) => {
+    const d = Array.isArray(e.data) ? e.data[0] : e.data;
+    if (!d) return;
+    // Si llega el historial de OTRO proyecto —el usuario cambió de repo
+    // mientras la consulta iba por el disco— se descarta: enseñar el pasado de
+    // un repo bajo el nombre de otro es peor que no enseñar nada.
+    if (d.repo_root && rootActual && d.repo_root !== rootActual) return;
+    historial = d;
+    if (pestana === "historial" && ultimo) render(ultimo);
   });
 
   $("btn-help").addEventListener("click", () => emit("open-guide", null));

@@ -3,7 +3,10 @@ package linters
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"go/format"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -84,7 +87,25 @@ func (e GoFmt) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 		}
 		raw, err := os.ReadFile(filepath.Join(in.RepoRoot, filepath.FromSlash(cf.Path)))
 		if err != nil {
-			continue // borrado entre el diff y aquí; no hay nada que formatear
+			// UN SOLO `continue` CUBRÍA DOS COSAS DISTINTAS.
+			//
+			// Que el archivo ya no esté es silencio legítimo: se borró entre el
+			// diff y el análisis y no hay nada que formatear. Pero el mismo
+			// `continue` se tragaba también los permisos denegados, el archivo
+			// bloqueado por otro proceso y cualquier error de E/S — casos en los
+			// que el archivo SÍ está, SÍ entra en el cambio, y NADIE le miró el
+			// formato. Y el resultado era idéntico al de un archivo impecable.
+			//
+			// Es la misma clase que el resto de este trabajo, en su versión más
+			// pequeña: no «la herramienta no corrió», sino «este archivo del
+			// cambio no lo revisó nadie», anunciado exactamente igual que la
+			// normalidad. gofmt no tiene herramienta externa que pueda fallar, así
+			// que este era su único modo de mentir.
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("gofmt no pudo leer %s, que sí está en el cambio: %v — "+
+				"el formato de ese archivo NO se revisó", cf.Path, err)
 		}
 		// Los finales de línea son asunto de git (.gitattributes), no del
 		// formato: en Windows autocrlf deja CRLF en disco y bloquear por eso

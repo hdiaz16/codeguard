@@ -14,6 +14,7 @@ import (
 
 	"github.com/Microsoft/go-winio"
 
+	"codeguard/internal/capas"
 	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
 )
@@ -37,11 +38,31 @@ type Request struct {
 	// días— no existían ni el aviso de "cambio demasiado grande" (§P4) ni la
 	// degradación a sólo-secretos por diff enorme, que sí existen sin daemon.
 	// Dos comportamientos documentados apagados por un campo que no cruzaba.
-	DiffLines       int    `json:"diff_lines"`
-	RulepackVersion string `json:"rulepack_version"`
-	ConfigHash      string `json:"config_hash"`
-	AIGenerated     bool   `json:"ai_generated"`
-	DeadlineMs      int    `json:"deadline_ms"`
+	DiffLines int `json:"diff_lines"`
+	// SecretosBloqueados: CUÁNTOS secretos frenaron este commit. Sólo viaja con
+	// el comando "secreto-bloqueado".
+	//
+	// La etapa 1 corre dentro del proceso del gancho —es fail-closed y no puede
+	// depender de que el daemon esté vivo— y salía por os.Exit antes de hablar
+	// con nadie: el commit quedaba bloqueado y el orbe seguía en verde. Este
+	// campo es lo único que hace falta para que la UI se entere.
+	//
+	// Es un NÚMERO y no los hallazgos, y eso es la regla dura de este camino: el
+	// valor del secreto no puede salir por un canal nuevo, que sería justo lo
+	// que el producto existe para impedir. El detalle ya está en la base, que el
+	// gancho escribe antes de salir, y se lee en la pestaña Historial.
+	SecretosBloqueados int `json:"secretos_bloqueados,omitempty"`
+	// SecretosEn es DÓNDE está cada uno: "ruta/archivo.go:12". Sólo eso.
+	//
+	// Ni el valor, ni la línea de código, ni el mensaje del motor —que en
+	// gitleaks puede venir de una regla del propio repo—. Con el archivo y la
+	// línea, quien lo lee sabe adónde ir; con cualquier otra cosa, este canal
+	// empezaría a transportar justo lo que el producto acaba de frenar.
+	SecretosEn      []string `json:"secretos_en,omitempty"`
+	RulepackVersion string   `json:"rulepack_version"`
+	ConfigHash      string   `json:"config_hash"`
+	AIGenerated     bool     `json:"ai_generated"`
+	DeadlineMs      int      `json:"deadline_ms"`
 }
 
 type Response struct {
@@ -55,10 +76,29 @@ type Response struct {
 	Degraded         []string          `json:"degraded"`
 	Findings         []finding.Finding `json:"findings"`
 	ElapsedMs        int64             `json:"elapsed_ms"`
+	// Capas dice, motor por motor, si miró y con qué resultado. Degraded sólo
+	// nombra a los que fallaron, así que sin esto la UI no puede distinguir
+	// "revisó y está limpio" de "no revisó". Ver internal/capas.
+	Capas []capas.Capa `json:"capas,omitempty"`
 	// ParityReason explica en una línea POR QUÉ se rompió la paridad. El aviso
 	// sin motivo ("no puedo garantizar que pase el CI") es de los que se
 	// aprenden a ignorar: nadie puede arreglar lo que no se nombra.
 	ParityReason string `json:"parity_reason,omitempty"`
+	// Reason explica POR QUÉ no se analizó, cuando Verdict es "skipped".
+	//
+	// Sin este campo el motivo no cruzaba: el pipeline lo calcula ("todos los
+	// archivos tocados están excluidos", "merge o revert"), el camino de CI lo
+	// imprime, y por el pipe se perdía. El hook podía decir que no se revisó
+	// nada, pero no por qué — y un veredicto sin motivo es de los que el dev
+	// aprende a ignorar, igual que pasaba con ParityReason.
+	//
+	// Es aditivo y opcional a propósito, para no romper una actualización a
+	// medias: encoding/json ignora los campos que no conoce, así que una CLI
+	// vieja contra un daemon nuevo lo descarta sin enterarse, y una CLI nueva
+	// contra un daemon viejo lo recibe vacío y lo trata como "no llegó". Por eso
+	// tampoco sube ProtocolVersion: el formato no cambia para quien no lo mira,
+	// y con omitempty los bytes son idénticos cuando va vacío.
+	Reason string `json:"reason,omitempty"`
 }
 
 // ── La huella cruza el pipe ──────────────────────────────────────────────

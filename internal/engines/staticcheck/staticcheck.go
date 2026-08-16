@@ -24,10 +24,12 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	"codeguard/internal/engines"
+	"codeguard/internal/engines/contrato"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 )
@@ -178,6 +180,18 @@ func claveModulo(repoRoot, dir string, paquetes []string) string {
 	return "staticcheck:" + hex.EncodeToString(sum[:])
 }
 
+// diceSerStaticcheck reconoce la respuesta de `staticcheck -version`. En esta
+// máquina: "staticcheck.exe 2026.1 (v0.7.0)".
+//
+// Vale por CUALQUIERA de las dos marcas, y no por las dos, porque cada una cubre
+// un caso legítimo que la otra rechazaría: un binario renombrado imprime el
+// nombre que tenga (pero sí trae el "(v…" del módulo), y una compilación de
+// desarrollo no trae número de versión (pero sí dice staticcheck). Lo que ninguna
+// de las dos deja pasar es a un impostor con el nombre correcto, que es el fallo
+// que de verdad ocurrió —`npx --no-install tsc` resolviendo a un paquete que no
+// es TypeScript— ni el silencio absoluto.
+var diceSerStaticcheck = regexp.MustCompile(`(?i)staticcheck|\(v\d`)
+
 func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string, paquetes []string) ([]finding.Finding, error) {
 	args := append([]string{"-f", "json"}, paquetes...)
 	cmd := exec.CommandContext(ctx, bin, args...)
@@ -203,6 +217,45 @@ func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string, pa
 			return nil, fmt.Errorf("staticcheck falló en %s: %w%s", dir, runErr, detalle)
 		}
 	}
+	// EL SILENCIO, QUE ERA DOS COSAS A LA VEZ.
+	//
+	// Todo lo que staticcheck tiene que decir va por stdout como JSON, una línea
+	// por diagnóstico —incluidos los fallos de compilación, que llegan con
+	// code:"compile" (medido, hasta el "directory not found" de un paquete
+	// inexistente)—. Así que stdout vacío significa que no dijo nada, y hasta aquí
+	// eso caía en `interpretar`, salía por io.EOF en la primera vuelta y devolvía
+	// (nil, nil): «analizado y limpio».
+	//
+	// Son DOS situaciones distintas y ninguna de las dos es «limpio»:
+	mudo := len(bytes.TrimSpace(salida.Stdout)) == 0
+	if mudo && runErr != nil {
+		// (a) salió con 1, que en staticcheck significa EXACTAMENTE «encontré
+		// algo», y no dijo qué. Una herramienta que anuncia hallazgos y no los
+		// escribe no está limpia: está averiada. No hace falta preguntar nada
+		// más, y por eso este caso no paga la prueba de identidad.
+		detalle := ""
+		if len(salida.Stderr) > 0 {
+			detalle = ": " + recorte(salida.Stderr)
+		}
+		return nil, fmt.Errorf("staticcheck salió con 1 en %s —que es su forma de decir "+
+			"«encontré algo»— y no escribió NI UN diagnóstico%s. No se puede llamar limpio a "+
+			"eso: lo que encontró se perdió", dir, detalle)
+	}
+	if mudo {
+		// (b) salió con 0 sin escribir nada, que en la herramienta de verdad SÍ
+		// es «módulo limpio» (medido: 0 bytes y código 0). Aquí la salida no
+		// puede resolverlo —el silencio bueno y el del impostor son el mismo
+		// vacío— así que se le pregunta quién es. Sólo lo paga el análisis que no
+		// encontró nada, y sólo la primera vez por binario.
+		if err := contrato.Identidad(ctx, contrato.Version("staticcheck", bin, "-version",
+			diceSerStaticcheck,
+			"Comprueba qué resuelve `staticcheck` en tu PATH, o reinstálalo con `codeguard repair`.",
+		)); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
 	// Para recortar los paths absolutos hay que probar las dos formas del
 	// directorio del módulo: staticcheck reporta el path tal como ve su
 	// directorio de trabajo, y en Windows ese puede ser un alias 8.3

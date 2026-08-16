@@ -587,6 +587,50 @@ func TestIntegracionMypyNoAplicaSinConfiguracion(t *testing.T) {
 // devuelve su ruta. Mismo trato que el de eslint: la prueba se hace dueña de
 // sus ficheros y los reescribe cada vez, así el payload capturado y lo que
 // corre la integración no pueden divergir.
+// EL CONTROL DEL ARREGLO DEL SILENCIO DE MYPY.
+//
+// `mypy --output=json` sin errores escribe 0 bytes y sale con 0 (medido), o sea
+// que su «está todo bien» es exactamente el mismo silencio que el de una
+// herramienta que no analizó nada. Ante ese silencio el motor le pregunta a mypy
+// quién es, y si la respuesta no se reconoce, la capa de tipos se declara
+// degradada.
+//
+// El riesgo es el inverso del fallo que se cierra: con el patrón mal escrito,
+// TODOS los commits limpios de Python verían la capa de tipos en naranja para
+// siempre. Los tres tests de integración que ya había usan un proyecto con
+// errores de tipos a propósito; ninguno pasa por el caso limpio.
+//
+// Va con t.TempDir() y no con el proyecto de juguete compartido a propósito:
+// como no produce hallazgos, no hay rutas que relativizar, así que no le afecta
+// el asunto del TEMP en forma corta 8.3 que tiene a esos tres a medias en esta
+// máquina.
+func TestIntegracionMypyLimpioSigueSiendoLimpio(t *testing.T) {
+	if testing.Short() {
+		t.Skip("prueba de integración: lanza el binario real de mypy")
+	}
+	if _, err := exec.LookPath("mypy"); err != nil {
+		t.Skip("mypy no está en el PATH")
+	}
+	root := t.TempDir()
+	escribirJS(t, root, "mypy.ini", "[mypy]\ndisallow_untyped_defs = True\nwarn_return_any = True\n")
+	escribirJS(t, root, "src/bien.py", "def suma(a: int, b: int) -> int:\n    return a + b\n\n\n"+
+		"resultado: int = suma(1, 2)\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	fs, err := (Mypy{}).Run(ctx, engines.Input{RepoRoot: root, Files: []gitdiff.ChangedFile{
+		{Path: "src/bien.py", Status: "M", SHA256: "sha-de-prueba"},
+	}})
+	if err != nil {
+		t.Fatalf("mypy analizó código bien tipado y el motor se declaró incapaz.\n"+
+			"Con esto, cada commit limpio de Python pinta la capa de tipos en naranja: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Errorf("código bien tipado no tiene hallazgos, y salieron %d: %+v", len(fs), fs)
+	}
+}
+
 func prepararProyectoMypy(t *testing.T) string {
 	t.Helper()
 	base := os.Getenv("CODEGUARD_TOY_PY")

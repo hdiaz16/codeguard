@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"codeguard/internal/engines"
@@ -25,6 +26,75 @@ func correrGoFmt(t *testing.T, dir string, rutas ...string) []string {
 		marcados = append(marcados, f.File)
 	}
 	return marcados
+}
+
+// UN ARCHIVO DEL CAMBIO QUE NADIE PUDO LEER NO ES UN ARCHIVO BIEN FORMATEADO.
+//
+// gofmt no lanza ningún proceso —formatea con go/format dentro de este binario—
+// así que no puede sufrir la avería del resto de los motores: no hay herramienta
+// externa que falte ni salida que parsear mal. Pero tenía su propia versión, más
+// pequeña y del mismo tipo: los archivos que no podía leer se saltaban con un
+// `continue` mudo, y el resultado era indistinguible de «lo revisé y está bien».
+//
+// Se distingue el único silencio legítimo —el archivo se borró entre el diff y el
+// análisis— del resto: permisos, bloqueo por otro proceso, error de E/S. En esos
+// el archivo SÍ está y SÍ entra en el cambio.
+//
+// El caso se provoca con un directorio con nombre de .go porque es la forma
+// portable de conseguir un error de lectura que no sea "no existe": en Windows
+// os.Chmod no quita el permiso de lectura al propietario, así que un archivo sin
+// permisos no serviría para probar esto.
+func TestUnArchivoIlegibleNoPasaPorBienFormateado(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bien.go"), []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "ilegible.go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	fs, err := GoFmt{}.Run(context.Background(), engines.Input{
+		RepoRoot: dir,
+		Files: []gitdiff.ChangedFile{
+			{Path: "bien.go", Status: "M"},
+			{Path: "ilegible.go", Status: "M"},
+		},
+	})
+	if err == nil {
+		t.Fatalf("gofmt no pudo leer un archivo del cambio y devolvió %d hallazgos SIN error: "+
+			"eso llega al panel como capa revisada, y el formato de ese archivo no lo miró "+
+			"nadie", len(fs))
+	}
+	if !strings.Contains(err.Error(), "ilegible.go") {
+		t.Errorf("el error tiene que decir QUÉ archivo se quedó sin revisar: %v", err)
+	}
+}
+
+// Y el control: el archivo que de verdad desapareció entre el diff y el análisis
+// no es ninguna avería. Sin esto, la comprobación de arriba se podría "arreglar"
+// devolviendo error ante cualquier lectura fallida, y entonces cualquier commit
+// que borre un .go —un rename, un archivo movido— quedaría con la capa de formato
+// degradada para siempre.
+func TestUnArchivoBorradoSigueSiendoSilencioLegitimo(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "queda.go"), []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fs, err := GoFmt{}.Run(context.Background(), engines.Input{
+		RepoRoot: dir,
+		Files: []gitdiff.ChangedFile{
+			{Path: "queda.go", Status: "M"},
+			{Path: "sefue.go", Status: "M"}, // en el diff, ya no en el disco
+		},
+	})
+	if err != nil {
+		t.Fatalf("un archivo borrado entre el diff y el análisis no tiene formato que "+
+			"revisar: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Errorf("nada que marcar aquí, y se marcaron %d: %+v", len(fs), fs)
+	}
 }
 
 // En Windows, git deja CRLF en el disco por autocrlf. Sin normalizar antes de

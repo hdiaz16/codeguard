@@ -241,12 +241,17 @@
   // eran correctos y no decían nada: cualquier programa podría decirlos.
   // Estos hablan de lo que este agente hace — vigilar commits — y en el tono
   // de un compañero, no de una barra de estado.
+  // «revisé sólo una parte» decía degraded, y afirmaba una revisión parcial que
+  // no siempre existió: a este estado se llega también cuando un análisis se
+  // muere sin que ninguna capa llegara a mirar nada (ver alMorirElAnalisis). El
+  // hueco es lo único cierto en los tres caminos que traen aquí, así que es lo
+  // único que se dice; el detalle exacto va en el tooltip, que sí lo sabe.
   const WHISPERS = {
     idle:     "de guardia",
     working:  "revisando tu cambio",
     pass:     "puedes seguir",
     blocked:  "espera, hay algo",
-    degraded: "revisé sólo una parte",
+    degraded: "hay un hueco en la revisión",
     offline:  "sin modelo, reglas al día",
   };
   const VALID = new Set(Object.keys(WHISPERS));
@@ -257,7 +262,7 @@
     working:  "Revisando tu cambio",
     pass:     "El commit pasó todas las compuertas",
     blocked:  "Commit detenido — hay problemas que el CI también rechazaría",
-    degraded: "Revisión parcial — alguna capa no pudo correr",
+    degraded: "Hueco en la revisión — no todo se pudo mirar",
     offline:  "Sin conexión al modelo — las reglas deterministas siguen aplicándose",
   };
 
@@ -267,6 +272,11 @@
   let sobreElOrbe = false;   // el mouse está encima ahora mismo
   let panelAbierto = false;  // el panel lateral está visible: taparía la burbuja
   let burbujaTimer = null;
+  // Capas terminadas del análisis en curso. -1 = no hay análisis corriendo.
+  // Sirve de filtro: el bus de Wails despacha cada emisión en su propia
+  // goroutine, así que dos avances pueden llegar cambiados de orden y el
+  // contador retrocedería a la vista del usuario.
+  let capasVistas = -1;
 
   // El susurro efímero: aparece al cambiar de estado y se va solo. No se
   // muestra si el mouse está encima (ahí manda el tooltip) ni si el panel
@@ -306,20 +316,90 @@
     burbuja.classList.remove("on");
   }
 
+  // El susurro del avance: igual que el efímero pero SIN caducidad, porque
+  // mientras el análisis corre no hay nada mejor que enseñar y una capa lenta
+  // (tsc compila el proyecto entero) puede tardar más que los 3,4 s del otro.
+  // Lo retira el estado siguiente, que siempre llega: o el veredicto, o el
+  // vigilante del daemon cortando el «revisando».
+  function susurrarAvance(texto) {
+    if (sobreElOrbe || panelAbierto) return;
+    clearTimeout(burbujaTimer);
+    burbuja.classList.remove("tip");
+    burbujaTexto.textContent = texto;
+    burbuja.classList.add("on");
+  }
+
   function setState(s, tip) {
     if (!VALID.has(s)) s = "idle";
     const changed = s !== current;
     current = s;
     detalle = tip || "";
+    // El marcador de capas es de UN análisis. Se reinicia con cada cambio de
+    // estado: al abrirse un «working» porque empieza otro, y al cerrarse porque
+    // un avance rezagado después del veredicto volvería a poner al orbe a contar
+    // capas de un commit ya decidido.
+    capasVistas = -1;
     stage.className = "stage orb-" + s;
     if (sobreElOrbe) mostrarTooltip();       // el tooltip abierto se refresca
-    else if (changed) susurrar(WHISPERS[s]); // si no, susurro al cambiar
+    else if (changed) susurrar(susurroDe(s)); // si no, susurro al cambiar
+  }
+
+  // MARCA es la costura con el daemon: actualizarOrbe (escritorio.go) añade al
+  // tooltip " — no corrió: <capas>" cuando hay degradación. Está aquí arriba y
+  // con nombre para que se vea que es un contrato entre dos archivos y no una
+  // cadena mágica perdida en una función.
+  const MARCA_NO_CORRIO = " — no corrió: ";
+
+  // susurroDe NOMBRA la capa que no pudo mirar, en vez de dejarlo en genérico.
+  //
+  // El susurro de degraded decía sólo "hay un hueco en la revisión". Es cierto
+  // —a este estado se llega por tres caminos y el hueco es lo único común—, pero
+  // en el caso que de verdad ocurre a diario el daemon SÍ sabe qué capa cayó, y
+  // callarlo obligaba a pasar el ratón por encima para enterarse. Héctor lo dijo
+  // mirando la pantalla: "los errores en el orbe no se ven". Estaban, en el
+  // tooltip, que es justo donde no se mira.
+  //
+  // Cuando el daemon no manda el detalle —el análisis que se muere sin que
+  // ninguna capa llegue a mirar— se cae al texto genérico, que ahí es lo único
+  // que se puede afirmar.
+  function susurroDe(s) {
+    if (s === "degraded" && detalle.includes(MARCA_NO_CORRIO)) {
+      // "tsc:error, trivy:timeout" → "tsc, trivy". El motivo va detrás de los
+      // dos puntos y aquí sobra: el susurro es un vistazo de un segundo y lo que
+      // hace falta es el NOMBRE. El motivo entero sigue en el tooltip y en el
+      // panel, que es donde se va a leer con calma.
+      const capas = detalle.split(MARCA_NO_CORRIO)[1]
+        .split(",").map(c => c.trim().split(":")[0]).filter(Boolean).join(", ");
+      if (capas) return "no pudo revisar: " + capas;
+    }
+    return WHISPERS[s];
   }
 
   Events.On("state", (e) => {
     const d = Array.isArray(e.data) ? e.data[0] : e.data;
     if (typeof d === "string") setState(d, "");
     else if (d) setState(d.state, d.tooltip);
+  });
+
+  // El análisis avanzando, capa a capa. Lo manda el daemon desde las goroutines
+  // de los motores (ver progreso.go), y por eso hay que suponer desorden: cada
+  // Emit de Wails despacha en su propia goroutine.
+  //
+  // Dos filtros, y los dos son la funcionalidad, no defensa paranoica:
+  //
+  //   - Sólo se pinta en «working». Un avance que llegue después del veredicto
+  //     dejaría al orbe contando capas de un commit que ya se decidió, y ese es
+  //     justo el estado colgado que esto viene a quitar.
+  //   - Sólo hacia adelante. Sin esto el contador retrocede a la vista del
+  //     usuario en cuanto dos capas terminan a la vez.
+  Events.On("progreso", (e) => {
+    const pr = Array.isArray(e.data) ? e.data[0] : e.data;
+    if (!pr || current !== "working") return;
+    if (pr.hechas <= capasVistas) return;
+    capasVistas = pr.hechas;
+    detalle = pr.detalle || "";
+    if (sobreElOrbe) mostrarTooltip();
+    else susurrarAvance(pr.texto || "");
   });
 
   // gesto al abrir/cerrar el panel: el orbe se estira y vuelve

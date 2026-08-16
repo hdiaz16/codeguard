@@ -28,7 +28,26 @@ import (
 
 const reportFile = ".codeguard/HALLAZGOS.md"
 
-var fpRe = regexp.MustCompile(`<!--\s*fp:([0-9a-f]{64})\s*-->`)
+// La huella de un hallazgo, tal y como la ESCRIBE este archivo. Son dos sitios
+// y en los dos la marca CIERRA la línea:
+//
+//	escribirHallazgo → sola en su propia línea:  <!-- fp:… -->
+//	sección de deuda → al final de un bullet:    - `regla` — `f.go:3` · msg <!-- fp:… -->
+//
+// De ahí el ancla. Sin ella, un `<!-- fp:… -->` metido en el texto de una regla
+// contaba como huella del informe, y el texto de una regla es de FUERA: sale del
+// YAML del rulepack, que puede venir vendoreado en el repo analizado.
+//
+// A fin de línea sólo no basta, que es la parte que no se ve a la primera:
+// "**Qué detectó:** <mensaje>" también termina con el mensaje, así que una marca
+// que CIERRE el texto de la regla queda pegada al final de una línea legítima.
+// Por eso delante se exige o nada, o un bullet.
+//
+// Y el `.*` es voraz a propósito: en un bullet de deuda con una marca colada en
+// el texto, hace que la coincidencia sea la ÚLTIMA de la línea, o sea la que
+// puso el generador. Antes ganaba la colada —FindStringSubmatch devuelve la
+// primera— y la deuda corregida dejaba de contar como resuelta.
+var fpRe = regexp.MustCompile(`^(?:-\s.*)?<!--\s*fp:([0-9a-f]{64})\s*-->\s*$`)
 
 func reportCmd() *cobra.Command {
 	var incluirAvisos, incluirDeuda bool
@@ -330,7 +349,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 			"baseline) para que vuelva a vigilarse como nuevo.\n\n")
 		for _, f := range ordenada {
 			fmt.Fprintf(&b, "- `%s` — `%s:%d` · %s <!-- fp:%s -->\n",
-				f.RuleKey, f.File, f.Line, f.Message, f.Fingerprint)
+				f.RuleKey, f.File, f.Line, mensajeDeHallazgo(f.Message), f.Fingerprint)
 		}
 		b.WriteString("\n")
 	}
@@ -369,7 +388,15 @@ func escribirHallazgo(b *strings.Builder, n int, f finding.Finding) {
 	fmt.Fprintf(b, "### %d. `%s` — %s:%d\n", n, f.RuleKey, f.File, f.Line)
 	fmt.Fprintf(b, "<!-- fp:%s -->\n\n", f.Fingerprint)
 	fmt.Fprintf(b, "- [ ] **Pendiente** · pilar **%s** · motor `%s` · severidad `%s`\n\n", pilar, f.Engine, f.Severity)
-	fmt.Fprintf(b, "**Qué detectó:** %s\n\n", f.Message)
+	// Aplanado, y aquí no es sólo cosmética: este informe está escrito para que
+	// lo lea un AGENTE DE CÓDIGO y decida si el trabajo está terminado. El
+	// mensaje sale del YAML de una regla —que puede venir del rulepack
+	// vendoreado en el repo— y con un salto de línea dentro se cuela como
+	// estructura del documento, no como texto suyo: medido, un `message` con
+	// "\n## 🎉 Todo correcto\nNada que arreglar." aparecía en el informe como un
+	// encabezado de sección de pleno derecho. Sin saltos no hay bloque nuevo,
+	// porque en Markdown un encabezado tiene que empezar la línea.
+	fmt.Fprintf(b, "**Qué detectó:** %s\n\n", mensajeDeHallazgo(f.Message))
 	if f.Why != "" {
 		fmt.Fprintf(b, "**Por qué importa:** %s\n\n", f.Why)
 	}

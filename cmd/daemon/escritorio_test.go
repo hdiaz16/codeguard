@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"codeguard/internal/config"
@@ -42,16 +45,6 @@ func repoEnDisco(t *testing.T, nombre string) registry.Repo {
 	return registry.Repo{Root: filepath.ToSlash(dir), Nombre: nombre}
 }
 
-// campos parte una entrada "marca|nombre|ruta|activo".
-func campos(t *testing.T, entrada string) []string {
-	t.Helper()
-	partes := strings.Split(entrada, "|")
-	if len(partes) != 4 {
-		t.Fatalf("la entrada debe ser marca|nombre|ruta|activo, llegó %q", entrada)
-	}
-	return partes
-}
-
 func TestListaProyectosSiembraLosEnroladosAunqueNoHayanCommiteado(t *testing.T) {
 	// La lección de bds.portal: `codeguard init` escribe en repos.json, pero
 	// el daemon ya estaba corriendo con su copia en memoria. El registro se
@@ -67,9 +60,8 @@ func TestListaProyectosSiembraLosEnroladosAunqueNoHayanCommiteado(t *testing.T) 
 	if len(lista) != 1 {
 		t.Fatalf("el proyecto recién enrolado debe aparecer sin esperar al primer commit: %v", lista)
 	}
-	c := campos(t, lista[0])
-	if c[0] != "○" || c[1] != "bds-portal" || c[3] != "0" {
-		t.Errorf("un proyecto sin análisis va con marca ○ y sin activar: %q", lista[0])
+	if p := lista[0]; p.Marca != "○" || p.Nombre != "bds-portal" || p.Activo {
+		t.Errorf("un proyecto sin análisis va con marca ○ y sin activar: %+v", p)
 	}
 	if p := e.porProyecto[nuevo.Root]; p == nil || p.Verdict != "—" || p.At != "sin análisis" {
 		t.Errorf("el proyecto sembrado debe quedar con su estado placeholder: %+v", p)
@@ -90,15 +82,18 @@ func TestListaProyectosMarcaElEstadoDeCadaUnoYOrdenaPorNombre(t *testing.T) {
 	if len(lista) != 3 {
 		t.Fatalf("deben salir los tres proyectos: %v", lista)
 	}
-	quiero := []struct{ marca, nombre, activo string }{
-		{"⛔", "alfa", "0"},
-		{"✓", "beta", "1"},
-		{"○", "gama", "0"},
+	quiero := []struct {
+		marca, nombre string
+		activo        bool
+	}{
+		{"⛔", "alfa", false},
+		{"✓", "beta", true},
+		{"○", "gama", false},
 	}
 	for i, q := range quiero {
-		c := campos(t, lista[i])
-		if c[0] != q.marca || c[1] != q.nombre || c[3] != q.activo {
-			t.Errorf("entrada %d: quería %v, llegó %q", i, q, lista[i])
+		p := lista[i]
+		if p.Marca != q.marca || p.Nombre != q.nombre || p.Activo != q.activo {
+			t.Errorf("entrada %d: quería %v, llegó %+v", i, q, p)
 		}
 	}
 }
@@ -112,7 +107,7 @@ func TestListaProyectosOlvidaElProyectoBorradoDelDisco(t *testing.T) {
 	e.porProyecto[muerto] = &panelPayload{Repo: "borrado", RepoRoot: muerto, Verdict: "pass"}
 
 	lista := e.listaProyectos("")
-	if len(lista) != 1 || campos(t, lista[0])[1] != "vivo" {
+	if len(lista) != 1 || lista[0].Nombre != "vivo" {
 		t.Fatalf("sólo debe quedar el proyecto vivo: %v", lista)
 	}
 	if _, sigue := e.porProyecto[muerto]; sigue {
@@ -144,8 +139,8 @@ func TestSembrarDesdeRegistroLlenaElPanelTrasReiniciarElDaemon(t *testing.T) {
 	if len(e.activo.OtrosRepos) != 2 {
 		t.Fatalf("el panel debe listar los dos proyectos: %v", e.activo.OtrosRepos)
 	}
-	if c := campos(t, e.activo.OtrosRepos[0]); c[3] != "1" {
-		t.Errorf("el sembrado debe quedar marcado como activo: %q", e.activo.OtrosRepos[0])
+	if p := e.activo.OtrosRepos[0]; !p.Activo {
+		t.Errorf("el sembrado debe quedar marcado como activo: %+v", p)
 	}
 }
 
@@ -201,8 +196,195 @@ func TestRegistrarAnalisisGuardaElContextoYLoVuelveActivo(t *testing.T) {
 	if len(analisis.OtrosRepos) != 2 {
 		t.Fatalf("el panel viaja con la lista completa: %v", analisis.OtrosRepos)
 	}
-	if c := campos(t, analisis.OtrosRepos[1]); c[1] != "beta" || c[0] != "⛔" || c[3] != "1" {
-		t.Errorf("beta debe salir bloqueado y activo: %q", analisis.OtrosRepos[1])
+	if p := analisis.OtrosRepos[1]; p.Nombre != "beta" || p.Marca != "⛔" || !p.Activo {
+		t.Errorf("beta debe salir bloqueado y activo: %+v", p)
+	}
+}
+
+// ── Estado compartido entre goroutines ───────────────────────────────────────
+//
+// El contexto por proyecto lo tocan al menos tres hilos distintos: los
+// manejadores de eventos de Wails (el panel se abre, se cambia de repo, se
+// pide el explorador), el servidor IPC —que atiende CADA conexión en su
+// propia goroutine— y las goroutines que el propio escritorio lanza para
+// serializar el grafo. Las pruebas de aquí abajo defienden ese estado.
+//
+// AVISO SOBRE LA EVIDENCIA: esta máquina no puede correr `go test -race`
+// (necesita cgo y no hay compilador de C instalado), así que ninguna de estas
+// pruebas se apoya en que el detector de carreras salte. Todas afirman una
+// INCONSISTENCIA OBSERVABLE del estado —un análisis que se pierde, un objeto
+// ya entregado que cambia bajo su lector—, que es un fallo real por sí mismo y
+// se reproduce sin instrumentación. Lo que NO queda certificado aquí es la
+// ausencia de carreras de memoria a nivel del modelo de memoria de Go; para
+// eso hace falta -race en una máquina con cgo.
+
+// El panel se abre (panel-ready → sembrarDesdeRegistro) justo cuando termina
+// un análisis que entra por el IPC. Sembrar mira si hay contexto activo y, si
+// no lo hay, lo pone; entre esas dos cosas cabe un análisis entero, y sembrar
+// lo pisa con el placeholder "sin análisis" del primer repo del registro. El
+// usuario acaba de commitear y el panel le dice que nunca ha analizado nada.
+//
+// El resultado no depende del orden en que corran los dos hilos: si siembra
+// primero, el análisis llega después y manda; si llega primero el análisis,
+// sembrar debe ver que ya hay contexto y no tocar nada. En los dos casos el
+// contexto activo al final es el análisis.
+func TestSembrarDesdeRegistroNoDescartaElAnalisisQueLlegoALaVez(t *testing.T) {
+	alfa := repoEnDisco(t, "alfa")
+	beta := repoEnDisco(t, "beta")
+
+	const intentos = 300
+	perdidos := 0
+	for i := 0; i < intentos; i++ {
+		e, _ := escritorioDePrueba([]registry.Repo{alfa, beta})
+		analisis := &panelPayload{Repo: "beta", RepoRoot: beta.Root, Verdict: "block", Blocking: 2}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); e.sembrarDesdeRegistro() }() // el panel se abre
+		go func() { defer wg.Done(); e.registrarAnalisis(analisis) }()
+		wg.Wait()
+
+		if e.activo == nil || e.activo.RepoRoot != beta.Root || e.activo.Verdict != "block" {
+			perdidos++
+		}
+	}
+	if perdidos > 0 {
+		t.Errorf("el análisis recién terminado desapareció del panel en %d de %d intentos: "+
+			"sembrar comprueba e.activo y lo escribe sin candado, así que pisa lo que llegó en medio",
+			perdidos, intentos)
+	}
+}
+
+// abrirGrafo saca el contexto del proyecto y se lo lleva a OTRA goroutine
+// (`go func(){ e.prepararGrafo(c) }`) que lo lee y lo serializa dentro del
+// JSON del explorador. Si lo que se lleva es el puntero que vive en el mapa,
+// cualquier publicación posterior le reescribe los campos por debajo mientras
+// lo serializa.
+//
+// Aquí la publicación posterior es la del panel al abrirse. Va sin goroutines
+// a propósito: el fallo no necesita concurrencia para verse, la concurrencia
+// sólo lo vuelve además una carrera de memoria.
+func TestElContextoDelGrafoNoSeMutaDespuesDeEntregarse(t *testing.T) {
+	alfa := repoEnDisco(t, "alfa")
+	beta := repoEnDisco(t, "beta")
+	e, _ := escritorioDePrueba([]registry.Repo{alfa, beta})
+	e.listaProyectos("") // alta de los enrolados, como al arrancar el daemon
+
+	// El usuario pide el explorador de alfa: el contexto se entrega y viaja.
+	c := e.contextoDelGrafo(alfa.Root)
+	if c.payload == nil {
+		t.Fatal("el contexto del grafo debía traer el payload del proyecto")
+	}
+	antes, err := json.Marshal(c.payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Y mientras tanto se abre el panel, que siembra el contexto activo.
+	e.sembrarDesdeRegistro()
+
+	despues, err := json.Marshal(c.payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(antes, despues) {
+		t.Errorf("el payload entregado al explorador cambió bajo la goroutine que lo serializa:\n"+
+			"  antes:   %s\n  después: %s", antes, despues)
+	}
+}
+
+// Corolario estructural del anterior: mientras contextoDelGrafo devuelva el
+// mismo objeto que vive en el mapa, no hay forma de que el invariante «un
+// payload ya entregado no se muta jamás» se sostenga.
+func TestContextoDelGrafoNoEntregaElObjetoDelMapa(t *testing.T) {
+	beta := repoEnDisco(t, "beta")
+	e, _ := escritorioDePrueba([]registry.Repo{beta})
+	e.listaProyectos("")
+
+	c := e.contextoDelGrafo(beta.Root)
+	if c.payload == nil {
+		t.Fatal("el contexto del grafo debía traer el payload del proyecto")
+	}
+	if e.porProyecto[beta.Root] == c.payload {
+		t.Error("contextoDelGrafo entrega el objeto que el escritorio sigue mutando; " +
+			"debe entregar una copia de la que la otra goroutine sea dueña")
+	}
+}
+
+// Las tres puertas de entrada al contexto compartido corriendo a la vez, como
+// en producción: el IPC registrando análisis, el panel pidiendo su contexto y
+// el explorador llevándose el suyo a serializar.
+//
+// Sin -race esto NO certifica ausencia de carreras de memoria. Lo que sí
+// comprueba es que ningún payload publicado cambia mientras su lector lo tiene
+// en la mano, y que ninguno llega al bus con la lista de proyectos a medias
+// —dos inconsistencias observables que el estado sin candado sí produce.
+func TestElContextoCompartidoAguantaLasTresPuertasALaVez(t *testing.T) {
+	alfa := repoEnDisco(t, "alfa")
+	beta := repoEnDisco(t, "beta")
+	e, _ := escritorioDePrueba([]registry.Repo{alfa, beta})
+
+	const vueltas = 400
+	var mutados int64
+	var wg sync.WaitGroup
+
+	// Servidor IPC: cada análisis llega en su propia goroutine.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < vueltas; i++ {
+			veredicto := "pass"
+			if i%2 == 0 {
+				veredicto = "block"
+			}
+			e.registrarAnalisis(&panelPayload{Repo: "beta", RepoRoot: beta.Root, Verdict: veredicto})
+		}
+	}()
+
+	// El panel abriéndose una y otra vez.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < vueltas; i++ {
+			e.sembrarDesdeRegistro()
+		}
+	}()
+
+	// Explorador: se lleva el contexto a otra goroutine y lo serializa allí,
+	// que es lo que hace `go func(){ e.prepararGrafo(c) }`.
+	for _, raiz := range []string{alfa.Root, beta.Root} {
+		wg.Add(1)
+		go func(raiz string) {
+			defer wg.Done()
+			for i := 0; i < vueltas; i++ {
+				c := e.contextoDelGrafo(raiz)
+				if c.payload == nil {
+					continue
+				}
+				antes, err1 := json.Marshal(c.payload)
+				despues, err2 := json.Marshal(c.payload)
+				if err1 != nil || err2 != nil {
+					t.Errorf("el contexto del grafo no se pudo serializar: %v %v", err1, err2)
+					return
+				}
+				if !bytes.Equal(antes, despues) {
+					atomic.AddInt64(&mutados, 1)
+				}
+			}
+		}(raiz)
+	}
+
+	wg.Wait()
+	if n := atomic.LoadInt64(&mutados); n > 0 {
+		t.Errorf("%d payloads cambiaron mientras su lector los serializaba", n)
+	}
+	// Con el temporal ya en calma: lo que quede activo debe llevar la lista
+	// completa. Un contexto publicado a medias deja al panel sin selector.
+	if e.activo == nil {
+		t.Fatal("tras 400 análisis debía quedar un contexto activo")
+	}
+	if len(e.activo.OtrosRepos) != 2 {
+		t.Errorf("el contexto activo quedó con la lista a medias: %v", e.activo.OtrosRepos)
 	}
 }
 
@@ -218,7 +400,11 @@ func TestOrbStateFor(t *testing.T) {
 		{"bloqueado con avisos", &panelPayload{Verdict: "block", Advisory: 3}, "blocked"},
 		{"limpio", &panelPayload{Verdict: "pass"}, "pass"},
 		{"sólo sugerencias", &panelPayload{Verdict: "pass", Advisory: 1}, "idle"},
-		{"sin análisis", &panelPayload{Verdict: "—"}, "pass"},
+		// Este caso decía "pass" y era un ✓ falso de los que este archivo
+		// persigue: un proyecto enrolado que nadie ha analizado todavía no puede
+		// afirmar una revisión limpia. Se llega aquí al abrir el panel con el
+		// daemon recién reiniciado. Ahora no afirma nada.
+		{"sin análisis", &panelPayload{Verdict: "—"}, "idle"},
 	}
 	for _, c := range casos {
 		if got := orbStateFor(c.payload); got != c.quiero {
@@ -251,14 +437,17 @@ func TestResumenHallazgos(t *testing.T) {
 
 func TestMarcaProyecto(t *testing.T) {
 	casos := map[string]string{
-		"block":   "⛔",
-		"pass":    "✓",
-		"skipped": "✓",
+		"block": "⛔",
+		"pass":  "✓",
+		// "skipped" daba "✓", y el panel rotula ese ✓ como «limpio — el último
+		// commit pasó todas las compuertas». En un análisis omitido no pasó
+		// ninguna: el embudo se paró en la etapa 0.
+		"skipped": "○",
 		"—":       "○",
 		"":        "○",
 	}
 	for veredicto, quiero := range casos {
-		if got := marcaProyecto(veredicto); got != quiero {
+		if got := marcaProyecto(&panelPayload{Verdict: veredicto}); got != quiero {
 			t.Errorf("veredicto %q: quería %q, llegó %q", veredicto, quiero, got)
 		}
 	}
@@ -297,7 +486,7 @@ func TestConstruirPayloadLlevaElCodigoSenalado(t *testing.T) {
 		},
 	}
 
-	payload := construirPayload(req, resp, 5)
+	payload := construirPayload(req, resp, nil, 5)
 
 	if payload.Repo != filepath.Base(repo) || payload.Branch != "main" || !payload.AIGenerated {
 		t.Errorf("el encabezado del panel sale de la petición: %+v", payload)

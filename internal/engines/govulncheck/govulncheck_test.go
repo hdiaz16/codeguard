@@ -85,8 +85,12 @@ func TestMonorepoPrefijaElModulo(t *testing.T) {
 }
 
 func TestStdlibSugiereActualizarGo(t *testing.T) {
-	// Forma real del flujo, con la stdlib alcanzada a nivel símbolo.
-	payload := `{"osv":{"id":"GO-2026-5856","summary":"Ejemplo stdlib"}}
+	// Forma real del flujo, con la stdlib alcanzada a nivel símbolo. La cabecera
+	// `config` va porque el flujo de verdad SIEMPRE abre con ella, y el motor la
+	// exige: es su prueba de que quien escribió esto fue govulncheck y no una
+	// herramienta cualquiera que salió con 0.
+	payload := `{"config":{"scanner_name":"govulncheck","scanner_version":"v1.6.0"}}
+{"osv":{"id":"GO-2026-5856","summary":"Ejemplo stdlib"}}
 {"finding":{"osv":"GO-2026-5856","fixed_version":"v1.26.5","trace":[{"module":"stdlib","version":"v1.26.3","package":"net/http","function":"Serve","position":{"filename":"server.go","line":300}},{"module":"m","package":"m","function":"main","position":{"filename":"cmd/api/main.go","line":12}}]}}
 `
 	fs, err := interpretar([]byte(payload), ".", false)
@@ -165,6 +169,83 @@ func TestSoloManifiestosIgnoraCodigoGo(t *testing.T) {
 // language.Parse. GO-2021-0113 (Parse) debe aparecer; GO-2022-1059 vive en la
 // misma dependencia pero nunca se llama, y NO debe aparecer — esa asimetría
 // es exactamente lo que este motor aporta sobre trivy.
+// PRESENTARSE NO ES ESCANEAR, y lo puso el validador midiendo: el mensaje
+// `config` con el que govulncheck abre su flujo es byte a byte IDÉNTICO en la
+// corrida sana y en las averiadas (289 bytes, mismos campos). Así que una
+// comprobación que se apoye en «hay cabecera» no prueba nada.
+//
+// En sus escenarios el motor ya rechazaba por el código de salida, pero el caso
+// que queda —presentarse, salir con 0 y callar— no lo cubría nadie.
+func TestPresentarseSinEscanearNoEsUnModuloLimpio(t *testing.T) {
+	soloCabecera := `{"config":{"scanner_name":"govulncheck","scanner_version":"v1.6.0"}}` + "\n"
+
+	fs, err := interpretar([]byte(soloCabecera), ".", false)
+	if err == nil {
+		t.Fatalf("un flujo con la cabecera y nada más no es un escaneo, y devolvió %d "+
+			"hallazgos sin error: eso llega al panel como capa revisada", len(fs))
+	}
+	if !strings.Contains(err.Error(), "no escaneó") {
+		t.Errorf("el error debe decir que no escaneó, no que no se presentó: %v", err)
+	}
+	// Y el motivo tiene que distinguir las dos averías, porque mandan a mirar
+	// sitios distintos.
+	if !strings.Contains(err.Error(), "se presentó, pero no escaneó") {
+		t.Errorf("con cabecera presente, el motivo tiene que decirlo: %v", err)
+	}
+
+	_, err = interpretar(nil, ".", false)
+	if err == nil {
+		t.Fatal("stdout vacío tampoco es un módulo limpio")
+	}
+	if !strings.Contains(err.Error(), "ni siquiera se presentó") {
+		t.Errorf("sin cabecera, el motivo tiene que decir que no era govulncheck: %v", err)
+	}
+}
+
+// EL CONTROL DEL ARREGLO DEL SILENCIO, con la herramienta de verdad.
+//
+// El motor ya no acepta un flujo sin la cabecera `config`, y esa exigencia se
+// apoya en una medida —govulncheck abre siempre presentándose, incluso sobre un
+// módulo limpio, donde escribió 393 983 bytes— pero una medida no es una prueba
+// de que el código la lea bien. Si el nombre del campo estuviera mal escrito, o
+// la cabecera cambiara de forma en una versión futura, TODOS los módulos limpios
+// pasarían a "capa degradada" y en local nadie lo notaría enseguida: govulncheck
+// sólo corre cuando cambian los manifiestos.
+//
+// El test de integración que ya existía usa un módulo VULNERABLE, así que pasa
+// por el camino con hallazgos; el limpio, que es el que produce cero, no lo
+// ejercitaba nadie.
+func TestIntegracionModuloLimpioNoSeDegrada(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integración: usa red y tarda varios segundos")
+	}
+	if _, err := exec.LookPath("govulncheck"); err != nil {
+		t.Skip("govulncheck no está en PATH")
+	}
+	dir := t.TempDir()
+	for nombre, contenido := range map[string]string{
+		"go.mod":  "module fixturelimpio\n\ngo 1.21\n",
+		"main.go": "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hola\") }\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, nombre), []byte(contenido), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fs, err := (&Engine{}).Run(context.Background(), engines.Input{
+		RepoRoot: dir,
+		Files:    []gitdiff.ChangedFile{{Path: "go.mod", Status: "M"}},
+	})
+	if err != nil {
+		t.Fatalf("govulncheck analizó un módulo sin dependencias y el motor se declaró "+
+			"incapaz. Con esto, todo módulo limpio queda como capa degradada: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Errorf("un módulo sin dependencias no tiene vulnerabilidades, y salieron %d: %+v",
+			len(fs), fs)
+	}
+}
+
 func TestIntegracionModuloVulnerable(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integración: usa red y tarda varios segundos")
@@ -227,8 +308,10 @@ func main() {
 // Inflar el problema por tres no lo hace más urgente, lo hace menos creíble; y
 // el remedio de todas las rutas es el mismo, subir el módulo una vez.
 func TestVariasRutasALaMismaVulnerabilidadSonUnHallazgo(t *testing.T) {
-	// Misma OSV alcanzada desde dos sitios distintos del código propio.
-	payload := `{"osv":{"id":"GO-2026-0001","summary":"Fallo en el parser"}}
+	// Misma OSV alcanzada desde dos sitios distintos del código propio, con la
+	// cabecera con la que govulncheck abre siempre su flujo.
+	payload := `{"config":{"scanner_name":"govulncheck","scanner_version":"v1.6.0"}}
+{"osv":{"id":"GO-2026-0001","summary":"Fallo en el parser"}}
 {"finding":{"osv":"GO-2026-0001","fixed_version":"v1.2.3","trace":[{"module":"ejemplo.com/lib","version":"v1.0.0","package":"ejemplo.com/lib","function":"Parse","position":{"filename":"lib/parse.go","line":10}},{"module":"m","package":"m","function":"Segundo","position":{"filename":"internal/b.go","line":50}}]}}
 {"finding":{"osv":"GO-2026-0001","fixed_version":"v1.2.3","trace":[{"module":"ejemplo.com/lib","version":"v1.0.0","package":"ejemplo.com/lib","function":"Parse","position":{"filename":"lib/parse.go","line":10}},{"module":"m","package":"m","function":"Primero","position":{"filename":"cmd/a.go","line":20}}]}}
 `

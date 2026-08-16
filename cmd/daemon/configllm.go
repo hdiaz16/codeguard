@@ -222,6 +222,44 @@ llm:
 	return os.WriteFile(ruta, []byte(contenido), 0o644)
 }
 
+// Puntos de sustitución para las pruebas. Las ramas de error que quedan aquí
+// —la bóveda acepta la escritura y al releerla devuelve otra cosa, o el
+// registro se niega a soltar la copia vieja— no se pueden provocar contra el
+// Administrador de credenciales ni contra el registro reales, y son justo las
+// que dejan un secreto a medio mover si están mal escritas.
+//
+// El de la escritura está por una razón añadida: sin él, comprobar que la
+// RELECTURA falla obligaba a escribir antes una credencial de verdad en el
+// Administrador de credenciales del usuario, que se queda ahí si la prueba
+// muere antes de su limpieza.
+var (
+	guardarEnBoveda   = secreto.Guardar
+	leerDeBoveda      = secreto.Leer
+	borrarDelRegistro = borrarVariableUsuario
+)
+
+// retirarCopiasDelEntorno quita las copias sueltas de la clave una vez que la
+// bóveda ya la tiene: la de HKCU\Environment y la de ESTE proceso.
+//
+// Existe porque los dos caminos que guardan en la bóveda —la pantalla de
+// configuración y la migración del arranque— tienen que hacer exactamente lo
+// mismo, y tenerlo escrito por separado fue el fallo: la pantalla limpiaba el
+// registro y la migración también, pero ninguna de las dos desenganchaba el
+// proceso, y el daemon se quedaba con la clave en os.Environ() para heredarla a
+// trivy, tsc y git.
+//
+// El desenganche del proceso se hace AUNQUE el borrado del registro falle, y no
+// al revés: la clave ya está a salvo en la bóveda, así que la copia del proceso
+// sólo puede hacer daño. Que eso no reabra el problema —proceso limpio pero
+// registro sucio, o sea variable "ausente" y por tanto incorporable en el
+// siguiente refresco— depende de la barrera de proc.incorporar, que nunca
+// importa lo que la bóveda gestiona.
+func retirarCopiasDelEntorno(nombre string) error {
+	err := borrarDelRegistro(nombre)
+	_ = os.Unsetenv(nombre)
+	return err
+}
+
 // guardarClave deja la clave en el Administrador de credenciales del usuario y
 // se asegura de que NO quede una copia suelta en el entorno.
 //
@@ -236,15 +274,32 @@ llm:
 // ahora nadie mira ahí. Por eso se borra aunque acabe de escribirse en la
 // bóveda, y por eso borrar la variable no aborta la operación si falla — la
 // clave ya está guardada, y dejarla a medias sería peor.
+//
+// Aquí había además un os.Setenv, resto del diseño anterior, que era la misma
+// fuga por la puerta de al lado: el daemon lanza hijos sin entorno acotado y un
+// exec.Command sin cmd.Env hereda os.Environ() entero, así que la clave volvía
+// a viajar a herramientas de terceros. Era encima innecesario, porque
+// llm.ClaveDe consulta la bóveda en CADA uso y no al arrancar: la clave recién
+// guardada ya se ve en la siguiente petición. De quitar las copias sueltas —la
+// del registro y la del proceso— se encarga retirarCopiasDelEntorno.
+//
+// Sin esa copia en el entorno, una escritura que se pierda en silencio dejaría
+// la pantalla diciendo "guardada" y la capa LLM apagada. Por eso se relee lo
+// escrito y se falla en voz alta si no coincide.
 func guardarClave(nombre, valor string) error {
-	if err := secreto.Guardar(nombre, valor); err != nil {
+	if err := guardarEnBoveda(nombre, valor); err != nil {
 		return fmt.Errorf("no se pudo guardar la clave en el Administrador de credenciales: %w", err)
 	}
-	if err := borrarVariableUsuario(nombre); err != nil {
+	guardada, err := leerDeBoveda(nombre)
+	if err != nil {
+		return fmt.Errorf("la clave se escribió en el Administrador de credenciales pero no se pudo releer: %w", err)
+	}
+	if guardada != valor {
+		return fmt.Errorf("el Administrador de credenciales devolvió una clave distinta de la guardada para %s", nombre)
+	}
+	if err := retirarCopiasDelEntorno(nombre); err != nil {
 		log.Printf("aviso: la clave quedó guardada, pero no se pudo borrar la copia vieja de %s en el entorno: %v", nombre, err)
 	}
-	// Que este proceso la vea sin releer la bóveda a mitad de la petición.
-	os.Setenv(nombre, valor)
 	return nil
 }
 
@@ -270,20 +325,35 @@ func borrarVariableUsuario(nombre string) error {
 // Anthropic tiene DOS claves en el registro, y la que dejó de usar es
 // justamente la que nadie va a volver a tocar.
 func migrarClaveSiHaceFalta() {
+	for _, v := range clavesAMigrar() {
+		MigrarClaveDelEntorno(v)
+	}
+}
+
+// clavesAMigrar dice QUÉ variables hay que revisar, sin repetir ninguna.
+//
+// Va separada de la migración en sí para poder probar esta parte —que es donde
+// se decide el alcance— sin tocar ninguna credencial real: una prueba de
+// migrarClaveSiHaceFalta de extremo a extremo tendría que borrar y restaurar la
+// clave de verdad del usuario, y basta con que la maten a media ejecución para
+// dejarlo sin ella.
+func clavesAMigrar() []string {
+	var nombres []string
 	vistas := map[string]bool{}
-	migrar := func(v string) {
+	agregar := func(v string) {
 		if v == "" || vistas[v] {
 			return
 		}
 		vistas[v] = true
-		MigrarClaveDelEntorno(v)
+		nombres = append(nombres, v)
 	}
 	if cfg, err := config.Load("."); err == nil && cfg != nil {
-		migrar(cfg.LLM.APIKeyEnv)
+		agregar(cfg.LLM.APIKeyEnv)
 	}
 	for _, p := range llm.Proveedores {
-		migrar(p.VarEntorno)
+		agregar(p.VarEntorno)
 	}
+	return nombres
 }
 
 // MigrarClaveDelEntorno mueve a la bóveda una clave que quedó en el registro de
@@ -318,14 +388,19 @@ func MigrarClaveDelEntorno(nombreVar string) {
 	// guardada desde la pantalla después de que el registro quedara obsoleto.
 	// Pisarla con la del registro devolvería una clave caducada y un 401
 	// imposible de explicar. Pero la copia vieja se borra igual.
-	if _, err := secreto.Leer(nombreVar); err != nil {
-		if err := secreto.Guardar(nombreVar, valor); err != nil {
+	if _, err := leerDeBoveda(nombreVar); err != nil {
+		if err := guardarEnBoveda(nombreVar, valor); err != nil {
 			log.Printf("no se pudo migrar %s al Administrador de credenciales: %v", nombreVar, err)
 			return
 		}
 	}
-	if err := borrarVariableUsuario(nombreVar); err != nil {
-		log.Printf("%s está en la bóveda pero no se pudo borrar del entorno: %v", nombreVar, err)
+	// Con la clave ya a salvo, fuera las dos copias sueltas. La del PROCESO
+	// importa tanto como la del registro y se olvidaba: RefrescarVariables corre
+	// unas líneas antes que esta migración en el arranque del daemon
+	// (main.go:216 y main.go:228), así que para cuando se llega aquí la clave ya
+	// está dentro de os.Environ() y de ahí la heredan trivy, tsc y git.
+	if err := retirarCopiasDelEntorno(nombreVar); err != nil {
+		log.Printf("%s está en la bóveda pero no se pudo borrar del entorno del usuario: %v", nombreVar, err)
 		return
 	}
 	log.Printf("%s se movió del entorno del usuario al Administrador de credenciales", nombreVar)

@@ -55,11 +55,82 @@ func CanonicalRepoID(remoteURL string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+// RepoIDDe es el ÚNICO sitio donde se decide bajo qué identificador vive un
+// repositorio en la base.
+//
+// Con remote manda el remote, y eso es lo que hace que dos clones del mismo
+// repositorio —en dos máquinas o en dos carpetas— compartan historial. Sin
+// remote se cae a la carpeta, porque un repositorio local sigue siendo un
+// repositorio y sus hallazgos tienen que ir a algún cajón estable.
+//
+// Existe porque este cálculo estaba repetido en CINCO sitios y sólo DOS tenían
+// el respaldo. Los otros tres —`codeguard stats`, el caché por archivo y el
+// RepoID que el gancho manda al daemon— llamaban a CanonicalRepoID("") y se
+// quedaban con la cadena vacía: guardaban bajo un identificador y leían bajo
+// otro. Medido en un repo recién creado sin `origin`: 21 hallazgos en la base y
+// `codeguard stats` respondiendo "sin hallazgos registrados todavía".
+//
+// Un repositorio sin remote es justo el de quien acaba de crear algo para
+// probar el producto, así que el fallo caía entero sobre la primera impresión.
+//
+// La ruta se normaliza a barras normales antes de tomar la última parte: el
+// daemon las entrega ya normalizadas y la CLI no, y sin esto el panel y la
+// terminal hablarían de repositorios distintos.
+func RepoIDDe(repoRoot, remote string) string {
+	if strings.TrimSpace(remote) != "" {
+		return CanonicalRepoID(remote)
+	}
+	limpia := strings.TrimRight(strings.ReplaceAll(repoRoot, `\`, "/"), "/")
+	nombre := limpia
+	if i := strings.LastIndex(limpia, "/"); i >= 0 {
+		nombre = limpia[i+1:]
+	}
+	return CanonicalRepoID("local/" + nombre)
+}
+
+// busyTimeoutMS es cuánto espera una conexión a que OTRO PROCESO suelte la
+// base antes de rendirse: hook, ci y daemon comparten el mismo archivo (ver
+// DefaultPath) y el arbitraje entre procesos sólo puede ser esperar y
+// reintentar.
+const busyTimeoutMS = 5000
+
+func Open(path string) (*Store, error) { return abrir(path, busyTimeoutMS) }
+
+// abrir concentra la política de conexión en un solo sitio. El busy_timeout va
+// como parámetro porque es una política —cuánto se aguanta a otro proceso—, no
+// una constante del esquema: bajarlo deja al descubierto la contención DENTRO
+// del proceso, que es exactamente lo que el pool de abajo tiene que eliminar.
+func abrir(path string, busyMS int) (*Store, error) {
+	db, err := sql.Open("sqlite", fmt.Sprintf(
+		"%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)", path, busyMS))
 	if err != nil {
 		return nil, err
 	}
+	// UNA conexión, a propósito, y no es una cifra conservadora que se pueda
+	// subir: SQLite es un motor embebido que admite UN escritor a la vez. El
+	// default de database/sql (conexiones ilimitadas) está pensado para motores
+	// cliente-servidor con varios escritores; sobre este archivo lo único que
+	// produce es que el proceso se pelee consigo mismo y devuelva SQLITE_BUSY
+	// justo cuando más trabajo hay. Con una sola conexión, la cola la hace
+	// database/sql —que sabe esperar sin reintentar a ciegas— y el
+	// SQLITE_BUSY de dentro del proceso desaparece; el busy_timeout queda para
+	// lo único que puede arbitrar: hook vs daemon vs ci, que son procesos
+	// distintos.
+	//
+	// Y no se paga nada por ello, contra lo que dice la intuición: BenchmarkLecturas,
+	// tres repeticiones de cada configuración en la misma máquina, da 2.15-2.29 ms/op
+	// con una conexión frente a 3.19-22.08 sin límite. Una sola conexión es entre un
+	// 35% y un 50% MÁS RÁPIDA en lectura, y muchísimo más estable — la cola de
+	// database/sql sale más barata que la contención por el archivo. Si algún día
+	// molestara de verdad, la salida NO es subir este número: es un segundo pool de
+	// sólo lectura.
+	//
+	// ConnMaxLifetime(0) = la conexión no caduca. Reciclarla no compra nada
+	// aquí (no hay servidor al otro lado que cierre sesiones) y cada
+	// reconexión volvería a aplicar los PRAGMA.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
 		db.Close()
@@ -460,11 +531,31 @@ func (s *Store) DemotedRules(repoID string, minVotes int, maxFPRate float64) (ma
 
 // DefaultPath es la BD local por usuario, compartida por hook, ci y daemon.
 func DefaultPath() string {
-	base := os.Getenv("LOCALAPPDATA")
-	if base == "" {
-		base = os.TempDir()
+	// Lo que se impone es que la ruta sea ABSOLUTA, no que la variable no esté
+	// vacía. No es lo mismo: con LOCALAPPDATA en blanco o con un valor relativo
+	// puesto a mano, filepath.Join devolvía algo como `.\   \codeguard\codeguard.db`,
+	// relativo al directorio de trabajo — que durante un commit es el repo que se
+	// está analizando. La base de datos acababa DENTRO del repo del usuario, donde
+	// además puede terminar commiteada.
+	//
+	// Y había una segunda consecuencia, más difícil de diagnosticar: cmd/codeguard
+	// resuelve la MISMA base por su cuenta (dirDatos) y ésa sí exigía ruta
+	// absoluta, así que en ese estado las dos puertas apuntaban a archivos
+	// DISTINTOS y el usuario veía un historial u otro según por qué comando
+	// entrara.
+	//
+	// Es la misma clase que H007, N001 y N003, con la misma lección: la guarda va
+	// donde se resuelve la ruta. Aquí faltaba generalizarla a esta segunda puerta.
+	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard")
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(os.TempDir(), "codeguard")
 	}
-	dir := filepath.Join(base, "codeguard")
+	if !filepath.IsAbs(dir) {
+		// Sin ningún sitio absoluto donde escribir, se devuelve vacío y Open
+		// falla en voz alta. Es preferible a inventar una ruta: una base de
+		// datos en el sitio equivocado no se nota hasta que faltan los datos.
+		return ""
+	}
 	_ = os.MkdirAll(dir, 0o755) // best-effort: Open dará el error real si no se puede escribir
 	return filepath.Join(dir, "codeguard.db")
 }

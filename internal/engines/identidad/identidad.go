@@ -78,6 +78,18 @@ const (
 	Desconocido Estado = "desconocido"  // no coincide con ninguna que conozcamos
 	Ausente     Estado = "ausente"      // no está instalado
 	NoEvaluable Estado = "no-evaluable" // no se pudo leer el archivo
+	// NoArranca: es el artefacto que publicó su autor, pero esta máquina no
+	// puede ejecutarlo. Son dos preguntas distintas y hasta ahora sólo se hacía
+	// la primera: google-java-format 1.36.1 está compilado para Java 21 y con un
+	// JDK 17 muere al arrancar, mientras este comando lo listaba como
+	// "coincide con el binario publicado" — cierto, y engañoso, porque el
+	// formateo de Java quedaba degradado de forma permanente.
+	//
+	// Se distingue de Desconocido a propósito: un JDK viejo NO es un binario
+	// alterado, y el código de salida de este comando es una compuerta de cadena
+	// de suministro en el CI. Confundirlos convertiría "actualiza tu JDK" en
+	// "alguien te cambió un motor".
+	NoArranca Estado = "no-arranca"
 )
 
 type Resultado struct {
@@ -104,6 +116,30 @@ func Verificar(dirMotores string) []Resultado {
 
 	out := make([]Resultado, 0, len(nombres))
 	for _, n := range nombres {
+		// Sin directorio no se verifica NADA, y hay que decirlo aquí y no en
+		// cada llamador. filepath.Join("", rel) no da una ruta vacía: deja la
+		// ruta RELATIVA, y se resuelve contra el directorio de trabajo — que
+		// durante un commit es el repo que se está analizando. Así que con
+		// %LOCALAPPDATA% sin resolver, esta función leía los binarios del repo
+		// y firmaba que la instalación coincide con la publicada: la compuerta
+		// de identidad dando por buena justo lo que existe para comprobar.
+		//
+		// El invariante es de esta función, no de quien la llama: cuando se
+		// encontró, `codeguard engines` ya estaba guardado y `codeguard repair`
+		// no. Guardar el segundo llamador habría dejado el agujero abierto para
+		// el tercero.
+		//
+		// NoEvaluable y no Ausente a propósito: "no está instalado" es una
+		// afirmación sobre la instalación, y aquí no sabemos nada de ella.
+		if dirMotores == "" {
+			out = append(out, Resultado{
+				Motor:   n,
+				Estado:  NoEvaluable,
+				Critico: cargado.Motores[n].Critico,
+				Detalle: "no se pudo resolver el directorio de motores: sin él no se verifica nada",
+			})
+			continue
+		}
 		out = append(out, verificarMotor(dirMotores, n, cargado.Motores[n]))
 	}
 	return out
@@ -164,6 +200,13 @@ func verificarMotor(dirMotores, nombre string, m Motor) Resultado {
 			}
 			if strings.EqualFold(c.SHA256Exe, suma) {
 				r.Estado, r.Version = Verificado, c.Version
+				// El hash dice "es el artefacto publicado"; no dice "esta
+				// máquina puede ejecutarlo". Lo segundo sólo se sabe
+				// intentándolo, y sólo hace falta preguntarlo de lo que corre
+				// sobre la JVM: un .exe no tiene el problema de versión de clase.
+				if motivo := noArranca(ruta); motivo != "" {
+					r.Estado, r.Detalle = NoArranca, motivo
+				}
 				return r
 			}
 		}

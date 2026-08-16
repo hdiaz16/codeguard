@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,12 +12,17 @@ import (
 
 	"codeguard/internal/engines/identidad"
 	"codeguard/internal/engines/proc"
+	"codeguard/internal/instalacion"
 )
 
 // DirMotores es donde el instalador deja los binarios descargables.
-func DirMotores() string {
-	return filepath.Join(os.Getenv("LOCALAPPDATA"), "CodeGuard", "engines")
-}
+//
+// La resuelve internal/instalacion, que es la única copia: esta función y la
+// homónima de internal/engines/linters eran la misma ruta escrita dos veces
+// —internal/ no puede importar cmd/— y las dos compartían un agujero de
+// ejecución de código. Devuelve "" si no hay directorio resoluble, y eso
+// significa "no hay motores", nunca "busca en el directorio actual".
+func DirMotores() string { return instalacion.DirMotores() }
 
 func enginesCmd() *cobra.Command {
 	var auditar bool
@@ -31,6 +35,13 @@ func enginesCmd() *cobra.Command {
 			"pip contra PyPI con sus propias firmas, no los distribuimos nosotros.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := DirMotores()
+			// Sin directorio resoluble no se verifica NADA: mirar el directorio
+			// actual daría por "motor instalado" cualquier .exe que trajera el
+			// repo en el que estás parado, que es lo contrario de lo que hace
+			// este comando.
+			if dir == "" {
+				return fmt.Errorf("no se pudo resolver %%LOCALAPPDATA%%: sin esa variable no hay directorio de motores que verificar")
+			}
 			if auditar {
 				return auditarMotores(dir)
 			}
@@ -46,6 +57,15 @@ func enginesCmd() *cobra.Command {
 				switch r.Estado {
 				case identidad.Verificado:
 					fmt.Printf("  ✓ %-20s v%s — coincide con el binario publicado\n", etiqueta, r.Version)
+				case identidad.NoArranca:
+					// Ni ✓ ni ✗: es el binario publicado (el hash cuadra) pero no
+					// corre aquí. Y NO suma a `problemas`, porque el código de
+					// salida de este comando es una compuerta de cadena de
+					// suministro en el CI: un JDK viejo no es un binario alterado,
+					// y confundirlos convierte "actualiza tu JDK" en "alguien te
+					// cambió un motor".
+					fmt.Printf("  ! %-20s v%s — es el binario publicado, pero NO ARRANCA aquí\n", etiqueta, r.Version)
+					fmt.Printf("      %s\n", r.Detalle)
 				case identidad.Ausente:
 					fmt.Printf("  · %-20s no instalado\n", etiqueta)
 				default:

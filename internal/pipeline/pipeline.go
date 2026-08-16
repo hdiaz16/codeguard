@@ -16,6 +16,7 @@ import (
 	"github.com/gobwas/glob"
 	"golang.org/x/sync/errgroup"
 
+	"codeguard/internal/capas"
 	"codeguard/internal/config"
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/gitleaks"
@@ -32,6 +33,41 @@ const (
 	Skipped Verdict = "skipped"
 )
 
+// Los motivos por los que la etapa 0 se salta el análisis. Son constantes
+// porque el texto es un CONTRATO: viaja por el pipe hasta el hook, que lo usa
+// para decidir el tono del mensaje —una decisión de configuración del equipo no
+// se anuncia igual que una avería—. Con el literal repetido a los dos lados,
+// cualquier retoque de redacción cambiaba el tono en silencio.
+//
+// Se comparan por valor y no por un campo aparte a propósito: el texto ya
+// cruza, y un daemon de otra versión manda exactamente la misma cadena.
+const (
+	MotivoNoEnrolado   = "repo no enrolado (falta .codeguard/config.yaml)"
+	MotivoSinDiff      = "sin diff que analizar"
+	MotivoMergeORevert = "merge o revert"
+	MotivoTodoExcluido = "todos los archivos tocados están excluidos"
+)
+
+// EsDecisionDelEquipo distingue el análisis que no corrió porque el equipo
+// configuró que no corriera, del que no corrió porque algo está roto.
+//
+// Los separa el remedio: en el primero no hay ninguno —commitear sólo rutas
+// excluidas, o un merge, es el funcionamiento normal— y en el segundo hay algo
+// que arreglar. De esa distinción cuelgan dos decisiones de producto que tienen
+// que coincidir, porque describen el MISMO commit: el tono del mensaje del hook
+// y el color del orbe. Un commit anunciado en neutro en la terminal y en
+// naranja de avería en el orbe es peor que cualquiera de los dos solo.
+//
+// Vive aquí, junto a las constantes y no en cada consumidor, para que añadir un
+// motivo nuevo sea un sitio y no tres. Ya iba camino de ser tres.
+func EsDecisionDelEquipo(motivo string) bool {
+	switch motivo {
+	case MotivoTodoExcluido, MotivoMergeORevert:
+		return true
+	}
+	return false
+}
+
 type Result struct {
 	Verdict          Verdict           `json:"verdict"`
 	Reason           string            `json:"reason,omitempty"`
@@ -41,6 +77,10 @@ type Result struct {
 	Degraded         []string          `json:"degraded"`
 	Findings         []finding.Finding `json:"findings"`
 	ElapsedMs        int64             `json:"elapsed_ms"`
+	// Capas dice, motor por motor, si miró y con qué resultado. Degraded sólo
+	// nombra a los que FALLARON; sin esto, "corrió y no encontró nada" y "no
+	// corrió" llegan a la UI idénticos. Ver internal/capas.
+	Capas []capas.Capa `json:"capas"`
 }
 
 type Options struct {
@@ -58,6 +98,12 @@ type Options struct {
 	// DemotedRules: "engine/rule_key" degradadas de bloqueante a aviso por el
 	// feedback del equipo (auto-calibración). Los secretos nunca se degradan.
 	DemotedRules map[string]bool
+	// Progreso, si no es nil, recibe cada paso de la etapa 2 MIENTRAS ocurre:
+	// cuántas capas van a mirar y cada una que termina, con su estado.
+	//
+	// Lo rellena el daemon, que tiene una UI donde enseñarlo. El hook lo deja en
+	// nil y no paga nada — el contrato y el porqué del diseño, en progreso.go.
+	Progreso func(Avance)
 }
 
 // Run ejecuta el embudo determinista y devuelve el resultado consolidado.
@@ -68,16 +114,56 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 
 	// ── Etapa 0: elegibilidad ────────────────────────────────────────────
 	if opt.Config == nil {
-		res.Verdict, res.Reason = Skipped, "repo no enrolado (falta .codeguard/config.yaml)"
+		res.Verdict, res.Reason = Skipped, MotivoNoEnrolado
+		return res, nil
+	}
+	// Sin diff no hay nada que mirar, y eso es un análisis que se salta, no un
+	// pánico. La comprobación va junto a la de Config porque el contrato de
+	// Options era asimétrico: toleraba un Config ausente con un veredicto
+	// controlado y daba por hecho el diff, aunque el tipo permite que falte.
+	// El estado inválido seguía siendo representable y esta es la etapa donde
+	// se decide la elegibilidad; dejarlo a la suerte de que los cinco
+	// llamadores de hoy nunca manden nil es un invariante que nadie impone.
+	if opt.Diff == nil {
+		res.Verdict, res.Reason = Skipped, MotivoSinDiff
 		return res, nil
 	}
 	if opt.IsMerge || opt.IsRevert {
-		res.Verdict, res.Reason = Skipped, "merge o revert"
+		res.Verdict, res.Reason = Skipped, MotivoMergeORevert
 		return res, nil
 	}
 	files := filterExcluded(opt.Config, opt.Diff.Files)
-	if len(files) == 0 {
-		res.Verdict, res.Reason = Skipped, "todos los archivos tocados están excluidos"
+	// Sin archivos que pasarles, la etapa 2 no tiene trabajo. La etapa 1 SÍ, y
+	// ahí estaba N005: esta lista es el diff de ÁRBOLES entre base y head
+	// filtrado por paths.exclude, y la compuerta de secretos no la lee nunca —
+	// escanea el HISTORIAL del rango con --log-opts, o el índice entero con
+	// --staged. Dos conjuntos distintos, y el pequeño decidía por el grande.
+	//
+	// Lo que dejaba pasar, medido contra gitleaks 8.30.0:
+	//
+	//	c1 → c2 añade creds.go con un PAT → c3 lo borra
+	//	git diff c1..c3            → vacío (los árboles coinciden)
+	//	gitleaks --log-opts c1..c3 → leaks found: 1
+	//	codeguard ci               → "análisis omitido", EXIT 0
+	//
+	// Y no hace falta un atacante: es el flujo de quien commitea una credencial,
+	// se da cuenta y la quita en el commit siguiente creyendo que ya está. El
+	// secreto se queda en el historial, que es contra lo que existe un escáner
+	// por historial.
+	//
+	// El otro camino era el mismo agujero con otra llave: el secreto en una ruta
+	// que paths.exclude tapa. Esa lista sirve para no pasarle vendor/ ni los .log
+	// al analizador de estilo; la compuerta de secretos ya la ignora cuando corre
+	// —el motor no mira in.Files—, así que el sistema era incoherente consigo
+	// mismo: el MISMO secreto en el MISMO bin/config.txt bloqueaba si venía
+	// acompañado de un archivo no excluido y pasaba si venía solo.
+	//
+	// Con Secrets nil la compuerta ya corrió fuera (el hook, fase 1) y esta
+	// salida sigue siendo la de siempre: allí el conjunto del diff SÍ es el que
+	// mira la compuerta, y ese camino corre en cada commit.
+	sinArchivosQueAnalizar := len(files) == 0
+	if sinArchivosQueAnalizar && opt.Secrets == nil {
+		res.Verdict, res.Reason = Skipped, MotivoTodoExcluido
 		return res, nil
 	}
 	degradeToSecretsOnly := opt.Diff.Lines > opt.Config.MaxDiffLines
@@ -111,28 +197,77 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 	}
 
 	// ── Etapa 2: compuertas deterministas en paralelo ────────────────────
-	if degradeToSecretsOnly {
+	//
+	// El estado por motor se lleva FUERA del switch porque las tres ramas
+	// dejan capas sin correr y las tres tienen que poder decirlo: el panel
+	// enumera esta lista para afirmar "esto te vigila", y una capa que no
+	// aparezca en ella es una capa que el dev cree que no existe.
+	aplica := make([]bool, len(opt.Engines))
+	duracion := make([]int64, len(opt.Engines))
+	failures := make([]error, len(opt.Engines))
+	hallazgos := make([]int, len(opt.Engines))
+	// motivoSinCorrer: por qué NINGÚN motor corrió, cuando es el caso.
+	motivoSinCorrer := ""
+
+	// Quién va a mirar se decide ANTES de lanzar a nadie, porque el denominador
+	// del progreso ("3 de 9") tiene que existir desde el primer instante. Se
+	// calcula sólo en el camino donde los motores de verdad corren: en los otros
+	// dos, `aplica` tiene que quedarse en falso entero o la clasificación final
+	// llamaría "corrio" a capas que nadie ejecutó.
+	corren := 0
+	if !sinArchivosQueAnalizar && !degradeToSecretsOnly {
+		for i, eng := range opt.Engines {
+			if aplica[i] = eng.Applies(in); aplica[i] {
+				corren++
+			}
+		}
+	}
+	// El aviso de apertura sale también con cero: "ninguna capa aplica a este
+	// cambio" es información, y callarla dejaría al orbe contando hacia un total
+	// que nunca llega.
+	avisos := &avisador{fn: opt.Progreso}
+	avisos.abrir(corren)
+
+	switch {
+	case sinArchivosQueAnalizar:
+		// Nada que degradar: no es que las deterministas se saltaran su trabajo,
+		// es que no había ninguno. Marcarlo como degradación pintaría de naranja
+		// cada run de un repo que excluya vendor/** y arruinaría la señal justo
+		// donde importa —"degradado" tiene que significar que algo NO se miró
+		// pudiendo mirarse—. El veredicto queda en el que dejó la etapa 1, que es
+		// la única que sí tenía qué mirar.
+		motivoSinCorrer = "no había archivos que analizar en este cambio"
+	case degradeToSecretsOnly:
 		res.Degraded = append(res.Degraded, "deterministic:diff_too_large")
-	} else {
+		motivoSinCorrer = "el diff es demasiado grande: sólo se revisaron secretos"
+	default:
 		g, gctx := errgroup.WithContext(ctx)
 		results := make([][]finding.Finding, len(opt.Engines))
-		failures := make([]error, len(opt.Engines))
 		for i, eng := range opt.Engines {
-			if !eng.Applies(in) {
+			if !aplica[i] {
 				continue
 			}
 			g.Go(func() error {
 				t0 := time.Now()
 				fs, err := eng.Run(gctx, in)
+				duracion[i] = time.Since(t0).Milliseconds()
 				// El desglose por motor es la única forma de saber quién se
 				// come el presupuesto: el total ya lo dice ElapsedMs, pero un
 				// total gordo sin desglose obliga a adivinar.
-				log.Printf("%s: %d hallazgo(s) en %dms", eng.Name(), len(fs), time.Since(t0).Milliseconds())
+				log.Printf("%s: %d hallazgo(s) en %dms", eng.Name(), len(fs), duracion[i])
 				if err != nil {
 					failures[i] = err // no bloquea: se degrada (sección 14)
-					return nil
+				} else {
+					hallazgos[i] = len(fs)
+					results[i] = fs
 				}
-				results[i] = fs
+				// El aviso sale DENTRO de la goroutine, no en un repaso al final:
+				// un progreso que se publica cuando ya terminó todo no es
+				// progreso. Y sale de capaDe, la misma función que construye la
+				// lista definitiva unas líneas más abajo, para que el orbe no
+				// pueda decir en vivo algo que el panel desmienta al terminar.
+				avisos.capa(capaDe(eng.Name(), opt.Config.Rulepack,
+					true, failures[i], hallazgos[i], duracion[i], ""))
 				return nil
 			})
 		}
@@ -171,6 +306,30 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 				res.Degraded = append(res.Degraded, opt.Engines[i].Name()+":error")
 			}
 		}
+
+		// Un motor que "no aplica" se salta en silencio, y casi siempre está
+		// bien: sin archivos Go no hay nada que formatear. Pero squawk no
+		// aplica por dos motivos que se ven idénticos desde fuera —no hay
+		// migraciones en el commit, o las hay y `paths.migrations` no las
+		// cubre— y el segundo es un agujero en la compuerta que se anuncia
+		// exactamente igual que la normalidad: no diciendo nada.
+		//
+		// Va aquí y no en `init` porque `init` sólo arregla los repos que
+		// nazcan de ahora en adelante. Los ya enrolados —y los que añadan una
+		// carpeta de migraciones después— sólo se enteran si el análisis lo
+		// dice el día que ocurre.
+		if etiqueta := migracionSinVigilar(opt.Config, files); etiqueta != "" {
+			res.Degraded = append(res.Degraded, etiqueta)
+		}
+	}
+
+	// El estado de TODAS las capas, incluidas las que no corrieron. Lo consume
+	// la cabecera del panel ("qué motores te vigilan") y por eso se construye
+	// aquí y no en la UI: si cada superficie lo dedujera de Degraded, cada una
+	// llegaría a una conclusión distinta sobre lo mismo.
+	for i, eng := range opt.Engines {
+		res.Capas = append(res.Capas, capaDe(eng.Name(), opt.Config.Rulepack,
+			aplica[i], failures[i], hallazgos[i], duracion[i], motivoSinCorrer))
 	}
 
 	// ── Etapa 2b: reglas del playbook sobre el repo y el cambio ──────────
@@ -221,6 +380,43 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 		res.Verdict = Block
 	}
 	return res, nil
+}
+
+// capaDe clasifica UNA capa: qué le pasó al motor y cómo se le cuenta al dev.
+//
+// Es el ÚNICO sitio donde se decide, y tiene que serlo porque el mismo veredicto
+// se publica DOS VECES: en vivo, en cuanto el motor termina (para el orbe), y en
+// Result.Capas cuando terminan todos (para el panel y el historial). Con la
+// clasificación escrita a los dos lados, la primera versión que se escribiera
+// distinta pondría al orbe diciendo «gofmt revisó» de una capa que el panel
+// lista como caída medio segundo después — y el dev no tendría forma de saber
+// cuál de las dos superficies le está mintiendo.
+//
+// motivoSinCorrer sólo aplica al caso NoAplica y por eso el camino en vivo lo
+// manda vacío: ahí sólo se anuncian capas que SÍ arrancaron.
+func capaDe(motor, rulepack string, aplica bool, err error, hallazgos int, ms int64, motivoSinCorrer string) capas.Capa {
+	c := capas.Capa{Motor: motor, Hallazgos: hallazgos, Ms: ms}
+	switch {
+	case err != nil && isMissingBinary(err):
+		// Un motor no instalado es configuración, no avería: se dice
+		// distinto para que un trivy ausente no parezca un incidente.
+		c.Estado, c.Detalle = capas.Ausente, "no está instalado en esta máquina"
+	case err != nil:
+		c.Estado = capas.Degradada
+		switch {
+		case errors.Is(err, semgrep.ErrSinRulepack):
+			c.Detalle = "falta el rulepack " + rulepack + ": sin paridad con el CI"
+		case errors.Is(err, context.DeadlineExceeded):
+			c.Detalle = "no terminó dentro del plazo"
+		default:
+			c.Detalle = "falló al ejecutarse"
+		}
+	case aplica:
+		c.Estado = capas.Corrio
+	default:
+		c.Estado, c.Detalle = capas.NoAplica, motivoSinCorrer
+	}
+	return c
 }
 
 // isMissingBinary distingue "la herramienta no está instalada" de "corrió y

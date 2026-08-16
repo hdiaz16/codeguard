@@ -39,8 +39,21 @@ type Server struct {
 	// OnRequest se dispara al entrar una petición (estado working en la UI).
 	OnRequest func(req *ipc.Request)
 	// OnCommand atiende peticiones de la CLI hacia la UI (p.ej. abrir el grafo).
-	OnCommand func(cmd, repoRoot string)
-	OnResult  OnResult
+	//
+	// Recibe la petición ENTERA y no sólo la ruta: el bloqueo por secreto
+	// necesita además cuántos fueron, y pasarle a la UI un canal recortado
+	// obligaba a inventar un segundo camino para cada comando que llevara un
+	// dato más.
+	OnCommand func(cmd string, req *ipc.Request)
+	// OnProgreso se dispara con cada paso de la etapa 2 MIENTRAS corre, para
+	// que el orbe pueda enseñar el análisis avanzando en vez de quedarse mudo
+	// los cuatro o cinco segundos que dura.
+	//
+	// Corre en las goroutines de los motores, en el camino del commit: lo que se
+	// haga aquí NO puede bloquear (ver el contrato en pipeline/progreso.go). En
+	// nil —que es lo normal fuera del daemon con ventana— no cuesta nada.
+	OnProgreso func(req *ipc.Request, av pipeline.Avance)
+	OnResult   OnResult
 	// Shadow, si no es nil, corre las etapas 3-6 (LLM en sombra) DESPUÉS de
 	// responder al hook — nunca en el camino del commit.
 	Shadow *shadow.Runner
@@ -138,9 +151,28 @@ func short(s string) string {
 // repo de prueba: semgrep "corrió" en 0 ms con 0 hallazgos y la baseline se
 // escribió sin cobertura de reglas. La instalación estándar es el último
 // recurso porque siempre está donde está, sin importar quién arrancó el proceso.
+// El del repo va el ÚLTIMO, y esto es una decisión de seguridad, no de orden.
+//
+// Iba primero, y con eso el repo ANALIZADO decidía qué reglas se le aplicaban:
+// bastaba traer un `rulepacks/<la version que pinnea>/` con reglas de relleno
+// para que las de la casa no llegaran a mirar el código. Medido: el mismo
+// archivo con una inyección SQL de manual sale BLOQUEADO con el rulepack
+// instalado y "formato/lint/tipos/reglas/migraciones ✓  listo — commit
+// permitido" con el del repo. Sin carrera y sin atacante sofisticado: basta
+// clonar el repositorio.
+//
+// El vendoreado sigue existiendo porque resuelve un fallo real —un binario que
+// no es el instalado no tiene rulepacks al lado, y sin esto cada repo perdería
+// las 119 reglas EN SILENCIO—, pero como RESPALDO: se usa cuando la versión no
+// está instalada, que es el caso que lo justificó. Si están las dos, el mismo
+// número nombrando dos artefactos distintos es una colisión, y en una colisión
+// gana el de la organización: la versión es una promesa de paridad con el CI.
+//
+// Un equipo que de verdad necesite reglas propias las publica con SU número de
+// versión; lo que no puede es reutilizar el de la casa para otra cosa.
 func RulepackDir(repoRoot, version string) string {
 	local := filepath.Join(repoRoot, "rulepacks", version)
-	candidatos := []string{local}
+	var candidatos []string
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		candidatos = append(candidatos,
@@ -150,6 +182,7 @@ func RulepackDir(repoRoot, version string) string {
 	if base := os.Getenv("LOCALAPPDATA"); base != "" {
 		candidatos = append(candidatos, filepath.Join(base, "CodeGuard", "rulepacks", version))
 	}
+	candidatos = append(candidatos, local)
 	for _, c := range candidatos {
 		if _, err := os.Stat(c); err == nil {
 			return c
@@ -158,6 +191,17 @@ func RulepackDir(repoRoot, version string) string {
 	// Ninguno existe: se devuelve la ruta del repo para que el mensaje de error
 	// hable del sitio donde el dev PODRÍA vendorearlo.
 	return local
+}
+
+// RulepackEsDelRepo dice si las reglas que se van a aplicar salen del repo
+// analizado en vez de las instaladas.
+//
+// Existe para poder DECIRLO. El hook ya avisaba a gritos cuando el rulepack
+// falta ("las reglas de la casa NO se aplicaron"), y callaba cuando lo
+// sustituyen — que es peor, porque no deja rastro: el veredicto sale con su ✓ y
+// nadie sabe qué reglas corrieron.
+func RulepackEsDelRepo(repoRoot, version string) bool {
+	return RulepackDir(repoRoot, version) == filepath.Join(repoRoot, "rulepacks", version)
 }
 
 // RulepacksInstalados lista las versiones disponibles junto al binario y
@@ -247,7 +291,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	// Comandos que no son análisis (los manda la CLI para que la UI actúe).
 	if req.Command != "" {
 		if s.OnCommand != nil {
-			s.OnCommand(req.Command, req.RepoRoot)
+			s.OnCommand(req.Command, req)
 		}
 		_ = ipc.WriteResponse(conn, &ipc.Response{RunID: req.RunID, Verdict: "ok"}) // ack de comando; si el pipe se cerró, no hay nada que hacer
 		return
@@ -330,6 +374,15 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	cfg, err := config.Load(req.RepoRoot)
 	if err != nil || cfg == nil {
 		resp.Verdict = "skipped"
+		// El motivo viaja: un "no se analizó nada" sin explicación es de los que
+		// el dev aprende a ignorar. Se distinguen los dos casos porque el remedio
+		// no es el mismo — uno se arregla con `codeguard init` y el otro editando
+		// el YAML que está roto.
+		if err != nil {
+			resp.Reason = "no se pudo leer .codeguard/config.yaml: " + err.Error()
+		} else {
+			resp.Reason = "repo no enrolado (falta .codeguard/config.yaml)"
+		}
 		resp.Degraded = append(resp.Degraded, "config:unreadable")
 		return resp
 	}
@@ -355,6 +408,16 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		}
 	}
 	rulepack := RulepackDir(req.RepoRoot, cfg.Rulepack)
+	// Reglas del propio repo: se aplican (es el respaldo legítimo cuando la
+	// versión no está instalada), pero no se puede prometer paridad con el CI
+	// —nadie ha comprobado que ese directorio contenga las reglas que dice su
+	// número— y sobre todo se DICE, que era lo que faltaba.
+	if RulepackEsDelRepo(req.RepoRoot, cfg.Rulepack) {
+		resp.CIParity = false
+		resp.ParityReason = fmt.Sprintf("las reglas salieron del rulepack vendoreado en este repo "+
+			"(rulepacks/%s), no del instalado: son las que trae el repositorio", cfg.Rulepack)
+		log.Printf("rulepack del repo en %s: %s", filepath.Base(req.RepoRoot), rulepack)
+	}
 	if _, err := os.Stat(rulepack); err != nil {
 		resp.CIParity = false
 		// Este camino rompía la paridad EN SILENCIO: el dev leía "no puedo
@@ -391,6 +454,12 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		// reintenta con N-1 archivos idénticos, y esos ya no se re-analizan.
 		cache = CachePorArchivo(s.Shadow.Store, req.RepoID, "", filepath.Base(req.RepoRoot), cfg)
 	}
+	// El progreso se ata a ESTA petición: el consumidor necesita saber de qué
+	// análisis le hablan para no pintar el avance de un commit sobre otro.
+	var progreso func(pipeline.Avance)
+	if s.OnProgreso != nil {
+		progreso = func(av pipeline.Avance) { s.OnProgreso(req, av) }
+	}
 	res, err := pipeline.Run(ctx, pipeline.Options{
 		Config:       cfg,
 		Diff:         &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified, Lines: req.DiffLines},
@@ -400,16 +469,24 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		Timeout:      deadline,
 		Suppressions: baseline.Load(req.RepoRoot),
 		DemotedRules: demoted,
+		Progreso:     progreso,
 	})
 	if err != nil {
 		resp.Degraded = append(resp.Degraded, fmt.Sprintf("pipeline:%v", err))
 		return resp
 	}
 	resp.Verdict = string(res.Verdict)
+	// El motivo acompaña al veredicto. Sólo el pipeline sabe por qué se saltó el
+	// análisis, y hasta aquí ese dato moría en este proceso: el hook recibía un
+	// "skipped" mudo y no tenía con qué explicarlo. Va sin condición porque en
+	// los veredictos que no son skipped el pipeline lo deja vacío.
+	resp.Reason = res.Reason
 	resp.BlockingFindings = res.BlockingFindings
 	resp.AdvisoryFindings = res.AdvisoryFindings
 	resp.Suppressed = res.Suppressed
 	resp.Degraded = append(resp.Degraded, res.Degraded...)
+	// El estado por capa viaja para que el panel pueda decir qué miró cada motor.
+	resp.Capas = res.Capas
 	// El daemon asigna los IDs: el hook persiste con los mismos y el panel
 	// puede referenciarlos en el feedback (etapa 9).
 	for i := range res.Findings {

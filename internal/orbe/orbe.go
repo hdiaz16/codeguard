@@ -3,10 +3,12 @@ package orbe
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"math"
+	"sync"
 )
 
 // Los íconos son el mismo orbe del widget, dibujados en Go: sin assets
@@ -35,18 +37,58 @@ var paletas = map[string]paleta{
 	"offline":  {rgb(0x565b60), rgb(0x35393d), rgb(0x8a9298)},
 }
 
-var cache = map[string][]byte{}
+// El cache guarda los PNG ya codificados, que es lo caro: dibujar un orbe de
+// 256 px cuesta ~60 ms. Va con su propio candado porque PNG se llama desde
+// varias goroutines a la vez —los callbacks de IPC, los temporizadores y el
+// menú de la bandeja piden el ícono cada quien por su lado—, y la exclusión
+// mutua le toca al paquete que es dueño del estado, no a quien lo usa.
+var (
+	cacheMu sync.RWMutex
+	cache   = map[string][]byte{}
+)
+
+// clave identifica una entrada del cache. Se construye con Sprintf y no
+// concatenando string(rune(tamano)): esa conversión no distingue tamaños
+// —cualquiera que no sea un punto de código válido acaba en U+FFFD, así que
+// dos tamaños distintos compartían entrada— y de paso metía caracteres de
+// control en la clave.
+func clave(tamano int, estado string) string {
+	return fmt.Sprintf("%s:%d", estado, tamano)
+}
 
 // PNG devuelve el orbe del estado pedido, al tamaño pedido, ya codificado.
+// Es seguro llamarlo desde varias goroutines a la vez. El slice que devuelve
+// es el del cache y lo comparten todos los llamadores: hay que tratarlo como
+// de sólo lectura.
 func PNG(tamano int, estado string) []byte {
-	clave := estado + ":" + string(rune(tamano))
-	if b, ok := cache[clave]; ok {
+	k := clave(tamano, estado)
+
+	cacheMu.RLock()
+	b, ok := cache[k]
+	cacheMu.RUnlock()
+	if ok {
 		return b
 	}
+
+	// Dibujar y codificar quedan fuera del candado a propósito: son puros y
+	// caros, y hacerlos con el lock tomado dejaría esperando a todo el que
+	// pida cualquier otro ícono. El precio es que dos goroutines pueden
+	// dibujar la misma clave a la vez la primera vez; sale más barato que
+	// serializar.
 	var buf bytes.Buffer
 	_ = png.Encode(&buf, Dibujar(tamano, estado)) // a un bytes.Buffer no falla
-	cache[clave] = buf.Bytes()
-	return buf.Bytes()
+	nuevo := buf.Bytes()
+
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	// Doble comprobación: mientras dibujábamos, otra goroutine pudo haber
+	// llenado esta misma clave. Nos quedamos con la suya para que todos los
+	// llamadores compartan un único slice por clave.
+	if b, ok := cache[k]; ok {
+		return b
+	}
+	cache[k] = nuevo
+	return nuevo
 }
 
 // dibujarOrbe pinta una esfera con luz propia: un núcleo desplazado hacia la

@@ -246,8 +246,37 @@ func Load(repoRoot string) (*Config, error) {
 // RutaLLMLocal es donde vive la elección de modelo de ESTE desarrollador.
 // Fuera del repo a propósito: es suya, no del equipo, y no debe viajar en un
 // commit ni cambiar el hash de la configuración.
+//
+// Devuelve "" si no puede resolver una ruta ABSOLUTA, y entonces no hay
+// anulación personal. Ese "fuera del repo" del párrafo anterior no es una
+// aclaración: es la garantía de que quien elige el modelo es el desarrollador y
+// no el repositorio que acaba de clonar, y hay que imponerla aquí porque no la
+// impone nadie más.
+//
+// filepath.Join no falla cuando LOCALAPPDATA viene vacía: devuelve
+// `codeguard\llm-local.yaml`, que es RELATIVA al directorio de trabajo — y el
+// directorio de trabajo, durante un commit, es el repo que se está analizando.
+// Un repo ajeno con ese archivo dentro se configuraba a sí mismo el bloque llm:
+// bastaba con apuntar el endpoint a un servidor propio para llevarse los diffs
+// que se le mandan al modelo, sin que nada lo dijera, porque la anulación se
+// aplica DESPUÉS del hash de paridad y no produce diagnóstico.
+//
+// Y LOCALAPPDATA puede faltar en Windows por causas de todos los días: cuenta
+// de servicio, proceso lanzado con un bloque de entorno acotado — este mismo
+// repo filtra por lista blanca el entorno con el que corre los motores.
 func RutaLLMLocal() string {
-	return filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard", "llm-local.yaml")
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		return ""
+	}
+	ruta := filepath.Join(base, "codeguard", "llm-local.yaml")
+	// La comprobación no sobra aunque la variable tenga valor: LOCALAPPDATA
+	// puede traer algo que no sea una ruta absoluta (un valor puesto a mano, o
+	// en blanco). Lo que no puede salir de aquí es una ruta relativa.
+	if !filepath.IsAbs(ruta) {
+		return ""
+	}
+	return ruta
 }
 
 // aplicarLLMLocal sustituye el bloque llm por el del archivo local, si existe.
@@ -255,7 +284,15 @@ func RutaLLMLocal() string {
 // nunca es requisito, y dejar sin commitear a alguien por un YAML mal escrito
 // sería exactamente lo contrario de lo que hace este agente.
 func aplicarLLMLocal(cfg *Config) {
-	raw, err := os.ReadFile(RutaLLMLocal())
+	ruta := RutaLLMLocal()
+	if ruta == "" {
+		// Sin ruta personal resoluble no se lee NADA. Es explícito y no un
+		// descuido aprovechado: es verdad que os.ReadFile("") también fallaría,
+		// pero dejar que el arreglo dependa de eso es volver a confiar en un
+		// accidente, que es justo lo que puso aquí el agujero.
+		return
+	}
+	raw, err := os.ReadFile(ruta)
 	if err != nil {
 		return
 	}

@@ -928,8 +928,14 @@ func lineaBiome(linea int, span []int, fuente string) int {
 	if len(span) == 0 || fuente == "" {
 		return 1
 	}
+	// El span sale del JSON de biome sin pasar por ninguna validación, y se usa
+	// para rebanar. Se comprobaba sólo la cota superior, dando por supuesta la
+	// inferior porque biome "debería" mandar desplazamientos válidos: con un
+	// valor negativo, la rebanada panica y tumba el análisis ENTERO —los demás
+	// diagnósticos, los demás proyectos—, no sólo la línea de este hallazgo.
+	// Se comprueba el invariante completo.
 	desplazamiento := span[0]
-	if desplazamiento > len(fuente) {
+	if desplazamiento < 0 || desplazamiento > len(fuente) {
 		return 1
 	}
 	return 1 + strings.Count(fuente[:desplazamiento], "\n")

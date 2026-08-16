@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -66,7 +66,7 @@ func lastRunFile(repoRoot string) string {
 // Devuelve "" si git no puede darlo; quien llama trata eso como "no puedo
 // afirmar que sea el mismo contenido", que es la respuesta prudente.
 func arbolPreparado(repoRoot string) string {
-	out, err := exec.Command("git", "-C", repoRoot, "write-tree").Output()
+	out, err := gitCmd("-C", repoRoot, "write-tree").Output()
 	if err != nil {
 		return ""
 	}
@@ -123,8 +123,10 @@ func preCommitCmd() *cobra.Command {
 	}
 }
 
-// P4: el hook nunca falla por sí mismo — cualquier error interno sale 0,
-// salvo la compuerta de secretos (fail-closed).
+// P4: el hook nunca falla por sí mismo — cualquier error interno sale 0, salvo
+// lo que deje a la compuerta de secretos sin hacer su trabajo: que no pueda
+// correr, o que no se pueda saber QUÉ tiene que revisar. Las dos son
+// fail-closed, porque las dos acaban en un commit sin revisar.
 func runPreCommit() error {
 	defer func() {
 		if r := recover(); r != nil {
@@ -139,19 +141,62 @@ func runPreCommit() error {
 	}
 	cfg, err := config.Load(repoRoot)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "CodeGuard  config ilegible (se permite el commit):", err)
+		// Aplanado por lo mismo que el motivo del daemon, y es LITERALMENTE el
+		// mismo error: el de koanf al leer este archivo, que llega en tres
+		// líneas. Aquí sale antes incluso de que exista progress.
+		fmt.Fprintln(os.Stderr, "CodeGuard  config ilegible (se permite el commit):",
+			unaSolaLinea(err.Error()))
 		return nil
 	}
 	if cfg == nil {
 		return nil // repo no enrolado
 	}
+	// progress se declara antes de la primera compuerta: un fallo aquí ya tiene
+	// que poder hablar, y antes salía mudo.
+	progress := func(s string) { fmt.Fprintf(os.Stderr, "CodeGuard  %s\n", s) }
+
 	diff, err := gitdiff.Staged(repoRoot)
-	if err != nil || len(diff.Files) == 0 {
-		return nil
+	if err != nil {
+		// Fail-closed (§14), la misma política que ErrUnavailable unas líneas más
+		// abajo y por el mismo motivo: sin la lista de lo preparado, la compuerta
+		// de secretos —la única bloqueante— no tiene qué mirar. Es exactamente
+		// "la compuerta no pudo correr", sólo que un paso antes.
+		//
+		// Estaba junto a len(diff.Files) == 0 en el mismo `return nil`, y son
+		// cosas distintas: "no hay nada que revisar" (seguir) contra "no pude
+		// averiguar qué hay que revisar" (parar). Confundirlas convertía
+		// cualquier tropiezo de git en un "adelante" silencioso.
+		//
+		// Separarlas no bloquea a nadie de más, y esto está medido contra git
+		// 2.43: sin nada preparado, en un repo sin ningún commit todavía, con un
+		// merge a medio resolver y en `commit --amend`, `git diff --cached` sale
+		// con ÉXITO y lista vacía. Un error aquí es git roto de verdad: índice
+		// corrupto, binario ausente, permisos.
+		// La línea de reparación decía "si el índice quedó dañado, `git reset`
+		// suele recomponerlo", y era incorrecta justo en los dos escenarios que
+		// de verdad llegan hasta aquí: en ellos el índice está SANO y lo roto es
+		// el almacén de objetos. Con el índice corrupto git aborta él solo antes
+		// de invocar el hook, así que ese caso no se alcanza desde un commit; lo
+		// que sí se alcanza es un blob o un árbol ausente —gc interrumpido,
+		// antivirus en cuarentena, clon abortado, disco con errores—, donde
+		// `git reset` no recupera nada y manda al usuario a dar vueltas.
+		//
+		// Y se nombra --no-verify porque aquí el usuario se queda atascado: este
+		// archivo ya lo trata como señal de producto y no como castigo.
+		progress("BLOQUEADO: no pude leer lo que está preparado para commitear (fail-closed)")
+		progress("detalle: " + err.Error())
+		progress("suele ser el almacén de objetos, no el índice: `git fsck` lo diagnostica " +
+			"(un objeto ausente no lo repone un `git fetch` normal: hace falta " +
+			"`git fetch --refetch` o volver a clonar)")
+		progress("si necesitas commitear ya, `git commit --no-verify` salta la revisión — " +
+			"queda constancia de que este commit no se revisó")
+		os.Exit(1)
+	}
+	if len(diff.Files) == 0 {
+		return nil // nada preparado: no hay nada que revisar
 	}
 
 	start := time.Now()
-	progress := func(s string) { fmt.Fprintf(os.Stderr, "CodeGuard  %s\n", s) }
 
 	// ── Etapa 1: secretos, en este proceso, fail-closed ──
 	secretsEng := &glengine.Engine{Mode: "staged"}
@@ -167,9 +212,72 @@ func runPreCommit() error {
 	if len(secretFindings) > 0 {
 		progress(fmt.Sprintf("secretos ✗  BLOQUEADO: %d secreto(s) en el diff — NADA salió a la red", len(secretFindings)))
 		for _, f := range secretFindings {
-			progress(fmt.Sprintf("  %s:%d  %s", f.File, f.Line, f.Message))
+			// Igual que los de la etapa 2: gitleaks admite reglas propias del
+			// repo (.gitleaks.toml), así que este texto tampoco es siempre
+			// nuestro. Y esta lista es la del bloqueo por secretos, donde una
+			// línea falsa hace el máximo daño.
+			progress(fmt.Sprintf("  %s:%d  %s", f.File, f.Line, mensajeDeHallazgo(f.Message)))
 		}
 		progress("rota la credencial PRIMERO; borrarla del historial no la invalida")
+		// Haber frenado una credencial es el evento que justifica el producto, y
+		// era el ÚNICO que no quedaba anotado en ninguna parte: esta rama salía
+		// por os.Exit sin tocar la base, así que después de bloquear una clave de
+		// AWS `codeguard stats` seguía diciendo "sin hallazgos registrados
+		// todavía". Los commits limpios sí se registraban, o sea que la
+		// telemetría contaba los días buenos y se callaba los que importan; y si
+		// el dev no estaba mirando la terminal, el bloqueo no existió para nadie.
+		//
+		// El run id se genera aquí y NO se guarda con guardarRunID: ese archivo
+		// existe para el trailer del commit, y este commit no va a existir.
+		// Dejarlo escrito es justo lo que el bloqueo de la etapa 2 se cuida de
+		// borrar unas líneas más abajo, para que un --no-verify posterior no
+		// herede un trailer que diga "revisado".
+		res := &pipeline.Result{
+			Verdict:          pipeline.Block,
+			BlockingFindings: len(secretFindings),
+			Degraded:         []string{},
+			Findings:         secretFindings,
+			ElapsedMs:        time.Since(start).Milliseconds(),
+		}
+		if err := persistRun(repoRoot, cfg, res, len(diff.Files), false, store.NewULID()); err != nil {
+			// Telemetría, no compuerta: el veredicto ya está tomado y no cambia
+			// porque la base falle. Se avisa y se bloquea igual.
+			fmt.Fprintln(os.Stderr, "CodeGuard  aviso: no se pudo registrar el bloqueo:", err)
+		}
+		// Y que la INTERFAZ se entere, que era el otro agujero del mismo sitio.
+		//
+		// Esta rama salía por os.Exit mucho antes de la primera llamada al
+		// daemon, así que el orbe se quedaba en verde y el panel mudo justo
+		// cuando el producto acababa de frenar una credencial. Medido con una
+		// llave privada y una clave de Stripe: commit bloqueado, terminal
+		// diciéndolo, y la UI sin enterarse. Si el dev commitea desde un editor
+		// que se traga la salida del gancho, el bloqueo no existía para nadie.
+		//
+		// Va DESPUÉS de persistRun para que el detalle ya esté en la base cuando
+		// el panel lo vaya a buscar, y es best-effort: el veredicto ya está
+		// tomado y que el agente esté apagado no puede cambiarlo. Por eso no se
+		// mira el error — bloquear es lo que importa, avisar es un extra.
+		//
+		// Viaja el NÚMERO, nunca los hallazgos: son ellos los que llevan la
+		// credencial dentro, y abrir un camino nuevo por el que salga sería lo
+		// contrario de lo que acabamos de hacer.
+		//
+		// Del hallazgo se toman SÓLO archivo y línea. Ni el mensaje del motor
+		// —que con un .gitleaks.toml propio lo escribe el repo analizado— ni la
+		// línea de código, que ES la credencial. Con el sitio, quien lo lee sabe
+		// adónde ir; el valor ya lo tiene abierto en su editor.
+		donde := make([]string, 0, len(secretFindings))
+		for _, f := range secretFindings {
+			donde = append(donde, fmt.Sprintf("%s:%d", f.File, f.Line))
+		}
+		_, _ = ipc.Call(&ipc.Request{
+			Command:            "secreto-bloqueado",
+			RepoRoot:           repoRoot,
+			Branch:             gitBranch(repoRoot),
+			SecretosBloqueados: len(secretFindings),
+			SecretosEn:         donde,
+			DeadlineMs:         2000,
+		}, 2*time.Second)
 		os.Exit(1)
 	}
 	progress("secretos ✓")
@@ -192,7 +300,7 @@ func runPreCommit() error {
 	req := &ipc.Request{
 		RunID:           runID,
 		RepoRoot:        repoRoot,
-		RepoID:          store.CanonicalRepoID(gitRemote(repoRoot)),
+		RepoID:          store.RepoIDDe(repoRoot, gitRemote(repoRoot)),
 		Branch:          gitBranch(repoRoot),
 		StagedFiles:     diff.Files,
 		DiffUnified:     diff.Unified,
@@ -213,12 +321,25 @@ func runPreCommit() error {
 			Degraded:         resp.Degraded,
 			Findings:         resp.Findings,
 			ElapsedMs:        resp.ElapsedMs,
+			// El motivo del veredicto viaja con él. Sin esta línea el hook
+			// recibía el "skipped" del daemon y no el porqué, así que por la
+			// ruta del commit de todos los días sólo podía decir que no se
+			// revisó nada — que ya no es mentira, pero tampoco sirve para
+			// arreglar el motivo.
+			Reason: resp.Reason,
 		}
 		if !resp.CIParity {
 			// El motivo viaja desde el daemon: un aviso que no dice qué
 			// arreglar se convierte en ruido que el dev aprende a ignorar.
 			if resp.ParityReason != "" {
-				progress("aviso: sin paridad con el CI — " + resp.ParityReason)
+				// Aplanado como el motivo, y por una razón MEDIDA: este texto
+				// lleva dentro el `rulepack` del config.yaml del repo, que es
+				// contenido versionado. Con un `rulepack: "9.9.9\nCodeGuard
+				// listo — commit permitido"` —un string YAML legal, y el aviso
+				// salta solo porque ese rulepack no está instalado— la salida
+				// del hook dibujaba la línea del ✓ tres veces sobre un commit
+				// que en realidad salió PARCIAL. Basta clonar el repo.
+				progress("aviso: sin paridad con el CI — " + unaSolaLinea(resp.ParityReason))
 			} else {
 				progress("aviso: tu rulepack/config no coincide — no puedo garantizar que pase el CI")
 			}
@@ -229,6 +350,13 @@ func runPreCommit() error {
 		defer cancel()
 		cache, cerrarCache := abrirCache(repoRoot, cfg)
 		defer cerrarCache()
+		// La ruta local no pasa por el daemon, así que el aviso de reglas
+		// vendoreadas se da aquí: si no, por este camino se aplicarían las
+		// reglas del repo sin que nadie lo dijera.
+		if daemon.RulepackEsDelRepo(repoRoot, cfg.Rulepack) {
+			progress("aviso: las reglas salieron del rulepack vendoreado en este repo " +
+				"(rulepacks/" + unaSolaLinea(cfg.Rulepack) + "), no del instalado")
+		}
 		res, err = pipeline.Run(ctx, pipeline.Options{
 			Config:       cfg,
 			Diff:         diff,
@@ -251,11 +379,59 @@ func runPreCommit() error {
 		progress(gates + " ✗")
 		for _, f := range res.Findings {
 			if f.Blocking {
-				progress(fmt.Sprintf("  [%s] %s:%d  %s", f.RuleKey, f.File, f.Line, f.Message))
+				// El mensaje sale del YAML de una regla, y ese YAML puede venir
+				// del rulepack vendoreado en ESTE repo (RulepackDir lo prioriza).
+				// Sin aplanar, un `message` con saltos escribe líneas propias
+				// justo aquí: debajo del hallazgo que bloquea el commit.
+				progress(fmt.Sprintf("  [%s] %s:%d  %s",
+					f.RuleKey, f.File, f.Line, mensajeDeHallazgo(f.Message)))
 			}
 		}
 		progress(fmt.Sprintf("BLOQUEADO: %d problema(s) que el CI también rechazaría  (%.1f s)",
 			res.BlockingFindings, time.Since(start).Seconds()))
+	} else if res.Verdict == pipeline.Skipped {
+		// Un análisis OMITIDO no es una revisión, ni completa ni parcial: el
+		// embudo se paró en la etapa 0 y ninguna compuerta llegó a mirar nada.
+		//
+		// Esta rama existe porque el hook decidía el mensaje sólo con
+		// BlockingFindings y len(Degraded), sin leer NUNCA res.Verdict — que es
+		// el campo que el pipeline rellena precisamente para esto. Un Skipped
+		// sin capas degradadas caía en el `else` de abajo y firmaba
+		// "formato/... ✓  listo — commit permitido" sobre cinco compuertas que
+		// no corrieron; con el daemon caído caía en la rama PARCIAL y prometía
+		// "lo que SÍ se revisó", que tampoco existía. Es el mismo fallo que ya
+		// se corrigió para el caso degradado, en el caso de al lado.
+		//
+		// Va ANTES de la rama de Degraded a propósito: por el camino local
+		// siempre hay al menos "daemon:offline", así que si fuera después no se
+		// alcanzaría nunca.
+		//
+		// No se bloquea. Que un merge o una configuración que excluye estos
+		// archivos no dejen nada que revisar es normal y es decisión del propio
+		// equipo; sólo los secretos son fail-closed (§14). Pero se dice.
+		progress(fmt.Sprintf("%s — SIN REVISAR   (%.1f s)", gates, time.Since(start).Seconds()))
+		switch {
+		case pipeline.EsDecisionDelEquipo(res.Reason):
+			// Tono neutro a propósito. Un repo que excluye vendor/** o docs/**
+			// ve esto en CADA commit que sólo toque esas rutas, y "esto NO es
+			// una revisión limpia" repetido cien veces deja de leerse — y se
+			// lleva por delante el aviso serio, que es el mismo mensaje. Aquí no
+			// hay nada roto ni nada que arreglar: el equipo decidió qué mirar y
+			// el hook lo respeta. El encabezado de arriba ya impide confundirlo
+			// con un análisis que sí corrió, que era el fallo original.
+			progress("sin archivos que revisar: todos excluidos por la configuración")
+		case res.Reason != "":
+			// Lo que SÍ es avería: la config que no se pudo leer. Aquí la línea
+			// fuerte se gana su sitio, porque hay algo que arreglar y el commit
+			// se está yendo sin revisar.
+			progress("no se analizó nada: " + unaSolaLinea(res.Reason))
+			progress("el commit sigue permitido, pero esto NO es una revisión limpia")
+		default:
+			// Sin motivo no se puede saber si fue decisión o avería, así que se
+			// asume lo segundo: pasa con un daemon anterior al campo `reason`.
+			progress("no se analizó nada (el motivo no llegó hasta aquí)")
+			progress("el commit sigue permitido, pero esto NO es una revisión limpia")
+		}
 	} else if len(res.Degraded) > 0 {
 		// Revisión PARCIAL: no se puede poner un ✓ ni decir "listo" cuando una
 		// compuerta no llegó a mirar nada.
@@ -285,8 +461,15 @@ func runPreCommit() error {
 			progress("listo — commit permitido")
 		}
 	}
-	if len(res.Degraded) > 0 {
-		progress("capas no revisadas: " + strings.Join(res.Degraded, ", "))
+	// El detalle de capas caídas se calla cuando el análisis ni siquiera
+	// empezó: enumerar "capas no revisadas" y explicar que "esta revisión fue
+	// en frío" habla de una revisión que no existió, y encima suena a avería
+	// donde sólo hubo un merge o unos archivos excluidos.
+	if len(res.Degraded) > 0 && res.Verdict != pipeline.Skipped {
+		// Aplanado: las etiquetas no son todas nuestras — "rulepack-ausente:<v>"
+		// lleva pegado el `rulepack` del config.yaml del repo, y por ahí entra
+		// texto de fuera a una línea de la terminal.
+		progress("capas no revisadas: " + unaSolaLinea(strings.Join(res.Degraded, ", ")))
 		// El daemon caído no es una capa más: sin él, la etapa 2 corre en el
 		// proceso del hook, en frío y contra el mismo plazo, así que suele
 		// arrastrar a otras capas con ella. Se dice qué hacer.
@@ -322,7 +505,8 @@ func runPreCommit() error {
 				fmt.Fprintf(os.Stderr,
 					"CodeGuard  ATENCIÓN: este repo apunta al rulepack %s y no está instalado.\n"+
 						"           Las reglas de la casa NO se aplicaron: el CI puede rechazar este commit.\n"+
-						"           Arréglalo con `codeguard repair` o vendorea el rulepack en el repo.\n", v)
+						"           Arréglalo con `codeguard repair` o vendorea el rulepack en el repo.\n",
+					unaSolaLinea(v))
 			}
 		}
 	}
@@ -382,7 +566,7 @@ func postCommitCmd() *cobra.Command {
 			if err != nil || cfg == nil {
 				return nil
 			}
-			out, err := exec.Command("git", "-C", repoRoot, "log", "-1", "--format=%B").Output()
+			out, err := gitCmd("-C", repoRoot, "log", "-1", "--format=%B").Output()
 			if err != nil {
 				return nil
 			}
@@ -400,3 +584,77 @@ func persistBypass(repoRoot string, cfg *config.Config) error {
 	res := &pipeline.Result{Verdict: pipeline.Skipped, Degraded: []string{}, Findings: []finding.Finding{}}
 	return persistWith(repoRoot, cfg, res, 0, true)
 }
+
+// aplanado deja un texto de otro origen en UNA línea y sin nada que pueda
+// reescribir lo ya impreso, antes de que salga junto al prefijo "CodeGuard ".
+//
+// Aquí llega texto que no redactamos nosotros: el motivo del análisis omitido
+// lo escribe el daemon —y uno de los suyos arrastra el error de koanf, que es
+// MULTILÍNEA—, el aviso de paridad lleva dentro el `rulepack` del config.yaml
+// del repo, y el mensaje de un hallazgo sale del YAML de una regla, que puede
+// venir del rulepack VENDOREADO en el repo analizado. Los tres son contenido
+// que viaja versionado: basta clonar un repo para controlarlos.
+//
+// Sin aplanar, un salto en el sitio justo dibuja una línea que aparenta ser
+// nuestra. Está medido: con una regla vendoreada cuyo `message` lleva dos
+// saltos, la lista de hallazgos bloqueantes enseñaba
+// "CodeGuard  listo — commit permitido" DEBAJO del hallazgo que estaba
+// bloqueando el commit.
+//
+// strings.Fields se lleva por delante todo lo que unicode considera espacio, y
+// eso ya cubre los separadores que parten una línea: \n, \r, \t, \v, \f, el NEL
+// U+0085 y los U+2028/U+2029 de Unicode. Lo que NO cubre son los controles que
+// mueven el cursor sin ser espacio —ESC y sus secuencias ANSI, el retroceso,
+// NUL, BEL, DEL—: con un ESC[1A se sube una línea y se reescribe la de arriba,
+// y con retrocesos se borra el prefijo "CodeGuard " y se pone otro texto. Se
+// llega a la misma falsificación sin usar un solo salto de línea, así que se
+// quitan por rango en vez de enumerar secuencias, que es una lista que siempre
+// se queda corta.
+//
+// El tope va por RUNAS: cortar el slice de bytes parte el último carácter
+// multibyte y deja un rombo de reemplazo.
+func aplanado(s string, topeRunas int) string {
+	sinControles := strings.Map(func(r rune) rune {
+		// Se conservan los espacios: los aplana Fields justo debajo, y quitarlos
+		// aquí pegaría dos palabras.
+		if unicode.IsSpace(r) {
+			return r
+		}
+		// IsControl cubre las dos bandas Cc de una vez: la baja (NUL..US, con
+		// ESC y el retroceso dentro) y la alta (DEL..U+009F).
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	limpio := strings.Join(strings.Fields(sinControles), " ")
+	if runas := []rune(limpio); len(runas) > topeRunas {
+		return string(runas[:topeRunas]) + "…"
+	}
+	return limpio
+}
+
+// Dos topes porque son dos clases de texto, no por gusto.
+const (
+	// topeServicio corta los textos que ORIENTAN: el motivo de un análisis
+	// omitido, el aviso de paridad. Un error de esquema puede traer el volcado
+	// entero de la estructura y aquí sólo hace falta lo que sitúa el problema.
+	topeServicio = 300
+	// topeMensaje corta el texto de un hallazgo, que es OTRA cosa: es lo que el
+	// desarrollador necesita para arreglar el código, y recortarlo a 300 le
+	// quitaría justo la parte que explica qué hacer. El tope existe sólo para
+	// que un YAML absurdo no vuelque un megabyte en la terminal; ninguna regla
+	// real de las 119 del rulepack se acerca (la más larga anda por 180).
+	topeMensaje = 2000
+)
+
+// unaSolaLinea es el aplanado de los textos de servicio.
+func unaSolaLinea(s string) string { return aplanado(s, topeServicio) }
+
+// mensajeDeHallazgo aplana el texto de un hallazgo conservándolo entero.
+//
+// Se aplica al MENSAJE y no a la línea ya formateada a propósito: la sangría de
+// dos espacios con la que se listan los hallazgos es del formato, no del texto
+// ajeno, y aplanar después se la comería. Primero se sanea lo que viene de
+// fuera, después se coloca en su sitio.
+func mensajeDeHallazgo(s string) string { return aplanado(s, topeMensaje) }
