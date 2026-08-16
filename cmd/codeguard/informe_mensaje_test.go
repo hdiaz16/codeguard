@@ -34,7 +34,7 @@ func TestElMensajeDeUnaReglaNoInyectaEstructuraEnElInforme(t *testing.T) {
 	res := &pipeline.Result{Verdict: pipeline.Block, BlockingFindings: 1,
 		Degraded: []string{}, Findings: []finding.Finding{hostil}}
 	md := construirInforme(&config.Config{Rulepack: "2026.08.2"}, res,
-		[]finding.Finding{hostil}, nil, nil, nil, false, false, "")
+		[]finding.Finding{hostil}, nil, nil, nil, nil, false, false, "")
 
 	// En Markdown un encabezado tiene que EMPEZAR la línea: si el mensaje no
 	// puede empezar una, no puede fabricar una sección.
@@ -72,7 +72,7 @@ func TestElInformeNoTomaElTituloDeUnResueltoDelTextoDeUnaRegla(t *testing.T) {
 	res := &pipeline.Result{Verdict: pipeline.Block, BlockingFindings: 1,
 		Degraded: []string{}, Findings: []finding.Finding{hostil}}
 	md := construirInforme(&config.Config{Rulepack: "2026.08.2"}, res,
-		[]finding.Finding{hostil}, nil, nil, nil, false, false, "")
+		[]finding.Finding{hostil}, nil, nil, nil, nil, false, false, "")
 
 	ruta := filepath.Join(t.TempDir(), "HALLAZGOS.md")
 	if err := os.WriteFile(ruta, []byte(md), 0o644); err != nil {

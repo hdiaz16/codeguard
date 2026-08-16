@@ -114,7 +114,7 @@ func TestNoDiceCompletadoSiUnaCapaNoCorrio(t *testing.T) {
 	cfg := &config.Config{Rulepack: "2026.08.2"}
 	res := &pipeline.Result{Degraded: []string{"rulepack-ausente:2099.99.9"}}
 
-	informe := encabezado(construirInforme(cfg, res, nil, nil, nil, nil, false, false, ""))
+	informe := encabezado(construirInforme(cfg, res, nil, nil, nil, nil, nil, false, false, ""))
 
 	if strings.Contains(informe, "COMPLETADO") {
 		t.Error("declara COMPLETADO sin haber aplicado las reglas de la casa")
@@ -139,7 +139,7 @@ func TestSinCapasCaidasSigueDiciendoCompletado(t *testing.T) {
 	cfg := &config.Config{Rulepack: "2026.08.2"}
 	res := &pipeline.Result{}
 
-	informe := encabezado(construirInforme(cfg, res, nil, nil, nil, nil, false, false, ""))
+	informe := encabezado(construirInforme(cfg, res, nil, nil, nil, nil, nil, false, false, ""))
 
 	if !strings.Contains(informe, "COMPLETADO") {
 		t.Error("con todo revisado y sin bloqueantes deberia decir COMPLETADO")
@@ -156,7 +156,7 @@ func TestConBloqueantesTambienAvisaDeLoQueNoCorrio(t *testing.T) {
 	res := &pipeline.Result{Degraded: []string{"semgrep:error"}}
 	bloq := []finding.Finding{{RuleKey: "x", File: "a.go", Line: 1, Message: "m"}}
 
-	informe := encabezado(construirInforme(cfg, res, bloq, nil, nil, nil, false, false, ""))
+	informe := encabezado(construirInforme(cfg, res, bloq, nil, nil, nil, nil, false, false, ""))
 
 	if !strings.Contains(informe, "1 bloqueante") {
 		t.Error("no reporta el bloqueante")

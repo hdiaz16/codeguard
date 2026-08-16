@@ -134,15 +134,38 @@ func reportCmd() *cobra.Command {
 					avisos = append(avisos, f)
 				}
 			}
-			var resueltos []string
-			for fp, desc := range previos {
-				if !actuales[fp] {
-					resueltos = append(resueltos, desc)
-				}
-			}
-			sort.Strings(resueltos)
+			// «RESUELTO» SÓLO SE PUEDE DECIR SI ALGUIEN MIRÓ.
+			//
+			// Un hallazgo se declaraba resuelto por AUSENCIA: estaba en el
+			// informe anterior y no está en éste. Pero una capa degradada
+			// produce exactamente esa ausencia sin que nadie haya tocado el
+			// código, así que el informe marcaba con casilla `[x]` bugs que
+			// siguen ahí enteros.
+			//
+			// MEDIDO en un repo de juguete, tres corridas: con staticcheck
+			// instalado salían U1000 y SA4006 como pendientes; renombrando su
+			// binario, las DOS aparecían bajo «✅ Resueltos desde el informe
+			// anterior», en el mismo documento que un párrafo más arriba admite
+			// que esa capa no corrió. Y de regalo, el conteo de deuda
+			// baselineada caía a 0 por el mismo camino.
+			//
+			// Lo lee un humano por la mañana, pero sobre todo lo lee un AGENTE
+			// que decide si queda trabajo: darle por cerrado lo que nadie
+			// revisó es la peor mentira que puede contar este archivo.
+			//
+			// El daño medido es acotado —al restaurar la capa vuelven a
+			// aparecer, porque cada corrida reescanea de verdad y no arrastra
+			// un registro acumulativo— pero dura todo el ciclo en que la capa
+			// está rota, y es indefinido si nadie vuelve a correr el informe.
+			//
+			// Se calla ENTERA la sección en vez de filtrarla capa por capa, y
+			// es deliberado: los fingerprints previos no dicen de qué motor
+			// salieron, así que filtrar exigiría adivinarlo por el texto. Entre
+			// adivinar y callar, se calla — y se dice por qué, que es lo que
+			// convierte un hueco en información.
+			resueltos, noSePuedeDecirResuelto := calcularResueltos(previos, actuales, res.Degraded)
 
-			md := construirInforme(cfg, res, bloq, avisos, resueltos, deuda, incluirAvisos, incluirDeuda, discrepancias)
+			md := construirInforme(cfg, res, bloq, avisos, resueltos, noSePuedeDecirResuelto, deuda, incluirAvisos, incluirDeuda, discrepancias)
 			dest := filepath.Join(repoRoot, filepath.FromSlash(reportFile))
 			_ = os.MkdirAll(filepath.Dir(dest), 0o755) // best-effort: el WriteFile de abajo dará el error real
 			if err := os.WriteFile(dest, []byte(md), 0o644); err != nil {
@@ -243,8 +266,31 @@ func leerFingerprintsPrevios(path string) map[string]string {
 	return out
 }
 
+// calcularResueltos decide qué se puede declarar resuelto y qué no.
+//
+// Está aparte del RunE a propósito: la DECISIÓN es lo que hay que poder probar
+// y romper a propósito. Mientras vivió dentro del comando, los tests sólo
+// llegaban a `construirInforme` —o sea al RENDERIZADO— y una mutación de la
+// decisión pasaba en verde, que es la definición de test decorativo.
+//
+// Devuelve (resueltos, capasQueImpidenDecirlo). Las dos listas no se solapan
+// nunca: o se puede afirmar, o no se puede.
+func calcularResueltos(previos map[string]string, actuales map[string]bool, degraded []string) ([]string, []string) {
+	if rotas := pipeline.SinGarantia(degraded); len(rotas) > 0 {
+		return nil, rotas
+	}
+	var resueltos []string
+	for fp, desc := range previos {
+		if !actuales[fp] {
+			resueltos = append(resueltos, desc)
+		}
+	}
+	sort.Strings(resueltos)
+	return resueltos, nil
+}
+
 func construirInforme(cfg *config.Config, res *pipeline.Result, bloq, avisos []finding.Finding,
-	resueltos []string, deuda []finding.Finding, incluirAvisos, incluirDeuda bool, discrepancias string) string {
+	resueltos, noSePuedeDecirResuelto []string, deuda []finding.Finding, incluirAvisos, incluirDeuda bool, discrepancias string) string {
 
 	var b strings.Builder
 	fecha := time.Now().Format("2006-01-02 15:04")
@@ -328,6 +374,17 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 			fmt.Fprintf(&b, "- [x] %s\n", t)
 		}
 		b.WriteString("\n")
+	}
+	// El hueco se nombra. Un apartado que simplemente no aparece se lee como
+	// "no había nada que resolver", que es la misma ausencia que se acaba de
+	// dejar de tomar por buena unas líneas más arriba.
+	if len(noSePuedeDecirResuelto) > 0 {
+		b.WriteString("---\n\n## ❔ No puedo decir qué se resolvió\n\n")
+		fmt.Fprintf(&b, "Estas capas no llegaron a mirar en esta corrida: **%s**.\n\n",
+			strings.Join(noSePuedeDecirResuelto, ", "))
+		b.WriteString("Un hallazgo se da por resuelto cuando estaba en el informe anterior y ya no " +
+			"aparece. Con una capa caída, esa ausencia no significa que se arreglara: significa que " +
+			"nadie lo buscó. Arregla la capa y vuelve a correr `codeguard report`.\n\n")
 	}
 
 	// La deuda aceptada, cuando se pide: el agente la ENCONTRÓ y la baseline la

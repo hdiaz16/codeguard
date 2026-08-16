@@ -54,7 +54,7 @@ func TestSoloCuentaLaHuellaQueEscribioElGenerador(t *testing.T) {
 	res := &pipeline.Result{Verdict: pipeline.Block, BlockingFindings: 1,
 		Degraded: []string{}, Findings: []finding.Finding{hostil, deudoso}}
 	md := construirInforme(&config.Config{Rulepack: "2026.08.2"}, res,
-		[]finding.Finding{hostil}, nil, nil, []finding.Finding{deudoso}, false, true, "")
+		[]finding.Finding{hostil}, nil, nil, nil, []finding.Finding{deudoso}, false, true, "")
 
 	ruta := filepath.Join(t.TempDir(), "HALLAZGOS.md")
 	if err := os.WriteFile(ruta, []byte(md), 0o644); err != nil {

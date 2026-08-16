@@ -153,6 +153,22 @@ func ciCmd() *cobra.Command {
 					fmt.Println("codeguard: NO PUEDO GARANTIZAR ESTE COMMIT —",
 						strings.Join(rotas, ", "))
 					fmt.Println("  Estas capas no llegaron a mirar, así que un problema suyo pasaría sin verse.")
+					// Un plazo agotado manda a un sitio distinto que un rulepack
+					// ausente, y decirlo ahorra una tarde: el primero suele ser
+					// contención del runner y se arregla reintentando el job; el
+					// segundo es configuración y no se arregla solo. Sin esta
+					// distinción, quien lea el log se pone a buscar un bug en el
+					// código donde sólo hubo una máquina ocupada.
+					porPlazo := false
+					for _, r := range rotas {
+						if strings.HasSuffix(r, ":plazo") {
+							porPlazo = true
+						}
+					}
+					if porPlazo {
+						fmt.Println("  Hay capas que no terminaron en el plazo (5 min): suele ser un runner " +
+							"lento o cargado. REINTENTA EL JOB antes de buscar nada en el código.")
+					}
 					fmt.Println("  Arregla el runner (rulepack y motores) o usa `--shadow` si aceptas registrar sin bloquear.")
 					os.Exit(1)
 				}
