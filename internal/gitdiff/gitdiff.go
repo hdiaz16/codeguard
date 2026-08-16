@@ -208,6 +208,127 @@ func read(repoRoot string, banderas, revs []string) (*Diff, error) {
 	return d, nil
 }
 
+// LineaAnadida es una línea que el diff AÑADE, con el número que ocupa en el
+// archivo resultante — no en el parche.
+type LineaAnadida struct {
+	Linea int
+	Texto string
+}
+
+// AnadidasComoTextoStaged y AnadidasComoTextoRango devuelven, por archivo, las
+// líneas que el commit AÑADE, leyendo el diff con --text.
+//
+// EXISTEN PARA VER LO QUE GIT DECIDE NO ENSEÑAR, que es por donde se colaban
+// dos secretos enteros (medido contra gitleaks 8.30.1 y git 2.43):
+//
+//	.gitattributes con `creds.txt -diff`  → el diff normal muestra 0 bytes
+//	un byte NUL dentro del archivo        → el diff normal muestra 0 bytes
+//
+// En los dos casos git declara el archivo binario, no emite contenido, y
+// gitleaks —que escanea el parche que git le da— sale con 0 y escribe `[]` sin
+// haber mirado el secreto. Los dos ataques VIAJAN CON EL REPO: quien clone se
+// queda sin compuerta. Con --text git entrega el contenido igualmente, y ahí
+// están las dos líneas del token.
+//
+// --text NO se le pone al diff principal a propósito: ese diff alimenta el
+// informe, el presupuesto y las huellas de paridad, y volcar dentro de él los
+// bytes crudos de cada PNG (medido: 2 036 bytes por una imagen de 20 KB) los
+// rompería los tres. Esta lectura es aparte y sólo la consume la segunda pasada
+// de la compuerta de secretos.
+//
+// Lo que NO hay que intentar con esto, porque ya se probó y es falso: usar
+// «nuestro diff ve texto y gitleaks no» como prueba de sabotaje. Un binario
+// legítimo produce exactamente la misma señal —un PNG da 14 líneas añadidas que
+// git llama binarias— así que ese criterio bloquearía todo commit que añada una
+// imagen. Un NUL plantado y un binario de verdad son indistinguibles por
+// estructura; sólo se separan mirando el CONTENIDO, que es lo que hace la
+// segunda pasada.
+func AnadidasComoTextoStaged(repoRoot string) (map[string][]LineaAnadida, error) {
+	return anadidasComoTexto(repoRoot, []string{"--cached"}, nil)
+}
+
+func AnadidasComoTextoRango(repoRoot, base, head string) (map[string][]LineaAnadida, error) {
+	rango, err := gitref.ValidarRango(base, head)
+	if err != nil {
+		return nil, fmt.Errorf("rango inválido: %w", err)
+	}
+	return anadidasComoTexto(repoRoot, nil, []string{rango})
+}
+
+func anadidasComoTexto(repoRoot string, banderas, revs []string) (map[string][]LineaAnadida, error) {
+	// --unified=0: sin líneas de contexto. Aquí sólo interesa lo que ENTRA en
+	// el commit, y el contexto sería contenido ya commiteado que reescanear
+	// convertiría deuda vieja en un bloqueo nuevo sin salida (los secretos no
+	// se baselinan).
+	args := append([]string{"diff", "--no-textconv", "--no-ext-diff", "--no-color", "--text", "--unified=0"}, banderas...)
+	if len(revs) > 0 {
+		// Mismo blindaje que read(): --end-of-options para que un valor no se
+		// lea como opción, y -- para que no se lea como pathspec.
+		args = append(args, "--end-of-options")
+		args = append(args, revs...)
+		args = append(args, "--")
+	}
+	out, err := run(repoRoot, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[string][]LineaAnadida)
+	var archivo string
+	var linea int
+	// enCabecera distingue el `+++ b/x` que ABRE un archivo de una línea
+	// añadida cuyo texto empieza por "++ ". Sin este estado, un commit que
+	// añada la línea literal `++ hola` se leería como una cabecera y todo lo
+	// que viniera detrás se atribuiría a un archivo llamado "hola" —o se
+	// perdería. Sólo `diff --git` abre cabecera, y sólo el primer `+++` de
+	// dentro la cierra.
+	enCabecera := false
+	for _, l := range bytes.Split(out, []byte("\n")) {
+		switch {
+		case bytes.HasPrefix(l, []byte("diff --git ")):
+			enCabecera, archivo, linea = true, "", 0
+		case enCabecera && bytes.HasPrefix(l, []byte("+++ ")):
+			enCabecera = false
+			nombre := strings.TrimSuffix(string(l[4:]), "\r")
+			if nombre == "/dev/null" {
+				// Borrado: no hay archivo nuevo que escanear.
+				continue
+			}
+			archivo = filepath.ToSlash(strings.TrimPrefix(nombre, "b/"))
+		case archivo != "" && bytes.HasPrefix(l, []byte("@@ ")):
+			linea = inicioDelHunk(l)
+		case archivo != "" && linea > 0 && bytes.HasPrefix(l, []byte("+")):
+			res[archivo] = append(res[archivo], LineaAnadida{Linea: linea, Texto: string(l[1:])})
+			linea++
+		}
+	}
+	return res, nil
+}
+
+// inicioDelHunk saca la primera línea del lado NUEVO de una cabecera
+// `@@ -12,0 +13,2 @@`. Devuelve 0 si no la entiende, y con 0 el llamador
+// ignora el hunk: preferimos perder un hunk raro a numerar mal y mandar al dev
+// a una línea que no es.
+func inicioDelHunk(l []byte) int {
+	i := bytes.IndexByte(l, '+')
+	if i < 0 {
+		return 0
+	}
+	n := 0
+	visto := false
+	for _, c := range l[i+1:] {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + int(c-'0')
+		visto = true
+	}
+	if !visto {
+		return 0
+	}
+	return n
+}
+
 // SHA256De calcula la huella del contenido de un archivo del repo normalizado
 // a LF — la MISMA huella que llevan los ChangedFile de un diff. Es la clave
 // del caché por archivo (§9): si el hook y `codeguard report` no comparten

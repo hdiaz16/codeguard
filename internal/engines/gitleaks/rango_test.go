@@ -188,9 +188,19 @@ func TestHeadTampocoPuedeInyectar(t *testing.T) {
 // dejaría pasar las dos de arriba sin escanear nada.
 func TestRangoLegitimoLlegaAGitleaks(t *testing.T) {
 	bin := stubGitleaks(t)
+	// El repo es de VERDAD, con sus ramas y sus dos commits. Antes era un
+	// t.TempDir() vacío y bastaba, porque el motor no tocaba git: se limitaba a
+	// pasarle el rango a gitleaks. Dejó de bastar en cuanto el motor empezó a
+	// releer el diff él mismo para cubrir el punto ciego, y el rojo estaba bien
+	// puesto — sobre un directorio que no es un repo, "el rango es legítimo" no
+	// es una afirmación que nadie pueda comprobar.
+	repo, viejo, nuevo := repoConRamas(t,
+		"main", "release/2026.08", "feature/H009-inyeccion",
+		"corrección-h009", "feature/validación")
+
 	casos := []struct{ base, head string }{
 		{"main", "HEAD"},
-		{"9f2c1ab", "3e7d5c9f2c1ab4d6e8a0b2c4d6e8f0a2b4c6d8e0"},
+		{viejo, nuevo},
 		{"release/2026.08", "feature/H009-inyeccion"},
 		// Con acento: el primer arreglo bloqueaba el commit aquí sin ejecutar
 		// un solo motor, y gitleaks 8.30.0 escanea este rango sin problema.
@@ -198,7 +208,12 @@ func TestRangoLegitimoLlegaAGitleaks(t *testing.T) {
 		{"release/2026.08", "feature/validación"},
 	}
 	for _, c := range casos {
-		repo := t.TempDir()
+		// argv.txt se borra entre casos: si se quedara el del anterior, un caso
+		// que no llegara a invocar a gitleaks pasaría leyendo la huella del que
+		// sí lo invocó.
+		if err := os.Remove(filepath.Join(repo, "argv.txt")); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
 		e := &Engine{Binary: bin, Mode: "range", Base: c.base, Head: c.head}
 		if _, err := e.Run(context.Background(), engines.Input{RepoRoot: repo}); err != nil {
 			t.Fatalf("el rango legítimo %s..%s debió correr: %v", c.base, c.head, err)
@@ -211,6 +226,58 @@ func TestRangoLegitimoLlegaAGitleaks(t *testing.T) {
 			t.Errorf("--log-opts = %q, se esperaba %q", got, want)
 		}
 	}
+}
+
+// repoConRamas deja un repo git con dos commits y las ramas pedidas apuntando
+// al segundo, y devuelve el sha corto del primero y el largo del segundo.
+//
+// Los sha se devuelven en vez de escribirse a mano en la tabla de casos porque
+// un sha inventado no resuelve, y un rango que no resuelve deja de ser el caso
+// legítimo que el test dice estar comprobando.
+func repoConRamas(t *testing.T, ramas ...string) (repo, shaCorto, shaLargo string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git no está en PATH")
+	}
+	repo = t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Skipf("git %s falló (%v): %s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-b", "main")
+	git("config", "user.email", "a@b.c")
+	git("config", "user.name", "a")
+	git("config", "commit.gpgsign", "false")
+
+	escribir := func(nombre, cuerpo string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(repo, nombre), []byte(cuerpo), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	escribir("a.txt", "uno\n")
+	git("add", "-A")
+	git("commit", "-m", "primero")
+	shaCorto = git("rev-parse", "--short", "HEAD")
+
+	escribir("a.txt", "uno\ndos\n")
+	git("add", "-A")
+	git("commit", "-m", "segundo")
+	shaLargo = git("rev-parse", "HEAD")
+
+	for _, r := range ramas {
+		if r == "main" {
+			continue
+		}
+		git("branch", r)
+	}
+	return repo, shaCorto, shaLargo
 }
 
 // La tabla de qué referencias valen y cuáles no vive en internal/gitref, que es

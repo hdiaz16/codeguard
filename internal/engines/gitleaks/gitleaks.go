@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"codeguard/internal/engines"
@@ -105,17 +106,9 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 		return nil, fmt.Errorf("%w: %v — ejecuta `codeguard repair`", ErrUnavailable, err)
 	}
 
-	report, err := os.CreateTemp("", "codeguard-gitleaks-*.json")
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
-	// Sólo se necesita el NOMBRE del temporal; gitleaks lo reescribe. El
-	// cierre y el borrado son de limpieza: su fallo no cambia el análisis.
-	_ = report.Close()
-	defer func() { _ = os.Remove(report.Name()) }()
-
+	// ── Pasada 1: gitleaks sobre el repo, tal cual ──────────────────────
 	// `protect` está deprecado desde 8.19: se usa `gitleaks git` (spec §5 etapa 1).
-	args := []string{"git", "--redact", "--report-format", "json", "--report-path", report.Name(), "--exit-code", "9"}
+	args := []string{"git", "--redact", "--report-format", "json", "--report-path", "", "--exit-code", "9"}
 	switch e.Mode {
 	case "staged":
 		args = append(args, "--pre-commit", "--staged")
@@ -130,8 +123,52 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	}
 	args = append(args, in.RepoRoot)
 
+	leaks, err := e.correr(ctx, bin, in.RepoRoot, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// ── Pasada 2: la misma tijera, pero fuera del alcance del repo ──────
+	reescaneados, err := e.reescaneoNeutral(ctx, bin, in)
+	if err != nil {
+		return nil, err
+	}
+
+	return hallazgos(append(leaks, reescaneados...)), nil
+}
+
+// correr lanza una corrida de gitleaks y devuelve lo que encontró, o el porqué
+// de que su silencio no valga (contrato de los motores: hallazgos o el porqué).
+//
+// args tiene que llevar el hueco de --report-path como cadena vacía; el
+// temporal se crea aquí para que ninguna pasada pueda reutilizar el reporte de
+// otra —que es exactamente el fallo por el que un DLL viejo dejaba pasar al
+// impostor de dotnet-build con la prueba de otra corrida.
+func (e *Engine) correr(ctx context.Context, bin, dir string, args []string) ([]leak, error) {
+	report, err := os.CreateTemp("", "codeguard-gitleaks-*.json")
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	// Sólo se necesita el NOMBRE del temporal; gitleaks lo reescribe. El
+	// cierre y el borrado son de limpieza: su fallo no cambia el análisis.
+	_ = report.Close()
+	defer func() { _ = os.Remove(report.Name()) }()
+
+	args = append([]string(nil), args...)
+	hueco := -1
+	for i, a := range args {
+		if a == "--report-path" && i+1 < len(args) {
+			hueco = i + 1
+			break
+		}
+	}
+	if hueco < 0 {
+		return nil, fmt.Errorf("%w: corrida mal armada, sin --report-path", ErrUnavailable)
+	}
+	args[hueco] = report.Name()
+
 	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Dir = in.RepoRoot
+	cmd.Dir = dir
 	cmd.Env = proc.Entorno()
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	out := salida.Combinada()
@@ -214,16 +251,35 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 			"(%d bytes en %s): %v — ejecuta `codeguard repair`",
 			ErrUnavailable, len(raw), filepath.Base(report.Name()), err)
 	}
+	return leaks, nil
+}
 
+// hallazgos convierte los leaks de TODAS las pasadas en hallazgos, quitando los
+// repetidos.
+//
+// Las dos pasadas se solapan a propósito —el mismo secreto en un archivo normal
+// lo ven las dos— y las dos numeran la línea REAL del archivo (medido: un token
+// en la línea 4 sale como StartLine 4 por los dos caminos), así que regla +
+// archivo + línea identifica el mismo secreto sin falsos duplicados. Se queda
+// el primero, que es el de la pasada 1: ésa lleva la descripción de las reglas
+// PROPIAS del repo cuando las hay, y es la que el dev reconoce.
+func hallazgos(leaks []leak) []finding.Finding {
+	vistos := make(map[string]bool, len(leaks))
 	findings := make([]finding.Finding, 0, len(leaks))
 	for _, l := range leaks {
+		archivo := filepath.ToSlash(l.File)
+		clave := l.RuleID + "\x00" + archivo + "\x00" + strconv.Itoa(l.StartLine)
+		if vistos[clave] {
+			continue
+		}
+		vistos[clave] = true
 		f := finding.Finding{
 			Engine:   "gitleaks",
 			RuleKey:  l.RuleID,
 			Pillar:   finding.Security,
 			Severity: finding.Error,
 			Blocking: true,
-			File:     filepath.ToSlash(l.File),
+			File:     archivo,
 			Line:     l.StartLine,
 			EndLine:  l.EndLine,
 			Message:  "Secreto detectado: " + l.Description,
@@ -237,5 +293,5 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 		f.ComputeFingerprint()
 		findings = append(findings, f)
 	}
-	return findings, nil
+	return findings
 }
