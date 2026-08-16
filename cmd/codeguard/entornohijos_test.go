@@ -254,14 +254,42 @@ func TestArbolPreparadoMiraElIndiceQueSeEstaCommiteando(t *testing.T) {
 // una falsa sensación de hermetismo, que es peor que un alcance declarado.
 func TestTodoGitDeLaCLIPasaPorGitCmd(t *testing.T) {
 	fset := token.NewFileSet()
-	paquete, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	// parser.ParseDir quedó deprecado en Go 1.25 —no mira las etiquetas de
+	// compilación al agrupar archivos por paquete— y con el toolchain 1.26 lo
+	// delata staticcheck (SA1019) en cada commit que toque este paquete.
+	//
+	// Aquí no hacía falta agrupar por paquete para nada: lo que este guarda
+	// vigila es CADA .go que no sea de test, uno a uno. Así que se enumera el
+	// directorio y se parsea archivo por archivo, que además hace explícito
+	// —y no un efecto colateral del filtro— qué entra y qué no.
+	entradas, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, pkg := range paquete {
-		for ruta, archivo := range pkg.Files {
+	archivos := map[string]*ast.File{}
+	for _, e := range entradas {
+		nombre := e.Name()
+		if e.IsDir() || !strings.HasSuffix(nombre, ".go") || strings.HasSuffix(nombre, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, nombre, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		archivos[nombre] = f
+	}
+	// Sin esto, el día que el filtro se escriba mal este test pasaría sin haber
+	// mirado un solo archivo — verde perpetuo por no tener nada que revisar,
+	// que es justo el modo de fallo que el resto del repo persigue.
+	if len(archivos) == 0 {
+		t.Fatal("no se parseó ningún archivo: el guarda no estaría vigilando nada")
+	}
+	{
+		// La ruta no se usa: los mensajes de error salen de fset.Position, que
+		// ya la lleva dentro. Antes se guardaba en una variable y se tiraba a
+		// "_" al final del bucle, y la regla de la casa tiene razón en
+		// quejarse — era código muerto disfrazado de uso.
+		for _, archivo := range archivos {
 			ast.Inspect(archivo, func(n ast.Node) bool {
 				fn, ok := n.(*ast.FuncDecl)
 				if !ok {
@@ -314,7 +342,6 @@ func TestTodoGitDeLaCLIPasaPorGitCmd(t *testing.T) {
 				})
 				return false
 			})
-			_ = ruta
 		}
 	}
 }

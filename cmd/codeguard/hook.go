@@ -43,6 +43,33 @@ import (
 // nota, porque los motores corren en paralelo y el tope no es espera.
 const hookDeadline = 30 * time.Second
 
+// plazoSecretos acota la ETAPA 1, que corría sin ninguno.
+//
+// El agujero: la etapa 2 siempre tuvo tope —el de arriba— y la 1 se llamaba con
+// context.Background() pelado. O sea que la única compuerta BLOQUEANTE del
+// producto era también la única sin límite: un gitleaks colgado (el EDR
+// escaneando su binario, un disco de red, un antivirus a medio actualizar —los
+// mismos escenarios que el comentario de arriba documenta MEDIDOS en máquinas
+// corporativas) dejaba el `git commit` del usuario esperando para siempre, sin
+// mensaje y sin forma de saber qué pasaba. Y no hacía falta ni un fallo raro:
+// esta línea la pisa CADA commit.
+//
+// En el camino de CI no pasaba, y eso es lo que lo escondió: allí la etapa 1
+// corre dentro de pipeline.Run, que sí envuelve el contexto con opt.Timeout.
+// Sólo el gancho la llamaba a pelo.
+//
+// ¿Por qué 60 y no los 30 de la etapa 2? Porque aquí agotar el plazo BLOQUEA el
+// commit (fail-closed, §14: la promesa no es «busqué», es «nada sale sin
+// escanear»), así que equivocarse por corto le cuesta al usuario un commit
+// legítimo, mientras que equivocarse por largo sólo le cuesta esperar. Y la
+// etapa 1 hace hoy DOS pasadas de gitleaks, no una: la del repo y el reescaneo
+// neutral que cierra los cinco modos de apagar la compuerta. El doble de trabajo
+// con la mitad de margen habría sido pedir falsos bloqueos.
+//
+// Sigue siendo un TOPE, no una espera: un commit normal escanea en menos de un
+// segundo y sale en menos de un segundo.
+const plazoSecretos = 60 * time.Second
+
 func hookCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "hook",
@@ -196,11 +223,46 @@ func runPreCommit() error {
 		return nil // nada preparado: no hay nada que revisar
 	}
 
+	// LO QUE SE VA A ANALIZAR NO SIEMPRE ES LO QUE SE VA A COMMITEAR, Y CALLARLO
+	// ES LA MENTIRA QUE ESTE PRODUCTO EXISTE PARA RETIRAR.
+	//
+	// La lista de archivos sale del ÍNDICE, pero los motores por archivo leen del
+	// DISCO. Con `git add -p`, o editando después de un `git add`, las dos cosas
+	// se separan y el veredicto habla de un contenido que no va a entrar al
+	// historial: el dev ve verde sobre lo que tiene en el editor y el CI analiza
+	// lo otro. Justo la promesa central —«si pasa aquí, pasa allá»— rota en
+	// silencio, y en un flujo que es rutina, no un caso raro.
+	//
+	// AVISA Y NO BLOQUEA, a propósito: staging parcial es una forma legítima y
+	// muy común de trabajar, y bloquearla convertiría el producto en un estorbo.
+	// Lo que no es legítimo es decir "revisado" sin decir "…de otra cosa".
+	//
+	// El arreglo de fondo (analizar el índice materializándolo en un árbol
+	// temporal) es otra conversación: go vet, staticcheck, tsc y dotnet build
+	// COMPILAN y no saben leer un índice, así que no es un cambio de ReadFile
+	// sino de arquitectura, con coste en cada commit. Ver ConCambiosSinPreparar.
+	rutas := make([]string, 0, len(diff.Files))
+	for _, f := range diff.Files {
+		if f.Status != "D" {
+			rutas = append(rutas, f.Path)
+		}
+	}
+	if divergentes, err := gitdiff.ConCambiosSinPreparar(repoRoot, rutas); err == nil && len(divergentes) > 0 {
+		// Best-effort: si git no puede decirlo, no se inventa nada y el análisis
+		// sigue. Este aviso nunca puede ser el motivo de que un commit se pare.
+		progress(fmt.Sprintf("aviso: %d archivo(s) tienen cambios SIN preparar — se revisa lo que hay "+
+			"en disco, y no es lo que vas a commitear: %s", len(divergentes),
+			unaSolaLinea(strings.Join(divergentes, ", "))))
+		progress("     si esto te importa, `git add` esos archivos y vuelve a commitear")
+	}
+
 	start := time.Now()
 
 	// ── Etapa 1: secretos, en este proceso, fail-closed ──
+	ctxSecretos, cancelSecretos := context.WithTimeout(context.Background(), plazoSecretos)
 	secretsEng := &glengine.Engine{Mode: "staged"}
-	secretFindings, err := secretsEng.Run(context.Background(), engines.Input{RepoRoot: repoRoot, Files: diff.Files})
+	secretFindings, err := secretsEng.Run(ctxSecretos, engines.Input{RepoRoot: repoRoot, Files: diff.Files})
+	cancelSecretos()
 	if err != nil {
 		if errors.Is(err, glengine.ErrUnavailable) {
 			progress("BLOQUEADO: la compuerta de secretos no pudo correr (fail-closed)")

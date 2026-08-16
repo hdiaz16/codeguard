@@ -329,6 +329,57 @@ func inicioDelHunk(l []byte) int {
 	return n
 }
 
+// ConCambiosSinPreparar devuelve, de entre las rutas dadas, las que en el árbol
+// de trabajo NO son iguales a lo que hay en el índice.
+//
+// EXISTE PORQUE LA COMPUERTA MIRA UNA COSA Y GIT COMMITEA OTRA. `Staged()` saca
+// la LISTA de archivos del índice (`git diff --cached`), pero el CONTENIDO que
+// analizan los motores por archivo —y la huella `SHA256De` que sirve de clave de
+// caché— sale de `os.ReadFile`, o sea del DISCO. Mientras las dos versiones
+// coinciden da igual; en cuanto se separan, el análisis habla de un contenido
+// que no es el que va a entrar al historial.
+//
+// Y separarlas es rutina, no un caso raro: `git add -p`, o editar un archivo
+// después de haberlo añadido. Medido en un repo de juguete: con B en el índice y
+// C en el disco, el sha del índice y el del árbol son completamente distintos.
+//
+// El efecto no es que entre un secreto —la etapa 1 va por `--cached` y no le
+// afecta—, es que se rompe la promesa central: «si pasa aquí, pasa allá». El
+// dev ve verde sobre el contenido de su editor y el CI analiza el otro.
+//
+// ARREGLARLO DE VERDAD ES OTRA COSA, y por eso esto sólo AVISA. Para que los
+// motores analizaran el índice habría que materializarlo en un árbol temporal y
+// correrlo todo allí: `go vet`, `staticcheck`, `tsc` y `dotnet build` COMPILAN,
+// no saben leer un índice de git, así que no basta con cambiar un ReadFile. Es
+// una decisión de arquitectura con coste en cada commit, y se toma aparte.
+// Mientras tanto, lo que no se puede hacer es callarlo: decir «revisado» sobre
+// un contenido distinto del que se commitea es la misma clase de mentira que
+// este producto existe para retirar.
+func ConCambiosSinPreparar(repoRoot string, rutas []string) ([]string, error) {
+	if len(rutas) == 0 {
+		return nil, nil
+	}
+	// `git diff --name-only` sin --cached = árbol de trabajo CONTRA el índice:
+	// exactamente los archivos cuyo contenido en disco no es el preparado.
+	out, err := run(repoRoot, "diff", "--no-textconv", "--no-ext-diff", "--name-only")
+	if err != nil {
+		return nil, err
+	}
+	sucios := make(map[string]bool)
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" {
+			sucios[filepath.ToSlash(l)] = true
+		}
+	}
+	var divergentes []string
+	for _, r := range rutas {
+		if sucios[filepath.ToSlash(r)] {
+			divergentes = append(divergentes, r)
+		}
+	}
+	return divergentes, nil
+}
+
 // SHA256De calcula la huella del contenido de un archivo del repo normalizado
 // a LF — la MISMA huella que llevan los ChangedFile de un diff. Es la clave
 // del caché por archivo (§9): si el hook y `codeguard report` no comparten

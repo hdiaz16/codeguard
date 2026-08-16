@@ -8,9 +8,54 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"codeguard/internal/engines"
 )
+
+// LA ÚNICA COMPUERTA QUE BLOQUEA ERA LA ÚNICA SIN PLAZO.
+//
+// La etapa 2 siempre tuvo tope; la etapa 1 se llamaba desde el gancho con un
+// context.Background() pelado. Un gitleaks que no termina —EDR mirando el
+// binario, disco de red, antivirus a medio actualizar— dejaba el `git commit`
+// esperando para siempre, sin mensaje. Y lo pisa CADA commit.
+//
+// El impostor de este test no falla: se cuelga. Es un modo de avería distinto
+// de los otros tres, y el que eliges decide lo que puedes encontrar.
+func TestUnGitleaksColgadoSeRindeYNoCuelgaElCommit(t *testing.T) {
+	bin := stubGitleaksModo(t, "colgado")
+	// Basta un directorio: la pasada 1 se cuelga antes de que nada mire el repo.
+	repo := t.TempDir()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	e := &Engine{Binary: bin, Mode: "staged"}
+	inicio := time.Now()
+	_, err := e.Run(ctx, engines.Input{RepoRoot: repo})
+	tardanza := time.Since(inicio)
+
+	if err == nil {
+		t.Fatal("un escaneo que no terminó NO autoriza a decir que no había secretos")
+	}
+	if !errors.Is(err, ErrUnavailable) {
+		t.Errorf("el plazo agotado tiene que BLOQUEAR (ErrUnavailable, §14); llegó: %v", err)
+	}
+	// El tope real es el plazo del contexto; se deja margen de sobra para el
+	// WaitDelay de proc.Correr y para una máquina cargada. Lo que se comprueba
+	// aquí no es que sea rápido, es que SE RINDE.
+	if tardanza > 30*time.Second {
+		t.Errorf("tardó %v en rendirse, que es el fallo entero", tardanza)
+	}
+	// El consejo importa tanto como el bloqueo: mandar a reinstalar motores
+	// sanos ante algo que sólo iba lento hace perder la tarde a quien lo lea.
+	if strings.Contains(err.Error(), "codeguard repair") {
+		t.Errorf("un plazo agotado no se repara reinstalando: %v", err)
+	}
+	if !strings.Contains(err.Error(), "lento") {
+		t.Errorf("el mensaje no dice que el problema es lentitud y no avería: %v", err)
+	}
+}
 
 // El stub graba su línea de comandos: es la única forma de ver QUÉ argumentos
 // recibiría gitleaks de verdad, porque la inyección vive en la construcción de
@@ -32,6 +77,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -61,6 +107,11 @@ func main() {
 	}
 
 	switch modo {
+	case "colgado":
+		// NO es select{}: el runtime detecta el interbloqueo y sale de
+		// inmediato, o sea que el impostor "colgado" terminaría al instante y
+		// el test pasaría sin probar nada. Dormir sí se cuelga de verdad.
+		time.Sleep(10 * time.Minute)
 	case "mudo":
 		// La herramienta EQUIVOCADA que cree haber terminado bien: sale con 0 y
 		// no escribe reporte. Para el motor tiene que ser una avería, no un

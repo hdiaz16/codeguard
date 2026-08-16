@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -209,9 +211,45 @@ var vetPosn = regexp.MustCompile(`^(.*):(\d+):\d+$`)
 // ahora regala: ese cambio se puede hacer, pero es una migración de baselines,
 // no un efecto colateral de este arreglo.
 func hallazgosDelJSONDeVet(repoRoot, informe string) ([]finding.Finding, error) {
-	var porPaquete map[string]map[string][]diagVet
-	if err := json.Unmarshal([]byte(informe), &porPaquete); err != nil {
-		return nil, err
+	// `go vet -json` NO escribe UN objeto: escribe un FLUJO, uno por cada
+	// variante de paquete que analiza. Un solo directorio con archivos de test
+	// ya produce dos —el paquete y su paquete de test— y sale así:
+	//
+	//	{}
+	//	{}
+	//
+	// json.Unmarshal sobre eso falla con "invalid character '{' after top-level
+	// value", y el motor lo trataba como «no entiendo su informe», o sea avería.
+	// Resultado: en CUALQUIER módulo con tests, go vet quedaba degradado y no
+	// analizaba nada — y se veía como una línea "capas no revisadas:
+	// govet:error" que es fácil leer como un tropiezo pasajero.
+	//
+	// Se descubrió porque la compuerta de este propio repo lo dijo al commitear,
+	// no leyendo el código: la medición que fijó el contrato de govet se había
+	// hecho sobre UN paquete, donde el flujo tiene un solo elemento y la
+	// diferencia entre «objeto» y «flujo de un objeto» no se ve.
+	//
+	// Con json.Decoder en bucle se leen todos y se funden. Un flujo cortado a
+	// medias sigue siendo error, que es lo que debe ser: media respuesta se
+	// cachearía como si fuera entera.
+	porPaquete := map[string]map[string][]diagVet{}
+	dec := json.NewDecoder(strings.NewReader(informe))
+	for {
+		var uno map[string]map[string][]diagVet
+		if err := dec.Decode(&uno); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, err
+		}
+		for paquete, porAnalizador := range uno {
+			if porPaquete[paquete] == nil {
+				porPaquete[paquete] = map[string][]diagVet{}
+			}
+			for analizador, diags := range porAnalizador {
+				porPaquete[paquete][analizador] = append(porPaquete[paquete][analizador], diags...)
+			}
+		}
 	}
 	// Ordenado por paquete y analizador: el recorrido de un mapa es aleatorio y
 	// haría que el mismo análisis diera los hallazgos en otro orden cada vez.

@@ -181,6 +181,18 @@ func (e *Engine) correr(ctx context.Context, bin, dir string, args []string) ([]
 		// está en el bloque de abajo, que es el arreglo.
 	case errors.As(runErr, &exitErr) && exitErr.ExitCode() == 9:
 		// exit 9 = hallazgos (lo fijamos con --exit-code); cualquier otro código es error real
+	case errors.Is(runErr, context.DeadlineExceeded):
+		// Se separa del error genérico porque el CONSEJO es distinto, y dar el
+		// consejo equivocado en un bloqueo es casi peor que no darlo: quien lee
+		// «repara con codeguard repair» se va a reinstalar motores que están
+		// perfectamente sanos. Aquí no hay nada roto — hay algo lento.
+		//
+		// Bloquea igual (ErrUnavailable, §14): un escaneo que no terminó no
+		// autoriza a nadie a decir que no había secretos.
+		return nil, fmt.Errorf("%w: no terminó de escanear a tiempo. No está roto, está lento "+
+			"(antivirus o EDR mirando el binario, disco de red, un diff enorme). "+
+			"Vuelve a intentar el commit; si se repite, reduce el tamaño del commit: %v",
+			ErrUnavailable, runErr)
 	default:
 		return nil, fmt.Errorf("%w: %v: %s", ErrUnavailable, runErr, out)
 	}

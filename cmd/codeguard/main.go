@@ -140,8 +140,22 @@ func ciCmd() *cobra.Command {
 			}
 
 			// Modo sombra (fase 1): registra todo, nunca falla el job.
-			if !shadow && res.Verdict == pipeline.Block {
-				os.Exit(1)
+			if !shadow {
+				if res.Verdict == pipeline.Block {
+					os.Exit(1)
+				}
+				// Y una capa que NO MIRÓ tampoco es un job verde. Medido: el
+				// mismo `db.Query("… " + id)` sale con exit 1 si el rulepack
+				// está y con exit 0 si falta, imprimiendo "capas degradadas"
+				// que ningún CI lee. El porqué de qué entra y qué no está en
+				// pipeline.SinGarantia.
+				if rotas := pipeline.SinGarantia(res.Degraded); len(rotas) > 0 {
+					fmt.Println("codeguard: NO PUEDO GARANTIZAR ESTE COMMIT —",
+						strings.Join(rotas, ", "))
+					fmt.Println("  Estas capas no llegaron a mirar, así que un problema suyo pasaría sin verse.")
+					fmt.Println("  Arregla el runner (rulepack y motores) o usa `--shadow` si aceptas registrar sin bloquear.")
+					os.Exit(1)
+				}
 			}
 			return nil
 		},
