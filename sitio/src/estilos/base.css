@@ -84,6 +84,15 @@ body::before {
     radial-gradient(60ch 50ch at 8% 42%, rgba(159,208,234,.035), transparent 60%);
 }
 
+/* La misma niebla, en vivo (ambiente3d.js): el lienzo ocupa la MISMA capa
+   fija que body::before y el contenido sigue por encima en su z-index 1.
+   Si WebGL no está, este lienzo nunca se crea y la pseudo queda sola —
+   idéntico cuadro, en quieto. */
+#ambiente-lienzo {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  width: 100%; height: 100%;
+}
+
 img, svg { max-width: 100%; }
 svg { display: block; }
 

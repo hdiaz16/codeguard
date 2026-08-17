@@ -26,7 +26,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
 
 import { crearOrbe } from "./orbe.js";
-import { montarOrbe3D } from "./orbe3d.js";
+import { montarAmbiente } from "./ambiente3d.js";
 import { montarRecorrido } from "./recorrido.js";
 import { montarDemo } from "./demo.js";
 import { montarMontanas } from "./montanas.js";
@@ -120,14 +120,13 @@ function montarPortada() {
   const ancho = window.innerWidth;
   const tam = ancho < 520 ? 138 : ancho < 900 ? 162 : 176;
 
-  // El héroe se intenta primero EN VOLUMEN — WebGL de mano, sin librería
-  // (ver orbe3d.js). Es el mismo orbe, con la misma identidad idle, sólo que
-  // respira y gira en 3D en vez de sobre un plano. Si el navegador no puede
-  // —WebGL apagado, un shader que no compiló en ese driver— la función
-  // devuelve null y se cae al orbe plano de siempre: nunca un hueco vacío.
+  // El héroe es EL ORBE ORIGINAL — el gooey de tres capas, la imagen del
+  // sistema. Se probó una esfera 3D por shader y se retiró por decisión del
+  // dueño del producto: se leía como una esfera cualquiera, no como la
+  // insignia. La dimensión 3D del sitio vive en la ATMÓSFERA (ambiente3d.js),
+  // no en sustituir la identidad.
   const etiqueta = "El orbe de CodeGuard, de guardia";
-  const orbe = (!reducido && montarOrbe3D({ tam, etiqueta })) ||
-    crearOrbe({ tam, estado: "idle", aura: true, burbuja: "lateral", etiqueta });
+  const orbe = crearOrbe({ tam, estado: "idle", aura: true, burbuja: "lateral", etiqueta });
   caja.appendChild(orbe.el);
 
   if (reducido) return;
@@ -375,6 +374,10 @@ function montarEntradas() {
 
 /* ══ arranque ═══════════════════════════════════════════════════════════ */
 function arrancar() {
+  // La atmósfera va primero: es el fondo de todo lo demás. Con
+  // prefers-reduced-motion pinta un solo cuadro quieto; sin WebGL no se crea
+  // y queda la niebla estática de body::before — el mismo cuadro, en quieto.
+  montarAmbiente({ reducido });
   montarScroll();
   montarBarra();
   // La cordillera va antes que el orbe: es el fondo sobre el que sale, igual

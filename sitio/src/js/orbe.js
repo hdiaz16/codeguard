@@ -99,7 +99,7 @@ function vigilar(orbe) {
 /**
  * La burbuja del susurro: un texto que aparece un momento y se desvanece, o
  * se queda fijo con `permanente`. Vive como pieza aparte —y no atada a
- * `crearOrbe`— porque el orbe 3D (orbe3d.js) también la necesita: es la
+ * `crearOrbe`— la cápsula es suya y de quien la necesite: es la
  * MISMA cápsula, calcada del escritorio, y no depende de cómo se dibuje el
  * cuerpo del orbe por debajo. Sus estilos (.orbe-burbuja en orbe.css) sólo
  * piden las variables --plasma-hot-a y --plasma-glow del elemento que la
