@@ -207,6 +207,16 @@ const RelPath = ".codeguard/config.yaml"
 // dejaría de significar lo mismo según por dónde se llegue.
 const maxDiffTokensPorDefecto = 12000
 
+// timeoutMsPorDefecto: misma disciplina y por el mismo fallo en primo. Un
+// `timeout_ms: 0` escrito a mano crea un context que NACE vencido —
+// time.Duration(0) en un WithTimeout es un plazo ya agotado— y la explicación
+// del panel (cmd/daemon/explain.go) falla al instante. La sombra estaba a
+// salvo por el suelo de un minuto de plazoSombra y la UI porque trata el 0
+// como este mismo default, pero eso era suerte de cada llamador: el
+// saneamiento pertenece a Load, donde nace el cfg, no repartido por los
+// consumidores.
+const timeoutMsPorDefecto = 20000
+
 // Load lee la config del repo. Si el archivo no existe, el repo no está
 // enrolado (etapa 0) y se devuelve (nil, nil).
 func Load(repoRoot string) (*Config, error) {
@@ -231,7 +241,7 @@ func Load(repoRoot string) (*Config, error) {
 		Risk:         Risk{Threshold: 35},
 		UI:           UI{MaxVisibleFindings: 7, AutoOpenPanel: "on_block"},
 		//nolint:gosec // G101: es el NOMBRE de la variable de entorno, no una clave — precisamente el diseño que evita guardar credenciales
-		LLM: LLM{TimeoutMs: 20000, MaxDiffTokens: maxDiffTokensPorDefecto, APIKeyEnv: "FOUNDRY_API_KEY"},
+		LLM: LLM{TimeoutMs: timeoutMsPorDefecto, MaxDiffTokens: maxDiffTokensPorDefecto, APIKeyEnv: "FOUNDRY_API_KEY"},
 	}
 	if err := k.Unmarshal("", cfg); err != nil {
 		return nil, fmt.Errorf("config.yaml no coincide con el esquema: %w", err)
@@ -265,6 +275,9 @@ func Load(repoRoot string) (*Config, error) {
 	// de una comprobación puesta más arriba.
 	if cfg.LLM.MaxDiffTokens <= 0 {
 		cfg.LLM.MaxDiffTokens = maxDiffTokensPorDefecto
+	}
+	if cfg.LLM.TimeoutMs <= 0 {
+		cfg.LLM.TimeoutMs = timeoutMsPorDefecto
 	}
 	return cfg, nil
 }

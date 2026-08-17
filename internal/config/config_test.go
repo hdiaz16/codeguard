@@ -319,3 +319,34 @@ func TestCostoMicrosCuentaLaCache(t *testing.T) {
 		t.Error("una llamada servida desde caché no es gratis")
 	}
 }
+
+// El primo vivo de max_diff_tokens: 0 — lo destapó el arreglo de aquél. Un
+// timeout_ms de 0 escrito a mano creaba un context que NACE vencido
+// (time.Duration(0) en WithTimeout es un plazo ya agotado) y la explicación
+// del panel fallaba al instante. La sombra se salvaba por el suelo de
+// plazoSombra y la UI porque trata el 0 aparte — pero eso era suerte de cada
+// llamador, no una garantía. La garantía vive en Load, donde nace el cfg.
+func TestUnTimeoutMsDeCeroVuelveAlDefault(t *testing.T) {
+	casos := []struct {
+		nombre string
+		valor  string
+		quiero int
+	}{
+		{"cero escrito a mano", "timeout_ms: 0", timeoutMsPorDefecto},
+		{"negativo", "timeout_ms: -5", timeoutMsPorDefecto},
+		{"un valor de verdad se respeta", "timeout_ms: 90000", 90000},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Setenv("LOCALAPPDATA", t.TempDir())
+			cfg, err := Load(repoConConfig(t, configMinima+"llm:\n  "+c.valor+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.LLM.TimeoutMs != c.quiero {
+				t.Errorf("con `%s` quedó TimeoutMs=%d, se esperaba %d",
+					c.valor, cfg.LLM.TimeoutMs, c.quiero)
+			}
+		})
+	}
+}
