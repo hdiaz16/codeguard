@@ -3,7 +3,6 @@ package linters
 import (
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"sort"
@@ -12,6 +11,7 @@ import (
 
 	"codeguard/internal/engines"
 	"codeguard/internal/gitdiff"
+	"codeguard/internal/instalacion"
 )
 
 // Piezas que comparten los dos motores de Java: javafmt (google-java-format) y
@@ -112,13 +112,15 @@ func esJavaGenerado(rel string) bool {
 
 // dirMotores es donde el instalador deja los motores descargables.
 //
-// La ruta está duplicada respecto a cmd/codeguard (DirMotores) porque internal/
-// no puede importar cmd/. gitleaks y trivy no la necesitan: son .exe y el
-// instalador mete este directorio en el PATH, así que les basta exec.LookPath.
-// Un .jar no se resuelve por PATH — hay que saber dónde está.
-func dirMotores() string {
-	return filepath.Join(os.Getenv("LOCALAPPDATA"), "CodeGuard", "engines")
-}
+// gitleaks y trivy no la necesitan: son .exe y el instalador mete este
+// directorio en el PATH, así que les basta exec.LookPath. Un .jar no se
+// resuelve por PATH — hay que saber dónde está.
+//
+// La resuelve internal/instalacion y no esta función porque cmd/codeguard
+// necesita la misma ruta, internal/ no puede importar cmd/, y la copia que eso
+// obligaba a mantener tenía el mismo agujero de ejecución de código. Devuelve
+// "" cuando no hay directorio resoluble; ver herramientaJava.
+func dirMotores() string { return instalacion.DirMotores() }
 
 // herramientaJava localiza una herramienta instalada cuyo NOMBRE lleva la
 // versión dentro, y devuelve su ruta y esa versión.
@@ -136,6 +138,15 @@ func dirMotores() string {
 // una herramienta sin instalar es asunto de configuración, no una avería.
 func herramientaJava(patron, prefijo, sufijo string) (string, string, error) {
 	dir := dirMotores()
+	// Sin directorio de motores NO se busca, y hay que decirlo aquí aunque
+	// dirMotores ya devuelva "": filepath.Join("", patron) no da una ruta vacía,
+	// deja el patrón SUELTO, y Glob lo resolvería contra el directorio de
+	// trabajo — que durante un commit es el repo que se analiza. Sin esta
+	// guarda, al repo hostil le bastaría con plantar el .jar en su raíz en vez
+	// de en CodeGuard\engines: el mismo agujero movido un directorio.
+	if dir == "" {
+		return "", "", fmt.Errorf("no hay directorio de motores donde buscar %s: %w", patron, fs.ErrNotExist)
+	}
 	rutas, err := filepath.Glob(filepath.Join(dir, patron))
 	if err != nil || len(rutas) == 0 {
 		return "", "", fmt.Errorf("no hay ningún %s en %s: %w", patron, dir, fs.ErrNotExist)

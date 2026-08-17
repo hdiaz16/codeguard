@@ -20,6 +20,7 @@ package pipeline_test
 // mismos 15.
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,9 +59,13 @@ func TestConDaemonYSinDaemonElVeredictoEsElMismo(t *testing.T) {
 	// ── Ruta 1: sin daemon ────────────────────────────────────────────────
 	datosSin := t.TempDir()
 	prestarLaBaseDeTrivy(t, datosSin)
-	calentar(t, bin, repo, datosSin, `\\.\pipe\codeguard-verificacion-sin-daemon`)
-	sinDaemon, salidaSin := huellasPorElPipe(t, bin, repo, datosSin,
-		`\\.\pipe\codeguard-verificacion-sin-daemon`)
+	// Un nombre que nadie más puede estar usando: la premisa de esta rama es que
+	// NADIE conteste, y con un nombre fijo bastaba un daemon de otra corrida en
+	// esa dirección para que sí contestara y la comparación dejara de medir lo
+	// que dice medir.
+	pipeSin := pipeDePrueba(t) + "-sin"
+	calentar(t, bin, repo, datosSin, pipeSin)
+	sinDaemon, salidaSin := huellasPorElPipe(t, bin, repo, datosSin, pipeSin)
 	if !strings.Contains(salidaSin, "daemon:offline") {
 		t.Fatalf("esta corrida NO fue sin daemon: alguien contestó por el pipe. "+
 			"Comparar contra ella no demostraría nada.\n%s", salidaSin)
@@ -75,7 +80,7 @@ func TestConDaemonYSinDaemonElVeredictoEsElMismo(t *testing.T) {
 	// en la máquina, la prueba estaría comparando contra OTRA versión del
 	// producto y diría "coinciden" sin haber medido este código.
 	datosCon := t.TempDir()
-	pipe := `\\.\pipe\codeguard-verificacion-con-daemon`
+	pipe := pipeDePrueba(t) + "-con"
 	prestarLaBaseDeTrivy(t, datosCon)
 	arrancarDaemon(t, binDaemon, datosCon, pipe)
 
@@ -229,30 +234,109 @@ func arrancarDaemon(t *testing.T, binDaemon, datos, pipe string) {
 // nil y la capa LLM se apaga en silencio.
 func arrancarDaemonCon(t *testing.T, binDaemon, datos, pipe string, entorno []string) {
 	t.Helper()
+	exigirPipeLibre(t, pipe)
+
 	c := exec.Command(binDaemon)
 	c.Env = entorno
 	if err := c.Start(); err != nil {
 		t.Fatalf("no se pudo arrancar el daemon: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = c.Process.Kill()
-		_, _ = c.Process.Wait()
-	})
+	// El Job Object es lo que impide que este daemon sobreviva a la prueba
+	// aunque el proceso de pruebas se muera de golpe; el Kill de abajo es el
+	// camino ordenado. Van los dos: el Kill cierra rápido en el caso normal y
+	// el job cubre el caso en que nadie llega a ejecutar el Cleanup.
+	contenerDaemon(t, c)
+	// Sólo Kill: la goroutine de esperarAlPipe es la dueña de Wait, y llamarlo
+	// dos veces sobre el mismo proceso devuelve un error espurio.
+	t.Cleanup(func() { _ = c.Process.Kill() })
 
-	limite := time.Now().Add(60 * time.Second)
-	for time.Now().Before(limite) {
-		espera := 500 * time.Millisecond
-		conn, err := winio.DialPipe(pipe, &espera)
-		if err == nil {
-			conn.Close()
-			return
-		}
-		if c.ProcessState != nil {
-			t.Fatalf("el daemon se murió antes de atender el pipe.\n%s", colaDelLog(t, datos))
-		}
-		time.Sleep(300 * time.Millisecond)
+	if err := esperarAlPipe(c, pipe, 60*time.Second); err != nil {
+		t.Fatalf("%v\n%s", err, colaDelLog(t, datos))
 	}
-	t.Fatalf("el daemon no atendió %s en 60 s.\n%s", pipe, colaDelLog(t, datos))
+}
+
+// exigirPipeLibre falla si YA hay alguien atendiendo ese pipe antes de que
+// arranquemos nuestro daemon.
+//
+// Sin esta comprobación, una colisión no se nota: esperarAlPipe sólo pregunta
+// si el nombre CONTESTA, no si contesta el proceso que acabamos de lanzar. Con
+// un daemon ajeno en ese nombre, el nuestro falla al escuchar —«Access is
+// denied», porque el pipe ya está tomado— pero sigue vivo, esperarAlPipe
+// devuelve nil de inmediato y la prueba entera conversa con el proceso
+// EQUIVOCADO: el de la corrida anterior, con su %TEMP%, su configuración y su
+// proveedor falso ya desaparecido.
+//
+// Medido en esta máquina: un codeguard-daemon.exe huérfano de las 23:36 seguía
+// reteniendo el pipe de la verificación LLM, y un DialPipe contra ese nombre
+// respondía al instante. El síntoma que producía —«la sombra no registró
+// ningún hallazgo del modelo en 30 s»— no menciona ni pipes ni daemons, y
+// aparece en otro test y horas después.
+//
+// Con los nombres ya únicos por proceso (ver pipeDePrueba) esto no debería
+// dispararse nunca. Está para que, el día que se dispare, diga QUÉ pasa.
+func exigirPipeLibre(t *testing.T, pipe string) {
+	t.Helper()
+	espera := 500 * time.Millisecond
+	conn, err := winio.DialPipe(pipe, &espera)
+	if err != nil {
+		return // nadie contesta: el nombre es nuestro
+	}
+	conn.Close()
+	t.Fatalf("ya hay un proceso atendiendo %s antes de que arrancáramos el daemon.\n"+
+		"Casi seguro es un codeguard-daemon.exe huérfano de una corrida anterior "+
+		"(mátalo y repite). Si se sigue adelante, esta prueba mediría ESE daemon "+
+		"y no el que compila este árbol.", pipe)
+}
+
+// pipeDePrueba arma un nombre de pipe que no puede chocar con nadie: el de la
+// prueba MÁS el PID del proceso de pruebas.
+//
+// Sólo con el nombre de la prueba no basta, y el fallo es de los caros: dos
+// corridas del mismo test —dos agentes a la vez, o una corrida anterior que
+// dejó su daemon vivo— aterrizan en el mismo nombre. El PID las separa porque
+// es lo único que distingue a dos ejecuciones del mismo binario de pruebas.
+func pipeDePrueba(t *testing.T) string {
+	t.Helper()
+	limpio := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ' ' {
+			return '-'
+		}
+		return r
+	}, t.Name())
+	return fmt.Sprintf(`\\.\pipe\codeguard-verificacion-%s-%d`, limpio, os.Getpid())
+}
+
+// esperarAlPipe espera a que el daemon atienda su pipe, y distingue "tarda" de
+// "se murió al arrancar".
+//
+// La distinción es todo el valor de la función: un daemon que no arranca y uno
+// que va lento se parecen desde fuera —el pipe no contesta en los dos casos— y
+// el diagnóstico que se da manda a buscar en sitios opuestos.
+//
+// Enterarse de la muerte exige LLAMAR A Wait, y por eso Wait vive en su propia
+// goroutine. Antes el bucle consultaba c.ProcessState, que sólo rellena Wait: sin
+// nadie llamándolo, el campo se quedaba nil pasara lo que pasara y la rama de "se
+// murió" era código muerto. Un daemon caído desde el primer milisegundo agotaba
+// los 60 s y se le acusaba de lento.
+func esperarAlPipe(c *exec.Cmd, pipe string, plazo time.Duration) error {
+	murio := make(chan error, 1) // con buffer: la goroutine no se queda colgada si nadie lee
+	go func() { murio <- c.Wait() }()
+
+	limite := time.After(plazo)
+	for {
+		espera := 500 * time.Millisecond
+		if conn, err := winio.DialPipe(pipe, &espera); err == nil {
+			conn.Close()
+			return nil
+		}
+		select {
+		case err := <-murio:
+			return fmt.Errorf("el daemon se murió antes de atender el pipe: %v", err)
+		case <-limite:
+			return fmt.Errorf("el daemon no atendió %s en %s", pipe, plazo)
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
 }
 
 func construirDaemon(t *testing.T) string {

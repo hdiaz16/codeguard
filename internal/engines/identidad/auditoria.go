@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -115,6 +114,22 @@ func Auditar(ctx context.Context, op Opciones) (Auditoria, error) {
 	dirMotores, dirPython := op.DirMotores, op.DirPython
 	binTrivy := op.BinTrivy
 	if binTrivy == "" {
+		// Sin directorio de motores no se audita NADA, y por el mismo motivo
+		// que en Verificar: filepath.Join("", "trivy.exe") no da una ruta
+		// vacía, deja "trivy.exe" RELATIVO, que se resuelve contra el
+		// directorio de trabajo — el repo analizado. Pero aquí es peor que
+		// allí: Verificar sólo LEE el binario para firmarlo, y esto lo
+		// EJECUTA.
+		//
+		// Hoy el único llamador se guarda antes de llamar, así que no es
+		// alcanzable. Da igual: el invariante es de esta función, no de quien
+		// la llama, y ese es exactamente el argumento con el que se puso la
+		// guarda dentro de Verificar. Dejarla fuera aquí sería sostener el
+		// principio sólo donde ya dolía.
+		if dirMotores == "" {
+			return a, fmt.Errorf("sin directorio de motores no hay auditoría posible: " +
+				"no se pudo resolver dónde están instalados")
+		}
 		binTrivy = filepath.Join(dirMotores, "trivy.exe")
 	}
 	if _, err := os.Stat(binTrivy); err != nil {
@@ -266,9 +281,8 @@ func normalizarPaquete(n string) string {
 // escáner nuevo entra con un control así, porque la única diferencia entre
 // "está limpio" y "no miré" es una prueba que falle cuando debe fallar.
 func escanear(ctx context.Context, binTrivy, objetivo, nombre string) ([]Riesgo, error) {
-	cmd := exec.CommandContext(ctx, binTrivy,
+	cmd := comandoIdentidad(ctx, binTrivy,
 		"rootfs", "--scanners", "vuln", "--format", "json", "--quiet", "--skip-db-update", objetivo)
-	cmd.Env = proc.Entorno()
 	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
 	if err != nil && len(salida.Stdout) == 0 {
 		return nil, fmt.Errorf("trivy no pudo mirarlo: %w", err)

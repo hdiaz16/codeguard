@@ -5,9 +5,9 @@
 <title>CodeGuard — explorador de código 3D</title>
 <style>
   :root {
-    --d0:#0b0e11; --d1:#151a1f; --d2:#1e252b; --d3:#2a323a;
-    --ink:#e8edf1; --ink-2:#a3aeb7; --ink-3:#6f7b85;
-    --fn:#7fd4a8; --method:#e0c579; --query:#e08a72; --hot:#ff5f4d;
+    --d0:#1a1c20; --d1:#25272c; --d2:#2e3138; --d3:#383c44;
+    --ink:#eaf3f0; --ink-2:#a7b3b0; --ink-3:#78847f;
+    --fn:#6fdcb4; --method:#e5b54a; --query:#e08a72; --hot:#e4604b;
   }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--d0); color:var(--ink);
@@ -107,11 +107,11 @@
     if (!g) { return; }
     g.innerHTML =
       '<div style="display:grid;place-items:center;height:100%;text-align:center;' +
-      'font:14px \'Segoe UI\';color:#a3aeb7;padding:40px"><div>' +
-      '<b style="color:#e8edf1;font-size:16px">' + titulo + '</b><br><br>' +
-      '<span style="color:#6f7b85;font-size:12px;font-family:Consolas,monospace">' +
+      'font:14px \'Segoe UI\';color:#a7b3b0;padding:40px"><div>' +
+      '<b style="color:#eaf3f0;font-size:16px">' + titulo + '</b><br><br>' +
+      '<span style="color:#78847f;font-size:12px;font-family:Consolas,monospace">' +
       String(detalle).replace(/</g, "&lt;") + '</span><br><br>' +
-      '<span style="color:#6f7b85;font-size:12px">Reporta esto con: codeguard graph --deep</span>' +
+      '<span style="color:#78847f;font-size:12px">Reporta esto con: codeguard graph --deep</span>' +
       '</div></div>';
   }
   window.addEventListener("error", function (e) {
@@ -205,7 +205,7 @@ try {
   // proyectos para que pueda saltar a otro sin cerrar la ventana.
   const otros = (DATA && DATA.proyectos || []).filter(p => !p.activo);
   const lista = otros.length
-    ? `<div style="margin-top:26px"><div style="color:#6f7b85;font-size:12px;margin-bottom:9px">
+    ? `<div style="margin-top:26px"><div style="color:#78847f;font-size:12px;margin-bottom:9px">
          Otros proyectos con contexto:</div>
        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">${
          otros.map(p => `<button data-root="${p.root}" style="background:#161b20;border:0;
@@ -214,11 +214,11 @@ try {
     : "";
   document.body.innerHTML =
     `<div style="display:grid;place-items:center;height:100%;text-align:center;
-       font:14px 'Segoe UI';color:#a3aeb7;padding:40px">
+       font:14px 'Segoe UI';color:#a7b3b0;padding:40px">
        <div style="max-width:620px">
-       <b style="color:#e8edf1;font-size:16px">No se pudo mostrar el grafo</b><br><br>
+       <b style="color:#eaf3f0;font-size:16px">No se pudo mostrar el grafo</b><br><br>
        <span style="white-space:pre-line">${String(err.message || err)}</span><br><br>
-       <span style="color:#6f7b85;font-size:12px">Detalle técnico en
+       <span style="color:#78847f;font-size:12px">Detalle técnico en
        %LOCALAPPDATA%\\codeguard\\daemon.log</span>
        ${lista}</div></div>`;
   document.body.addEventListener("click", e => {
@@ -230,7 +230,7 @@ try {
   throw err;
 }
 
-const COLORS = { func:"#7fd4a8", method:"#e0c579", query:"#e08a72" };
+const COLORS = { func:"#6fdcb4", method:"#e5b54a", query:"#e08a72" };
 const DIM = "#2b343c";
 
 // grados y adyacencia
@@ -282,26 +282,26 @@ const el = document.getElementById("graph");
 // Sin la librería no hay grafo: decirlo en pantalla, no morir en silencio.
 if (typeof ForceGraph3D !== "function") {
   el.innerHTML = `<div style="display:grid;place-items:center;height:100%;text-align:center;
-    font:14px 'Segoe UI';color:#a3aeb7;padding:40px">
-    <div><b style="color:#e8edf1;font-size:16px">No se pudo iniciar el motor 3D</b><br><br>
+    font:14px 'Segoe UI';color:#a7b3b0;padding:40px">
+    <div><b style="color:#eaf3f0;font-size:16px">No se pudo iniciar el motor 3D</b><br><br>
     La librería de render no cargó (3d-force-graph.js).<br>
-    <span style="color:#6f7b85;font-size:12px">Datos del grafo: ${DATA.nodes.length} funciones,
+    <span style="color:#78847f;font-size:12px">Datos del grafo: ${DATA.nodes.length} funciones,
     ${DATA.edges.length} relaciones — el análisis sí funcionó.</span></div></div>`;
   throw new Error("ForceGraph3D no disponible");
 }
 const Graph = ForceGraph3D()(el)
-  .backgroundColor("#0b0e11")
+  .backgroundColor("#1a1c20")
   .graphData(gData)
   .nodeId("id")
   .nodeLabel(n => {
     const f = issueOf.get(n.id);
     const issue = f
-      ? `<br><span style="color:${f.blocking ? "#ff5f4d" : "#e5b54a"};font-size:11px">
+      ? `<br><span style="color:${f.blocking ? "#e4604b" : "#e5b54a"};font-size:11px">
            ${f.blocking ? "⛔ BLOQUEA" : "⚠ aviso"} · ${f.rule}: ${f.message}</span>`
-      : (touched.has(n.id) ? `<br><span style="color:#a3aeb7;font-size:10.5px">✎ tocada en este commit</span>` : "");
-    return `<div style="background:#151a1fe6;padding:6px 10px;border-radius:8px;
-      font:12px 'Segoe UI';color:#e8edf1;box-shadow:0 4px 14px #000a;max-width:340px;white-space:normal">
-      <b>${n.label}</b><br><span style="color:#6f7b85;font-size:10.5px">${n.pkg} · ${n.file}:${n.line}</span>${issue}</div>`;
+      : (touched.has(n.id) ? `<br><span style="color:#a7b3b0;font-size:10.5px">✎ tocada en este commit</span>` : "");
+    return `<div style="background:#25272ce6;padding:6px 10px;border-radius:8px;
+      font:12px 'Segoe UI';color:#eaf3f0;box-shadow:0 4px 14px #000a;max-width:340px;white-space:normal">
+      <b>${n.label}</b><br><span style="color:#78847f;font-size:10.5px">${n.pkg} · ${n.file}:${n.line}</span>${issue}</div>`;
   })
   .nodeVal(n => {
     let v = 1 + Math.min(n.deg * 0.7, 14);
@@ -310,7 +310,7 @@ const Graph = ForceGraph3D()(el)
     return v;
   })
   .nodeColor(n => {
-    if (state.selected) return related(n.id) ? (n.id === state.selected ? "#ff5f4d" : COLORS[n.kind]) : DIM;
+    if (state.selected) return related(n.id) ? (n.id === state.selected ? "#e4604b" : COLORS[n.kind]) : DIM;
     if (!visible(n)) return DIM;
     const f = issueOf.get(n.id);
     if (f) return f.blocking ? "#ff4b38" : "#e5b54a";      // bloqueante / aviso
@@ -328,7 +328,7 @@ const Graph = ForceGraph3D()(el)
   })
   .linkColor(l => {
     const s = l.source.id ?? l.source, t = l.target.id ?? l.target;
-    if (state.selected) return related(s) && related(t) ? "#ff5f4d" : "#1a2026";
+    if (state.selected) return related(s) && related(t) ? "#e4604b" : "#1a2026";
     return l.kind === "query" ? "rgba(224,138,114,.7)" : "rgba(130,160,185,.42)";
   })
   .linkWidth(l => {

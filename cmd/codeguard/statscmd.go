@@ -25,7 +25,10 @@ func statsCmd() *cobra.Command {
 			repoID := ""
 			if !allRepos {
 				if root, err := gitdiff.RepoRoot("."); err == nil {
-					repoID = store.CanonicalRepoID(gitRemote(root))
+					// Con el respaldo de RepoIDDe: sin él, un repo sin remote
+					// buscaba bajo la cadena vacía y `stats` decía "sin hallazgos
+					// registrados todavía" con la base llena.
+					repoID = store.RepoIDDe(root, gitRemote(root))
 				}
 			}
 

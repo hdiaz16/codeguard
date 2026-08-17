@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,7 +51,7 @@ func main() {
 	}
 	root.AddCommand(ciCmd(), versionCmd(), hookCmd(), installCmd(), repairCmd(), daemonCmd(),
 		baselineCmd(), statsCmd(), rulesCmd(), initCmd(), graphCmd(), reportCmd(), statusCmd(),
-		enginesCmd(), configCmd(), forgetCmd(), syncCmd())
+		enginesCmd(), configCmd(), forgetCmd(), syncCmd(), daemonStopCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "codeguard:", err)
 		os.Exit(2)
@@ -141,8 +140,38 @@ func ciCmd() *cobra.Command {
 			}
 
 			// Modo sombra (fase 1): registra todo, nunca falla el job.
-			if !shadow && res.Verdict == pipeline.Block {
-				os.Exit(1)
+			if !shadow {
+				if res.Verdict == pipeline.Block {
+					os.Exit(1)
+				}
+				// Y una capa que NO MIRÓ tampoco es un job verde. Medido: el
+				// mismo `db.Query("… " + id)` sale con exit 1 si el rulepack
+				// está y con exit 0 si falta, imprimiendo "capas degradadas"
+				// que ningún CI lee. El porqué de qué entra y qué no está en
+				// pipeline.SinGarantia.
+				if rotas := pipeline.SinGarantia(res.Degraded); len(rotas) > 0 {
+					fmt.Println("codeguard: NO PUEDO GARANTIZAR ESTE COMMIT —",
+						strings.Join(rotas, ", "))
+					fmt.Println("  Estas capas no llegaron a mirar, así que un problema suyo pasaría sin verse.")
+					// Un plazo agotado manda a un sitio distinto que un rulepack
+					// ausente, y decirlo ahorra una tarde: el primero suele ser
+					// contención del runner y se arregla reintentando el job; el
+					// segundo es configuración y no se arregla solo. Sin esta
+					// distinción, quien lea el log se pone a buscar un bug en el
+					// código donde sólo hubo una máquina ocupada.
+					porPlazo := false
+					for _, r := range rotas {
+						if strings.HasSuffix(r, ":plazo") {
+							porPlazo = true
+						}
+					}
+					if porPlazo {
+						fmt.Println("  Hay capas que no terminaron en el plazo (5 min): suele ser un runner " +
+							"lento o cargado. REINTENTA EL JOB antes de buscar nada en el código.")
+					}
+					fmt.Println("  Arregla el runner (rulepack y motores) o usa `--shadow` si aceptas registrar sin bloquear.")
+					os.Exit(1)
+				}
 			}
 			return nil
 		},
@@ -180,7 +209,11 @@ func printSummary(res *pipeline.Result) {
 		if f.Blocking {
 			mark = "BLOQUEA"
 		}
-		fmt.Printf("  [%s] %s %s:%d  %s\n", mark, f.RuleKey, f.File, f.Line, f.Message)
+		// Mismo saneado que en el hook y por lo mismo: el mensaje sale del YAML
+		// de la regla, que puede venir del rulepack vendoreado en el repo que se
+		// está analizando. Aquí encima el texto acaba en el log del CI, que es
+		// donde se mira cuando algo ya salió mal.
+		fmt.Printf("  [%s] %s %s:%d  %s\n", mark, f.RuleKey, f.File, f.Line, mensajeDeHallazgo(f.Message))
 	}
 	_ = finding.Finding{}
 }
@@ -193,12 +226,56 @@ func persistWith(repoRoot string, cfg *config.Config, res *pipeline.Result, file
 	return persistRun(repoRoot, cfg, res, filesChanged, bypassed, store.NewULID())
 }
 
+// dirDatos devuelve el directorio donde vive la BD de runs, con un único
+// invariante: SIEMPRE una ruta absoluta.
+//
+// Antes la comprobación era `dbDir == filepath.Join("", "codeguard")`, que vale
+// "codeguard", así que atrapaba exactamente el caso LOCALAPPDATA="" y ninguno
+// más. Medido: con "   " sale `   \codeguard` y con un valor relativo sale
+// `datos\local\codeguard`; los dos son relativos y los dos se colaban. Y como
+// el directorio de trabajo durante un commit ES el repo que se está analizando,
+// la BD y su carpeta se creaban dentro del repo del usuario, que se encuentra
+// archivos que no creó y que git le ofrece añadir al commit siguiente.
+//
+// (El de los espacios no llegaba a escribir, pero por accidente: Windows
+// rechaza un componente hecho sólo de espacios, así que fallaba el MkdirAll y la
+// telemetría se perdía en silencio. Escapar de la guarda y que te salve el
+// sistema operativo no es lo mismo que estar protegido.)
+//
+// El arreglo es comprobar la propiedad que se quiere en vez de deducirla
+// comparando contra una cadena construida — el mismo razonamiento indirecto que
+// causó H007 (config) y N001 (ejecución de código). Se usa filepath.IsAbs, igual
+// que config.RutaLLMLocal e instalacion.DirMotores, para no inventar una tercera
+// forma de decir lo mismo.
+//
+// Lo que cambia respecto a esos dos es el DESENLACE, y a propósito: ellos
+// devuelven "" y su llamador no hace nada, porque leer una config equivocada o
+// ejecutar un binario equivocado es peor que no hacerlo. Aquí el destino son
+// datos de telemetría, que nunca tumban el análisis (P4), y este sitio ya había
+// elegido el temporal para el runner sin LOCALAPPDATA. Se conserva esa elección,
+// que además es la que ya usan registry.go y store.go para lo mismo: perder el
+// historial de runs es un fastidio, no un fallo de seguridad. Sólo se devuelve
+// error si ni siquiera el temporal es absoluto, porque entonces no queda ningún
+// sitio válido y escribir igualmente sería volver a meterse en el repo.
+func dirDatos() (string, error) {
+	if dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard"); filepath.IsAbs(dir) {
+		return dir, nil
+	}
+	dir := filepath.Join(os.TempDir(), "codeguard")
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("no hay ningún directorio absoluto donde guardar la "+
+			"base de datos: LOCALAPPDATA=%q y el temporal del sistema es %q",
+			os.Getenv("LOCALAPPDATA"), os.TempDir())
+	}
+	return dir, nil
+}
+
 // persistRun guarda el run con el ID dado — el hook pasa el mismo run id que
 // viaja en el trailer Codeguard-Run-Id, para que BD y trailer coincidan.
 func persistRun(repoRoot string, cfg *config.Config, res *pipeline.Result, filesChanged int, bypassed bool, runID string) error {
-	dbDir := filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard")
-	if dbDir == filepath.Join("", "codeguard") { // sin LOCALAPPDATA (runner Linux)
-		dbDir = filepath.Join(os.TempDir(), "codeguard")
+	dbDir, err := dirDatos()
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		return err
@@ -210,10 +287,7 @@ func persistRun(repoRoot string, cfg *config.Config, res *pipeline.Result, files
 	defer st.Close()
 
 	remote := gitRemote(repoRoot)
-	repoID := store.CanonicalRepoID(remote)
-	if remote == "" {
-		repoID = store.CanonicalRepoID("local/" + filepath.Base(repoRoot))
-	}
+	repoID := store.RepoIDDe(repoRoot, remote)
 	if err := st.UpsertRepo(repoID, remote, filepath.Base(repoRoot)); err != nil {
 		return err
 	}
@@ -233,7 +307,7 @@ func persistRun(repoRoot string, cfg *config.Config, res *pipeline.Result, files
 }
 
 func gitRemote(repoRoot string) string {
-	out, err := exec.Command("git", "-C", repoRoot, "remote", "get-url", "origin").Output()
+	out, err := gitCmd("-C", repoRoot, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return ""
 	}
@@ -241,7 +315,7 @@ func gitRemote(repoRoot string) string {
 }
 
 func gitBranch(repoRoot string) string {
-	out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	out, err := gitCmd("-C", repoRoot, "rev-parse", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
 		return "unknown"
 	}

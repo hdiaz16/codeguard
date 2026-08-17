@@ -151,8 +151,12 @@ func cicloSync(t *testing.T, dsn string, central *sql.DB, rb func(string) string
 
 	// ── Reintento tras morir entre empujar y marcar ──
 	// Borrar las marcas simula el peor caso: TODO se re-empuja, y el
-	// ON CONFLICT (id) DO NOTHING lo deja pasar sin duplicar. El resumen
-	// cuenta cero porque nada entró de verdad — RowsAffected no miente.
+	// ON CONFLICT (id) lo deja pasar sin duplicar. Las tablas inmutables
+	// cuentan cero porque nada entró de verdad — RowsAffected no miente.
+	// Runs sí cuenta sus tres filas, y también es la verdad: su ON CONFLICT es
+	// DO UPDATE (es la única tabla que muta después de crearse, ver
+	// TestElRiesgoQueLlegaTardeAlcanzaAlCentral), así que re-empujarla ESCRIBE
+	// aunque el contenido venga igual.
 	if _, err := s.db.Exec(`DELETE FROM sync_marcas`); err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +164,11 @@ func cicloSync(t *testing.T, dsn string, central *sql.DB, rb func(string) string
 	if err != nil {
 		t.Fatalf("re-empuje sin marcas: %v", err)
 	}
-	if res4.Runs+res4.Findings+res4.Feedback+res4.LLMCalls != 0 {
-		t.Errorf("el reintento no debía contar filas repetidas: %+v", res4)
+	if res4.Findings+res4.Feedback+res4.LLMCalls != 0 {
+		t.Errorf("el reintento no debía contar filas repetidas de las tablas inmutables: %+v", res4)
+	}
+	if res4.Runs != 3 {
+		t.Errorf("runs se re-escribe al re-empujar (DO UPDATE): se esperaban 3, %+v", res4)
 	}
 	if n := contar(t, central, "findings"); n != 3 {
 		t.Errorf("duplicados tras el reintento: %d findings", n)

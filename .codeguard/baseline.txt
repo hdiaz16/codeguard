@@ -30,3 +30,4 @@ e3386511ff42e250ae91e2129854b7be692721d54088025c54352245fc7e2187  # ruff-format 
 # (De paso: el truncamiento de int64(usd*1e6) sí se corrigió a math.Round —
 # sesgaba el gasto acumulado a la baja en la misma cifra que vigila el tope.)
 8fa0e32f56246937c62118ae648ed1adf99e1293d3512c7b7b48de230e16d550  # go-dinero-float internal/config/config.go:107-108
+f81adf589e238978aeb88fd37cb163b2bc3a47d0aa415f04bc88d47fef8f79b5  # ts-innerhtml-var sitio/src/js/main.js (los 4 sitios: van escapados con esc(); la huella colapsa por regla+archivo, ver pendiente de ComputeFingerprint)

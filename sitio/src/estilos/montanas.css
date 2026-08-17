@@ -1,0 +1,53 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   La cordillera de la portada — el mismo paisaje del instalador.
+
+   Va al fondo de la primera sección, detrás del contenido. La composición es
+   la del splash del asistente: el orbe arriba, saliendo sobre las crestas.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.montanas {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: clamp(260px, 42vh, 420px);
+  z-index: 0;
+  pointer-events: none;
+  /* El SVG llega hasta el borde inferior de la portada; este degradado funde
+     su parte de arriba con el fondo de la página para que no se vea el canto
+     recto de la caja. El paisaje tiene que emerger, no estar pegado. */
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 22%);
+  mask-image: linear-gradient(180deg, transparent, #000 22%);
+}
+
+.montanas .cordillera { display: block; width: 100%; height: 100%; }
+
+/* La bruma deriva de lado a lado, como en los 80 fotogramas del splash. Sólo
+   transform: el compositor la mueve sin repintar el SVG entero. */
+.montanas .bruma {
+  animation-name: deriva;
+  animation-timing-function: cubic-bezier(.45, 0, .55, 1);
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+  will-change: transform;
+}
+@keyframes deriva {
+  from { transform: translateX(calc(var(--deriva, 16px) * -1)); }
+  to   { transform: translateX(var(--deriva, 16px)); }
+}
+
+/* El horizonte: una línea de luz justo donde acaba la última cresta, que es
+   lo que separa el paisaje del resto de la página en vez de un borde. */
+.montanas::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(184,247,228,.14) 35%, rgba(184,247,228,.14) 65%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .montanas .bruma { animation: none; }
+}
+
+/* En pantallas bajas el paisaje se come el contenido: se recorta y se
+   atenúa, pero no desaparece — es la identidad de la marca, no un adorno. */
+@media (max-height: 620px) {
+  .montanas { height: 200px; opacity: .8; }
+}

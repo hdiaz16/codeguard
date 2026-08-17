@@ -3,6 +3,7 @@ package proc
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -63,11 +64,42 @@ func TestCorrerAcotaSalidaReal(t *testing.T) {
 	if err == nil {
 		t.Error("recortar debe reportarse como error para que el motor no parsee JSON incompleto")
 	}
+	// El motor tiene que poder reconocer ESTE fallo concreto para tolerarlo sin
+	// tolerar de paso un plazo agotado: por identidad, no por la bandera.
+	if !errors.Is(err, ErrRecortada) {
+		t.Errorf("el error fue %v; un recorte limpio debe envolver ErrRecortada", err)
+	}
 	if !salida.Recortada {
 		t.Fatal("no marcó la salida como recortada")
 	}
 	if got := len(salida.Stdout); got > 1024 {
 		t.Errorf("guardó %d bytes pese al tope de 1024", got)
+	}
+}
+
+// El recorte no puede tapar al plazo agotado. Cuando el motor escupe de más Y
+// además lo matan por tiempo, la bandera Recortada vale true igual que en un
+// recorte limpio; la diferencia sólo está en el error, y el que llama la usa
+// para decidir si tolera la salida parcial o aborta.
+func TestCorrerNoDisfrazaElPlazoDeRecorte(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("la prueba usa cmd.exe")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "cmd", "/c",
+		"echo "+strings.Repeat("a", 40)+" & waitfor /t 10 nadie")
+	salida, err := Correr(ctx, cmd, 16)
+
+	if !salida.Recortada {
+		t.Fatal("no marcó la salida como recortada: la prueba no está midiendo el cruce que dice medir")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("el error fue %v; el plazo agotado es la causa y tiene que viajar entero", err)
+	}
+	if errors.Is(err, ErrRecortada) {
+		t.Error("un proceso muerto por plazo se está reportando como recorte tolerable")
 	}
 }
 

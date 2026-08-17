@@ -11,6 +11,7 @@ import (
 	"os/exec"
 
 	"codeguard/internal/engines/proc"
+	"codeguard/internal/gitref"
 	"path/filepath"
 	"strings"
 )
@@ -60,10 +61,18 @@ type Diff struct {
 // línea, pero Windows no permite esos caracteres en un nombre de archivo y
 // CodeGuard sólo se distribuye para Windows. El día que haya build de Linux,
 // esto necesita `-z` como ya hace `Rastreados`.
+//
+// El entorno va acotado como el de cualquier otro motor. git es el hijo que más
+// veces se lanza —cada commit pasa por aquí— y heredaba el entorno completo del
+// proceso, con la clave del modelo dentro; ninguna de las operaciones que se le
+// piden (diff, ls-files, rev-parse) habla con ningún servicio ni la necesita.
+// EntornoGit conserva las GIT_*, que son las que le dicen qué índice está
+// mirando: filtrarlas cambiaría en silencio QUÉ se analiza en un `git commit -a`.
 func run(repoRoot string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", append([]string{"-c", "core.quotePath=false"}, args...)...)
 	proc.SinVentana(cmd)
 	cmd.Dir = repoRoot
+	cmd.Env = proc.EntornoGit()
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
@@ -78,24 +87,97 @@ func normalizeLF(b []byte) []byte {
 }
 
 // Range lee el diff base..head (modo ci).
+//
+// base y head son lo ÚNICO que entra aquí desde fuera: son los flags
+// --base/--head de `codeguard ci`, que en el CI se rellenan desde el workflow.
+// Se validan antes de tocar la línea de comandos porque sin eso git no ve un
+// rango, ve opciones suyas — y ahí empieza H021.
+//
+// Lo que pasaba, y es peor que un escaneo torcido: con --base "--output=/ruta",
+// `git diff` acepta la opción, ESCRIBE el archivo que le digan y devuelve exit
+// 0 con cero archivos cambiados. Range no daba error, main.go seguía adelante,
+// y el pipeline cortaba en la etapa 0 —"todos los archivos tocados están
+// excluidos", veredicto Skipped— sin llegar NUNCA a la etapa de secretos. El
+// proceso terminaba en EXIT 0 con el secreto sin detectar.
+//
+// Por eso la validación tiene que estar TAMBIÉN aquí y no sólo en el motor de
+// gitleaks: main.go llama a Range antes de montar el pipeline, así que una
+// frontera puesta únicamente en el motor se salta sin tocarla, simplemente
+// haciendo que no haya nada que analizar. Ese es el modo de fallo que más caro
+// ha salido en este repo: la compuerta no se fuerza, se deja sin trabajo.
+//
+// El criterio de validez es el de internal/gitref, compartido con el motor de
+// secretos para que las dos fronteras no se separen con el tiempo.
 func Range(repoRoot, base, head string) (*Diff, error) {
-	return read(repoRoot, []string{base + ".." + head})
+	rango, err := gitref.ValidarRango(base, head)
+	if err != nil {
+		return nil, fmt.Errorf("rango inválido: %w", err)
+	}
+	return read(repoRoot, nil, []string{rango})
 }
 
 // Staged lee el diff del índice (modo hook, fase 2).
 func Staged(repoRoot string) (*Diff, error) {
-	return read(repoRoot, []string{"--cached"})
+	return read(repoRoot, []string{"--cached"}, nil)
 }
 
-func read(repoRoot string, rangeArgs []string) (*Diff, error) {
+// read arma las dos pasadas de `git diff`. banderas son opciones fijas del
+// código; revs son los argumentos POSICIONALES, que en el modo ci vienen de
+// fuera y son los que hay que blindar.
+//
+// De ahí la separación, que antes no existía: --end-of-options le dice a git
+// que a partir de ahí no hay más opciones, pase lo que pase, así que un valor
+// como "--output=/ruta" se queda en argumento y no en bandera aunque la
+// validación de arriba fallara o la olvidara un llamador nuevo. Comprobado
+// contra git 2.43: sin él, git crea el archivo; con él, muere con exit 128 sin
+// escribir nada.
+//
+// Obliga a poner TODAS las banderas delante (git rechaza una opción que venga
+// detrás de un argumento posicional), que es el porqué de que --name-status y
+// --cached ya no se peguen al final.
+//
+// Y sólo se añade cuando hay algo posicional que proteger: en el modo staged no
+// entra nada de fuera, así que meterlo ahí no ganaría nada y le pediría git
+// 2.24 o superior al camino que corre en CADA commit.
+func read(repoRoot string, banderas, revs []string) (*Diff, error) {
 	// --no-textconv --no-ext-diff: paridad del hash entre máquinas (sección 4.1).
-	common := append([]string{"diff", "--no-textconv", "--no-ext-diff", "--no-color"}, rangeArgs...)
+	common := append([]string{"diff", "--no-textconv", "--no-ext-diff", "--no-color"}, banderas...)
+	armar := func(modo string) []string {
+		args := append(append([]string{}, common...), modo)
+		if len(revs) > 0 {
+			args = append(args, "--end-of-options")
+			args = append(args, revs...)
+			// El `--` de cierre no es redundante con --end-of-options: cortan
+			// cosas distintas. --end-of-options impide que un valor se lea como
+			// OPCIÓN; el `--` impide que se lea como RUTA.
+			//
+			// git tiene un tercer modo para este argumento que no es ni opción
+			// ni revisión: si no puede resolver "A..B" como rango, cae a
+			// pathspec. Y ahí está la asimetría que lo abría — medido contra
+			// git 2.43:
+			//
+			//	<sha>..noexiste  → exit 128  fatal: ambiguous argument
+			//	<sha>..*         → exit 0    (salida vacía)
+			//
+			// Un pathspec sin comodín tiene que existir; uno CON comodín no.
+			// Así que un `--head "*"` devolvía cero archivos con éxito, el
+			// pipeline cortaba en la etapa 0 con "todos los archivos tocados
+			// están excluidos", y la compuerta de secretos no llegaba a correr:
+			// commit permitido, secreto sin mirar, y ni una palabra.
+			//
+			// Con el `--` git se queda sin ese tercer modo y falla ruidosamente.
+			// Y no hace falta un atacante: un `--head "v1.*"` mal escrito en un
+			// workflow dejaba el CI en verde perpetuo.
+			args = append(args, "--")
+		}
+		return args
+	}
 
-	nameStatus, err := run(repoRoot, append(common, "--name-status")...)
+	nameStatus, err := run(repoRoot, armar("--name-status")...)
 	if err != nil {
 		return nil, err
 	}
-	unified, err := run(repoRoot, append(common, "--unified=3")...)
+	unified, err := run(repoRoot, armar("--unified=3")...)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +206,178 @@ func read(repoRoot string, rangeArgs []string) (*Diff, error) {
 		}
 	}
 	return d, nil
+}
+
+// LineaAnadida es una línea que el diff AÑADE, con el número que ocupa en el
+// archivo resultante — no en el parche.
+type LineaAnadida struct {
+	Linea int
+	Texto string
+}
+
+// AnadidasComoTextoStaged y AnadidasComoTextoRango devuelven, por archivo, las
+// líneas que el commit AÑADE, leyendo el diff con --text.
+//
+// EXISTEN PARA VER LO QUE GIT DECIDE NO ENSEÑAR, que es por donde se colaban
+// dos secretos enteros (medido contra gitleaks 8.30.1 y git 2.43):
+//
+//	.gitattributes con `creds.txt -diff`  → el diff normal muestra 0 bytes
+//	un byte NUL dentro del archivo        → el diff normal muestra 0 bytes
+//
+// En los dos casos git declara el archivo binario, no emite contenido, y
+// gitleaks —que escanea el parche que git le da— sale con 0 y escribe `[]` sin
+// haber mirado el secreto. Los dos ataques VIAJAN CON EL REPO: quien clone se
+// queda sin compuerta. Con --text git entrega el contenido igualmente, y ahí
+// están las dos líneas del token.
+//
+// --text NO se le pone al diff principal a propósito: ese diff alimenta el
+// informe, el presupuesto y las huellas de paridad, y volcar dentro de él los
+// bytes crudos de cada PNG (medido: 2 036 bytes por una imagen de 20 KB) los
+// rompería los tres. Esta lectura es aparte y sólo la consume la segunda pasada
+// de la compuerta de secretos.
+//
+// Lo que NO hay que intentar con esto, porque ya se probó y es falso: usar
+// «nuestro diff ve texto y gitleaks no» como prueba de sabotaje. Un binario
+// legítimo produce exactamente la misma señal —un PNG da 14 líneas añadidas que
+// git llama binarias— así que ese criterio bloquearía todo commit que añada una
+// imagen. Un NUL plantado y un binario de verdad son indistinguibles por
+// estructura; sólo se separan mirando el CONTENIDO, que es lo que hace la
+// segunda pasada.
+func AnadidasComoTextoStaged(repoRoot string) (map[string][]LineaAnadida, error) {
+	return anadidasComoTexto(repoRoot, []string{"--cached"}, nil)
+}
+
+func AnadidasComoTextoRango(repoRoot, base, head string) (map[string][]LineaAnadida, error) {
+	rango, err := gitref.ValidarRango(base, head)
+	if err != nil {
+		return nil, fmt.Errorf("rango inválido: %w", err)
+	}
+	return anadidasComoTexto(repoRoot, nil, []string{rango})
+}
+
+func anadidasComoTexto(repoRoot string, banderas, revs []string) (map[string][]LineaAnadida, error) {
+	// --unified=0: sin líneas de contexto. Aquí sólo interesa lo que ENTRA en
+	// el commit, y el contexto sería contenido ya commiteado que reescanear
+	// convertiría deuda vieja en un bloqueo nuevo sin salida (los secretos no
+	// se baselinan).
+	args := append([]string{"diff", "--no-textconv", "--no-ext-diff", "--no-color", "--text", "--unified=0"}, banderas...)
+	if len(revs) > 0 {
+		// Mismo blindaje que read(): --end-of-options para que un valor no se
+		// lea como opción, y -- para que no se lea como pathspec.
+		args = append(args, "--end-of-options")
+		args = append(args, revs...)
+		args = append(args, "--")
+	}
+	out, err := run(repoRoot, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make(map[string][]LineaAnadida)
+	var archivo string
+	var linea int
+	// enCabecera distingue el `+++ b/x` que ABRE un archivo de una línea
+	// añadida cuyo texto empieza por "++ ". Sin este estado, un commit que
+	// añada la línea literal `++ hola` se leería como una cabecera y todo lo
+	// que viniera detrás se atribuiría a un archivo llamado "hola" —o se
+	// perdería. Sólo `diff --git` abre cabecera, y sólo el primer `+++` de
+	// dentro la cierra.
+	enCabecera := false
+	for _, l := range bytes.Split(out, []byte("\n")) {
+		switch {
+		case bytes.HasPrefix(l, []byte("diff --git ")):
+			enCabecera, archivo, linea = true, "", 0
+		case enCabecera && bytes.HasPrefix(l, []byte("+++ ")):
+			enCabecera = false
+			nombre := strings.TrimSuffix(string(l[4:]), "\r")
+			if nombre == "/dev/null" {
+				// Borrado: no hay archivo nuevo que escanear.
+				continue
+			}
+			archivo = filepath.ToSlash(strings.TrimPrefix(nombre, "b/"))
+		case archivo != "" && bytes.HasPrefix(l, []byte("@@ ")):
+			linea = inicioDelHunk(l)
+		case archivo != "" && linea > 0 && bytes.HasPrefix(l, []byte("+")):
+			res[archivo] = append(res[archivo], LineaAnadida{Linea: linea, Texto: string(l[1:])})
+			linea++
+		}
+	}
+	return res, nil
+}
+
+// inicioDelHunk saca la primera línea del lado NUEVO de una cabecera
+// `@@ -12,0 +13,2 @@`. Devuelve 0 si no la entiende, y con 0 el llamador
+// ignora el hunk: preferimos perder un hunk raro a numerar mal y mandar al dev
+// a una línea que no es.
+func inicioDelHunk(l []byte) int {
+	i := bytes.IndexByte(l, '+')
+	if i < 0 {
+		return 0
+	}
+	n := 0
+	visto := false
+	for _, c := range l[i+1:] {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + int(c-'0')
+		visto = true
+	}
+	if !visto {
+		return 0
+	}
+	return n
+}
+
+// ConCambiosSinPreparar devuelve, de entre las rutas dadas, las que en el árbol
+// de trabajo NO son iguales a lo que hay en el índice.
+//
+// EXISTE PORQUE LA COMPUERTA MIRA UNA COSA Y GIT COMMITEA OTRA. `Staged()` saca
+// la LISTA de archivos del índice (`git diff --cached`), pero el CONTENIDO que
+// analizan los motores por archivo —y la huella `SHA256De` que sirve de clave de
+// caché— sale de `os.ReadFile`, o sea del DISCO. Mientras las dos versiones
+// coinciden da igual; en cuanto se separan, el análisis habla de un contenido
+// que no es el que va a entrar al historial.
+//
+// Y separarlas es rutina, no un caso raro: `git add -p`, o editar un archivo
+// después de haberlo añadido. Medido en un repo de juguete: con B en el índice y
+// C en el disco, el sha del índice y el del árbol son completamente distintos.
+//
+// El efecto no es que entre un secreto —la etapa 1 va por `--cached` y no le
+// afecta—, es que se rompe la promesa central: «si pasa aquí, pasa allá». El
+// dev ve verde sobre el contenido de su editor y el CI analiza el otro.
+//
+// ARREGLARLO DE VERDAD ES OTRA COSA, y por eso esto sólo AVISA. Para que los
+// motores analizaran el índice habría que materializarlo en un árbol temporal y
+// correrlo todo allí: `go vet`, `staticcheck`, `tsc` y `dotnet build` COMPILAN,
+// no saben leer un índice de git, así que no basta con cambiar un ReadFile. Es
+// una decisión de arquitectura con coste en cada commit, y se toma aparte.
+// Mientras tanto, lo que no se puede hacer es callarlo: decir «revisado» sobre
+// un contenido distinto del que se commitea es la misma clase de mentira que
+// este producto existe para retirar.
+func ConCambiosSinPreparar(repoRoot string, rutas []string) ([]string, error) {
+	if len(rutas) == 0 {
+		return nil, nil
+	}
+	// `git diff --name-only` sin --cached = árbol de trabajo CONTRA el índice:
+	// exactamente los archivos cuyo contenido en disco no es el preparado.
+	out, err := run(repoRoot, "diff", "--no-textconv", "--no-ext-diff", "--name-only")
+	if err != nil {
+		return nil, err
+	}
+	sucios := make(map[string]bool)
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" {
+			sucios[filepath.ToSlash(l)] = true
+		}
+	}
+	var divergentes []string
+	for _, r := range rutas {
+		if sucios[filepath.ToSlash(r)] {
+			divergentes = append(divergentes, r)
+		}
+	}
+	return divergentes, nil
 }
 
 // SHA256De calcula la huella del contenido de un archivo del repo normalizado

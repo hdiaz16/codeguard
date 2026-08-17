@@ -404,6 +404,61 @@ func proyectoCSDeJuguete(t *testing.T, cuerpo string) string {
 	return root
 }
 
+// EL CONTROL DEL ARREGLO DEL SILENCIO, con el SDK de verdad.
+//
+// El motor pide silencio a MSBuild a propósito (`-v quiet -clp:NoSummary
+// --nologo`), y medido con el SDK 8.0.300 un proyecto que compila devuelve código
+// 0 y CERO bytes. Como no hay salida que examinar, ahora se exige la otra prueba
+// de que compiló: el artefacto recién escrito en el directorio privado.
+//
+// Este test es el que impide que esa exigencia se vuelva un falso positivo. Si
+// fuera falsa —porque el artefacto no vaya donde creo, o porque su fecha no sirva—
+// TODOS los proyectos de C# que compilan limpios quedarían como capa degradada en
+// cada commit. Y el test de integración que ya existía no lo cubre: su versión
+// "buena" del código deja el aviso CS0219 a propósito, así que siempre pasa por el
+// camino CON hallazgos. El proyecto sin NI UN diagnóstico no lo ejercitaba nadie.
+func TestIntegracionUnProyectoCSLimpioNoSeDegrada(t *testing.T) {
+	if testing.Short() {
+		t.Skip("compila un proyecto de verdad: fuera del modo corto")
+	}
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("sin SDK de .NET en esta máquina")
+	}
+	// Sin variables sin usar y sin nada que los analizadores puedan comentar: la
+	// salida de MSBuild tiene que quedar completamente vacía.
+	root := proyectoCSDeJuguete(t, "public class Bien\n{\n    public int Sumar(int a, int b)\n"+
+		"    {\n        return a + b;\n    }\n}\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	restore := exec.CommandContext(ctx, "dotnet", "restore")
+	restore.Dir = root
+	if out, err := restore.CombinedOutput(); err != nil {
+		t.Skipf("dotnet restore no funcionó aquí (¿sin red?): %v\n%s", err, out)
+	}
+
+	fs, err := dnbCompilar(ctx, root, "Juguete.csproj")
+	if err != nil {
+		t.Fatalf("el proyecto compila sin un solo diagnóstico y el motor se declaró "+
+			"incapaz. Con esto, todo proyecto de C# limpio queda como capa degradada "+
+			"en cada commit: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Errorf("un proyecto limpio no tiene hallazgos, y salieron %d: %+v", len(fs), fs)
+	}
+
+	// Segunda corrida: el artefacto ya existe de la primera, así que si la prueba
+	// mirara sólo "¿hay un ensamblado?" pasaría siempre — incluso sin compilar. Lo
+	// que se exige es que sea de ESTA corrida, y -t:Rebuild lo garantiza.
+	if fs, err = dnbCompilar(ctx, root, "Juguete.csproj"); err != nil {
+		t.Fatalf("segunda compilación del proyecto limpio: %v", err)
+	}
+	if len(fs) != 0 {
+		t.Errorf("la segunda corrida inventó %d hallazgos: %+v", len(fs), fs)
+	}
+}
+
 func TestIntegracionCompilaErroresYAvisosReales(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compila un proyecto de verdad: fuera del modo corto")

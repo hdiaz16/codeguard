@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentación — CodeGuard</title>
+<meta name="description" content="Documentación de CodeGuard: instalación, enrolamiento, comandos, motores, compuertas, configuración y qué hacer cuando un commit sale bloqueado.">
+<meta name="theme-color" content="#1a1c20">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23b8f7e4'/%3E%3Cstop offset='1' stop-color='%234a9a70'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='%231a1c20'/%3E%3Ccircle cx='16' cy='16' r='8' fill='url(%23g)'/%3E%3Ccircle cx='13.5' cy='13' r='3' fill='%23fff' opacity='.75'/%3E%3C/svg%3E">
+<script type="module" src="/src/js/docs.js"></script>
+</head>
+<body class="pagina-docs">
+<a class="saltar" href="#docs-contenido">Saltar al contenido</a>
+
+<header class="barra posada" id="barra">
+  <div class="barra-caja">
+    <a class="marca" href="index.html" aria-label="CodeGuard, inicio">
+      <span class="marca-orbe" data-orbe="24" data-estado="idle"></span>
+      <span class="marca-texto">CodeGuard</span>
+    </a>
+    <nav class="barra-nav" aria-label="Secciones">
+      <a href="index.html#recorrido">El recorrido</a>
+      <a href="index.html#demo">Verlo correr</a>
+      <a href="index.html#motores">Motores</a>
+      <a href="docs.html" aria-current="page">Documentación</a>
+    </nav>
+    <a class="boton primario barra-cta" href="#instalacion">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg>
+      Instalar
+    </a>
+  </div>
+</header>
+
+<div class="docs-cuerpo">
+
+  <!-- ═══ barra lateral ══════════════════════════════════════════════════ -->
+  <aside class="lateral" id="lateral">
+    <div class="buscador">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+      <input type="search" id="buscador" placeholder="Buscar en la documentación"
+             aria-label="Buscar en la documentación" autocomplete="off" spellcheck="false">
+      <span class="cuenta" id="buscador-cuenta" role="status" aria-live="polite"></span>
+    </div>
+    <nav id="lateral-nav" aria-label="Índice de la documentación"></nav>
+  </aside>
+
+  <!-- ═══ contenido ══════════════════════════════════════════════════════ -->
+  <main class="docs-contenido" id="docs-contenido">
+
+    <div class="docs-portadilla">
+      <h1>Documentación</h1>
+      <p>
+        Todo lo que hace falta para instalar CodeGuard, enrolar un repositorio
+        y entender por qué te bloqueó un commit. Está escrita para que la leas
+        cuando algo salió mal, así que cada sección termina en un comando
+        concreto.
+      </p>
+    </div>
+
+    <!-- ── instalación ─────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="instalacion" data-titulo="Instalación">
+      <h2>Instalación</h2>
+
+      <p>
+        CodeGuard es un producto de <strong>Windows</strong>. Se instala para el
+        usuario actual y <strong>no pide permisos de administrador</strong> en
+        ningún momento.
+      </p>
+
+      <h3 id="instalacion-asistente">Con el paquete instalador</h3>
+      <p>
+        Es la vía normal. <code>CodeGuard-Setup.exe</code> es un asistente
+        gráfico; lo genera <code>dist\build-dist.ps1</code> cuando la máquina
+        tiene Inno Setup.
+      </p>
+      <pre><span class="k">CodeGuard-Setup.exe</span>
+<span class="c"># para reparto masivo, sin interacción:</span>
+<span class="k">CodeGuard-Setup.exe</span> /VERYSILENT</pre>
+      <p>
+        El setup queda registrado en «Aplicaciones instaladas» de Windows con
+        su desinstalador, como cualquier otro programa.
+      </p>
+
+      <h3 id="instalacion-script">Con el script</h3>
+      <pre><span class="p">PS&gt;</span> powershell -ExecutionPolicy Bypass -File dist\install.ps1</pre>
+      <p>Dos banderas útiles:</p>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th>Bandera</th><th>Qué hace</th></tr></thead>
+          <tbody>
+            <tr><td><code>-ApiKey "…"</code></td><td>Guarda la clave del modelo en el Administrador de credenciales de Windows durante la instalación.</td></tr>
+            <tr><td><code>-SkipTrivy</code></td><td>No descarga trivy, que pesa unos 60&nbsp;MB. Útil en un primer reparto; se puede añadir después con <code>codeguard repair</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="instalacion-donde">Qué instala y dónde</h3>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th>Ruta</th><th>Contenido</th></tr></thead>
+          <tbody>
+            <tr><td><code>%LOCALAPPDATA%\CodeGuard\bin</code></td><td>Los binarios: <code>codeguard.exe</code> y el daemon, más el rulepack fijado.</td></tr>
+            <tr><td><code>%LOCALAPPDATA%\CodeGuard\engines</code></td><td>Los motores descargables.</td></tr>
+            <tr><td><code>%LOCALAPPDATA%\CodeGuard\rulepacks</code></td><td>Las reglas de la casa, por versión.</td></tr>
+            <tr><td><code>%LOCALAPPDATA%\codeguard</code></td><td>La base de datos local de análisis (<code>codeguard.db</code>).</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Además añade las dos primeras rutas al <code>PATH</code> del usuario y
+        deja el daemon arrancando con la sesión.
+      </p>
+
+      <div class="nota ambar">
+        <b>Abre una terminal nueva después de instalar.</b>
+        El <code>PATH</code> se hereda al arrancar el proceso, así que una
+        terminal que ya estaba abierta no ve los binarios nuevos. CodeGuard lo
+        compensa releyendo el <code>PATH</code> del registro al arrancar
+        —precisamente para que un hook lanzado desde un editor viejo no bloquee
+        el commit pidiendo instalar algo que ya está instalado—, pero para
+        escribir <code>codeguard</code> a mano hace falta la terminal nueva.
+      </div>
+
+      <h3 id="instalacion-motores">Los motores y de dónde salen</h3>
+      <p>
+        Son dieciséis, pero <strong>CodeGuard no instala dieciséis</strong>.
+        Cada uno llega por el camino que le corresponde, y eso decide qué se
+        puede verificar por hash y qué hace falta que ya tengas:
+      </p>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th></th><th>Cuántos</th><th>Cuáles</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Los instala CodeGuard</strong></td>
+              <td><code>9</code></td>
+              <td>semgrep · squawk · ruff · mypy · trivy · govulncheck · staticcheck · google-java-format · PMD <span class="apagado">(más gitleaks, que es la compuerta de secretos y va aparte de los dieciséis)</span></td>
+            </tr>
+            <tr>
+              <td><strong>Va dentro de CodeGuard</strong></td>
+              <td><code>1</code></td>
+              <td>gofmt — no ejecuta el binario, usa <code>go/format</code>, que <em>es</em> gofmt como librería. No hay nada que instalar ni hace falta tener Go.</td>
+            </tr>
+            <tr>
+              <td><strong>Usan tu cadena de herramientas</strong></td>
+              <td><code>6</code></td>
+              <td>go vet (Go) · tsc y eslint (Node y el proyecto) · dotnet format, build y list package (el SDK de .NET)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="nota menta">
+        <b>Que esos seis NO se instalen es lo que defiende la paridad, no lo que la rompe.</b>
+        <p>
+          Si CodeGuard trajera su propio TypeScript, un repositorio que compila
+          con la 4.9 se analizaría aquí con la 5.9 y daría errores distintos a
+          los del CI — que es exactamente lo contrario de lo que promete el
+          producto. Usar el <code>tsc</code> del proyecto es lo que hace que el
+          veredicto local y el del CI sean el mismo. Con eslint, igual: corre el
+          que el repositorio configuró, con sus reglas.
+        </p>
+        <p>
+          Con mypy la decisión fue la <em>contraria</em> —ese binario sí es
+          nuestro— y el criterio es el mismo: mypy sólo aplica si el repositorio
+          ya lo configuró, así que no hay una versión del proyecto a la que
+          respetar. Cuando la herramienta define el veredicto, manda la del
+          proyecto; cuando no, la traemos nosotros.
+        </p>
+      </div>
+
+      <p>
+        La contrapartida es que esos seis pueden no estar. Y entonces
+        <strong>el análisis lo dice</strong>: la capa aparece como
+        <code>ausente</code> o <code>degradada</code> y el veredicto enumera lo
+        que no se revisó, en vez de dar por bueno lo que nadie miró.
+      </p>
+      <div class="nota ambar">
+        <b>Salir con error sin un solo diagnóstico no es «está limpio»: es «no compiló».</b>
+        Es un criterio, no un detalle. tsc de verdad sólo tiene dos
+        comportamientos: si el proyecto está limpio sale con 0, y si tiene
+        errores sale distinto de cero <em>y los enumera</em>. Salir distinto de
+        cero sin enumerar nada no es ninguno de los dos. Ocurrió en una máquina
+        real: <code>npx tsc</code> resolvió a un paquete de npm que no era
+        TypeScript, imprimió un banner y salió con 1 — y eso se reportaba como
+        cero hallazgos, o sea un ✓ verde sobre un archivo que nadie había
+        mirado. Hoy esa capa se marca como no revisada. No bloquea el commit
+        (P4); lo que hace es no mentir.
+      </div>
+
+      <div class="nota menta">
+        <b>De los que sí instala, el zip se verifica ANTES de extraerlo.</b>
+        Los hashes salen de los <code>checksums.txt</code> que publican los
+        propios proyectos en sus releases, no de la primera descarga que le
+        tocó a una máquina. Un binario alterado en tránsito o en un espejo no
+        llega a instalarse. Y <code>codeguard engines</code> vuelve a
+        comprobarlo en cada máquina, cuando quieras.
+      </div>
+
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th>Motor</th><th>De dónde sale</th><th>Verificado</th></tr></thead>
+          <tbody>
+            <tr><td>gitleaks · trivy</td><td>Release de GitHub del proyecto</td><td>Sí — SHA-256 fijado</td></tr>
+            <tr><td>google-java-format · PMD</td><td>Release de GitHub, sólo si hay un JDK</td><td>Sí — SHA-256 fijado</td></tr>
+            <tr><td>semgrep · squawk · ruff · mypy</td><td>pip, contra PyPI</td><td>Con las firmas de PyPI</td></tr>
+            <tr><td>staticcheck · govulncheck</td><td><code>go install</code> — se compilan, y eso tarda</td><td>Con la suma de comprobación de los módulos de Go</td></tr>
+            <tr><td>gofmt</td><td>Dentro del propio binario</td><td>—</td></tr>
+            <tr><td>go vet</td><td>Tu instalación de Go</td><td>—</td></tr>
+            <tr><td>tsc · eslint · biome</td><td>El <code>node_modules</code> del repositorio</td><td>—</td></tr>
+            <tr><td>dotnet format · build · list package</td><td>Tu SDK de .NET</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="instalacion-verificar">Comprobar que quedó bien</h3>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard version</span>
+<span class="p">PS&gt;</span> <span class="k">codeguard engines</span>      <span class="c"># identidad de cada motor</span>
+<span class="p">PS&gt;</span> <span class="k">codeguard status --todos</span> <span class="c"># enrolamiento de todos los repos</span></pre>
+      <p>
+        Si <code>codeguard version</code> responde <code>dev</code>, estás
+        usando un binario compilado a mano en vez del instalado.
+      </p>
+    </section>
+
+    <!-- ── enrolar ─────────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="enrolar" data-titulo="Enrolar un repositorio">
+      <h2>Enrolar un repositorio</h2>
+
+      <p>
+        Lo hace <strong>una sola persona</strong>, una sola vez por repositorio.
+        El resto del equipo queda enrolado con un <code>git pull</code>.
+      </p>
+
+      <pre><span class="p">PS&gt;</span> cd C:\dev\mi-repo
+<span class="p">PS&gt;</span> <span class="k">codeguard init</span></pre>
+
+      <h3 id="enrolar-que-hace">Qué hace <code>init</code>, paso a paso</h3>
+      <ol>
+        <li><strong>Detecta los lenguajes</strong> sobre los archivos que git ya rastrea — no sobre el disco, así que <code>node_modules</code> y compañía no cuentan.</li>
+        <li><strong>Reconoce las migraciones</strong> y escribe sus rutas en <code>paths.migrations</code>.</li>
+        <li><strong>Propone exclusiones</strong> según el stack: <code>node_modules</code>, <code>.next</code> y <code>dist</code> si hay Node; <code>obj/</code>, <code>*.g.cs</code> y <code>*.designer.cs</code> si hay .NET.</li>
+        <li><strong>Escribe <code>.codeguard/config.yaml</code></strong> con las compuertas, los pesos de riesgo y el rulepack fijado.</li>
+        <li><strong>Instala los hooks</strong> en <code>.githooks/</code> y apunta <code>core.hooksPath</code> ahí.</li>
+        <li><strong>Genera la baseline</strong> en <code>.codeguard/baseline.txt</code>: escanea el repo entero y suprime lo que ya existía, para que sólo lo nuevo bloquee.</li>
+        <li><strong>Registra el proyecto</strong> y avisa al daemon, así que aparece en el panel sin esperar al primer commit.</li>
+      </ol>
+
+      <div class="nota menta">
+        <b>Nadie escribe YAML.</b> La configuración se genera y se versiona.
+        Cambiar de rulepack, de compuertas o de modelo es un commit, revisable
+        como cualquier otro.
+      </div>
+
+      <h3 id="enrolar-versionar">Después: versionar</h3>
+      <pre><span class="p">PS&gt;</span> git add .codeguard .githooks
+<span class="p">PS&gt;</span> git commit -m <span class="s">"enrolar el repo en CodeGuard"</span></pre>
+      <p>
+        Quien haga <code>git pull</code> recibe la configuración. Le falta sólo
+        activar los hooks en su copia, porque <code>core.hooksPath</code> es
+        configuración local de git y no viaja en el repositorio:
+      </p>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard install</span></pre>
+
+      <h3 id="enrolar-avisos">Dos avisos que conviene leer</h3>
+      <div class="nota ambar">
+        <b>Archivos <code>.sql</code> que no parecen migraciones.</b>
+        Si <code>init</code> encuentra SQL y no reconoce ninguna migración, lo
+        dice en voz alta: la compuerta <code>migration_unsafe</code> queda
+        vigilando <em>nada</em>. Un <code>migrations: []</code> pelado no
+        transmite eso, así que el aviso queda escrito también dentro del
+        archivo de configuración. Si ahí vive tu esquema, añade sus rutas.
+      </div>
+      <div class="nota ambar">
+        <b>El motor de base de datos no se adivina.</b>
+        <code>init</code> siempre escribe <code>migrations_dialect: postgres</code>,
+        aunque el DDL tenga marcas de otro motor: te lo dice y te deja decidir.
+        Acertar la detección ahorra una línea de configuración; errarla apaga
+        una capa entera en silencio, y eso no lo puede decidir una herramienta
+        adivinando.
+      </div>
+
+      <h3 id="enrolar-verificar">Verificar el enrolamiento</h3>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard status</span>          <span class="c"># este repo</span>
+<span class="p">PS&gt;</span> <span class="k">codeguard status --todos</span>  <span class="c"># todos los de la máquina</span></pre>
+      <p>
+        Revisa config, hooks, baseline, rulepack y paridad, y cuando algo falta
+        imprime el comando exacto que lo arregla.
+      </p>
+
+      <h3 id="enrolar-desenrolar">Desenrolar</h3>
+      <p>
+        <code>codeguard forget</code> sólo quita el proyecto de la lista del
+        agente: deja de verse en el panel y en el explorador, pero
+        <strong>no toca el repositorio</strong> y los hooks siguen donde estén.
+        Para desenrolarlo del todo:
+      </p>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard forget</span>
+<span class="p">PS&gt;</span> git config --unset core.hooksPath
+<span class="p">PS&gt;</span> rm -r .githooks .codeguard</pre>
+    </section>
+
+    <!-- ── comandos ────────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="comandos" data-titulo="Comandos">
+      <h2>Comandos</h2>
+      <p>
+        Todos salen del mismo binario, <code>codeguard.exe</code>. Los hooks lo
+        invocan por dentro; el resto los escribes tú.
+      </p>
+      <div id="comandos-lista"></div>
+    </section>
+
+    <!-- ── motores ─────────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="motores" data-titulo="Los motores">
+      <h2>Los motores</h2>
+      <p>
+        Una compuerta de secretos y dieciséis motores deterministas. De un
+        cambio concreto sólo corren los que aplican: si no tocaste Go, gofmt no
+        se ejecuta — y eso se llama <strong>no aplica</strong>, que no es lo
+        mismo que <strong>no corrió</strong>.
+      </p>
+      <div class="nota menta">
+        <b>Un motor ausente no bloquea el commit.</b>
+        Que trivy no esté instalado es un asunto de configuración, no una
+        avería, y se cuenta distinto para que no pinte de naranja cada commit
+        del día. La única excepción es la compuerta de secretos: esa es
+        fail-closed y sí detiene el commit si no puede correr.
+      </div>
+
+      <h3 id="motores-reglas">Las reglas de la casa</h3>
+      <p>
+        semgrep no trae reglas propias: aplica el <strong>rulepack</strong> de
+        la casa, fijado por versión en la configuración del repositorio. En
+        <code>2026.08.2</code> son <strong>130 reglas</strong>, repartidas en
+        ocho archivos y en los tres pilares —seguridad, calidad y datos—, con
+        el catálogo completo y sus severidades en
+        <code>rulepacks/2026.08.2/CATALOG.md</code>.
+      </p>
+      <p>Esa cifra es contable, no una promesa de folleto:</p>
+      <pre><span class="p">PS&gt;</span> cd rulepacks\2026.08.2\semgrep
+<span class="p">PS&gt;</span> (Select-String -Path *.yaml -Pattern <span class="s">'^\s*-\s+id:'</span>).Count
+130</pre>
+
+      <div id="motores-lista"></div>
+    </section>
+
+    <!-- ── compuertas ──────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="compuertas" data-titulo="Las compuertas">
+      <h2>Las compuertas</h2>
+      <p>
+        Una compuerta decide qué pasa cuando una familia de hallazgos aparece.
+        Viven en el bloque <code>gates</code> de la configuración, versionadas
+        con el repositorio.
+      </p>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th>Compuerta</th><th>Por defecto</th><th>Qué cubre</th></tr></thead>
+          <tbody id="compuertas-tabla"></tbody>
+        </table>
+      </div>
+
+      <h3 id="compuertas-tres">Tres reglas sobre las compuertas</h3>
+      <ul>
+        <li><strong>Lo que bloquea aquí, bloquea en el CI.</strong> Ese es el criterio entero: una compuerta que bloquee algo que el CI acepta convierte a CodeGuard en un obstáculo.</li>
+        <li><strong>El modelo nunca bloquea.</strong> <code>llm: never_block</code> no es un valor por defecto que se pueda subir: es un principio del producto.</li>
+        <li><strong>Los secretos no se negocian.</strong> No entran en la baseline, no bajan a aviso por el feedback del equipo, y si la compuerta no puede correr, el commit se detiene.</li>
+      </ul>
+
+      <h3 id="compuertas-calibracion">Auto-calibración</h3>
+      <p>
+        Cada hallazgo del panel tiene un botón de <em>útil</em> y otro de
+        <em>falso positivo</em>. Con suficientes votos y demasiados falsos
+        positivos <strong>en ese repositorio</strong>, una regla baja sola de
+        bloqueante a aviso. La calibración es por repositorio porque un falso
+        positivo lo es en un contexto, no en abstracto. gitleaks queda fuera de
+        este mecanismo, siempre.
+      </p>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard stats</span>        <span class="c"># precisión por regla en este repo</span>
+<span class="p">PS&gt;</span> <span class="k">codeguard stats --all</span>  <span class="c"># agregando todos los repos</span></pre>
+    </section>
+
+    <!-- ── configuración ───────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="configuracion" data-titulo="Configuración">
+      <h2>Configuración</h2>
+      <p>
+        Un solo archivo, <code>.codeguard/config.yaml</code>, versionado en el
+        repositorio. Es la fuente única de verdad para el agente y para el CI:
+        por eso la paridad se sostiene sin que nadie la vigile.
+      </p>
+
+      <h3 id="configuracion-ejemplo">El archivo que genera <code>init</code></h3>
+      <pre><span class="k">version</span>: 1
+<span class="k">rulepack</span>: <span class="s">"2026.08.2"</span>
+
+<span class="k">languages</span>: [typescript, sql]
+
+<span class="k">paths</span>:
+  <span class="k">exclude</span>: [<span class="s">"**/*.log"</span>, <span class="s">"**/node_modules/**"</span>, <span class="s">"bin/**"</span>]
+  <span class="k">migrations</span>: [<span class="s">"db/migrations/*.sql"</span>]
+  <span class="c"># Motor de esas migraciones: el pilar datos (squawk) sólo analiza
+  # PostgreSQL. Este valor lo decides tú, no la detección automática.
+  # Valores: postgres | sqlite | mysql | sqlserver</span>
+  <span class="k">migrations_dialect</span>: postgres
+  <span class="k">sensitive</span>: []          <span class="c"># rutas de auth/pagos/PII: suben el riesgo</span>
+  <span class="k">generated</span>: []
+
+<span class="c"># Complejidad ciclomática por función a partir de la cual se avisa.
+# Nunca bloquea: partir una función es decisión de quien la escribe.</span>
+<span class="k">max_complexity</span>: 15
+
+<span class="k">gates</span>:
+  <span class="k">secrets</span>: block
+  <span class="k">format</span>: block
+  <span class="k">compile</span>: block
+  <span class="k">lint_error</span>: block
+  <span class="k">semgrep_error</span>: block
+  <span class="k">migration_unsafe</span>: block
+  <span class="k">cve_critical</span>: warn_local_block_ci
+  <span class="k">llm</span>: never_block
+
+<span class="k">risk</span>:
+  <span class="k">threshold</span>: 35
+  <span class="k">weights</span>:
+    <span class="k">touches_migration</span>: 30
+    <span class="k">touches_sensitive</span>: 25
+    <span class="k">ai_generated</span>: 20
+    <span class="k">touches_security_config</span>: 20
+    <span class="k">adds_dependency</span>: 15
+    <span class="k">touches_query</span>: 15
+    <span class="k">many_files</span>: 10
+    <span class="k">tests_only</span>: -20
+    <span class="k">docs_only</span>: -40
+
+<span class="k">ui</span>:
+  <span class="k">max_visible_findings</span>: 7
+  <span class="k">auto_open_panel</span>: on_block
+
+<span class="k">llm</span>:
+  <span class="k">provider</span>: <span class="s">"azure-foundry"</span>
+  <span class="k">endpoint</span>: <span class="s">"https://TU-RECURSO.services.ai.azure.com/openai/v1"</span>
+  <span class="k">api_key_env</span>: <span class="s">"FOUNDRY_API_KEY"</span>
+  <span class="k">model</span>: <span class="s">"FW-Kimi-K3"</span>
+  <span class="k">model_fast</span>: <span class="s">"gpt-5.6-sol"</span>
+  <span class="k">timeout_ms</span>: 20000
+  <span class="k">max_diff_tokens</span>: 12000
+  <span class="k">monthly_budget_usd</span>: 0
+  <span class="k">price_in_per_mtok</span>: 0
+  <span class="k">price_out_per_mtok</span>: 0
+
+<span class="k">max_diff_lines</span>: 2000</pre>
+
+      <h3 id="configuracion-paths">paths</h3>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th>Clave</th><th>Qué hace</th></tr></thead>
+          <tbody>
+            <tr><td><code>exclude</code></td><td>Rutas que las capas deterministas no miran. <strong>La compuerta de secretos las ignora</strong>: un secreto en una ruta excluida bloquea igual.</td></tr>
+            <tr><td><code>migrations</code></td><td>Qué archivos son migraciones. Fuera de esta lista, squawk no mira nada.</td></tr>
+            <tr><td><code>migrations_dialect</code></td><td><code>postgres</code> (o vacío) activa squawk. Cualquier otro valor lo <strong>apaga</strong>, y eso es lo correcto: squawk parsea PostgreSQL y contra otro motor sus hallazgos bloquean con un arreglo que rompe el esquema.</td></tr>
+            <tr><td><code>sensitive</code></td><td>Rutas de autenticación, pagos o datos personales. Suben el riesgo del cambio.</td></tr>
+            <tr><td><code>generated</code></td><td>Código generado. Se excluye igual que <code>exclude</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="configuracion-riesgo">risk</h3>
+      <p>
+        El riesgo no decide si tu commit pasa — eso lo deciden las compuertas.
+        Decide si el cambio merece la capa de consejo del modelo, que corre
+        después y en sombra. Por encima de <code>threshold</code> se pide
+        consejo; por debajo no, y se registra.
+      </p>
+      <p>
+        <code>ai_generated</code> merece una nota: CodeGuard reconoce por las
+        variables de entorno cuando el commit lo lanza un agente de codificación
+        y le suma 20 al riesgo del cambio. No lo bloquea ni lo trata distinto en
+        las compuertas: sólo lo mira con más atención.
+      </p>
+
+      <h3 id="configuracion-otros">Los demás valores</h3>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th>Clave</th><th>Por defecto</th><th>Qué hace</th></tr></thead>
+          <tbody>
+            <tr><td><code>rulepack</code></td><td><code>2026.08.2</code></td><td>La versión de las reglas de la casa. Es lo que fija la paridad: el CI usa exactamente la misma.</td></tr>
+            <tr><td><code>max_complexity</code></td><td><code>15</code></td><td>Complejidad ciclomática por función a partir de la cual se avisa. Nunca bloquea.</td></tr>
+            <tr><td><code>max_diff_lines</code></td><td><code>2000</code></td><td>Por encima, el análisis degrada a sólo-secretos y lo dice. Un cambio de esa talla no es revisable de todas formas.</td></tr>
+            <tr><td><code>ui.max_visible_findings</code></td><td><code>7</code></td><td>Cuántos hallazgos muestra el panel antes de resumir el resto.</td></tr>
+            <tr><td><code>ui.auto_open_panel</code></td><td><code>on_block</code></td><td><code>never</code>, <code>on_block</code> u <code>on_findings</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="configuracion-rulepack">Dónde se buscan las reglas</h3>
+      <p>
+        Mandan siempre las reglas instaladas. El rulepack del repositorio se usa
+        como respaldo, y cuando se usa, el análisis lo dice.
+      </p>
+    </section>
+
+    <!-- ── daemon, orbe y panel ────────────────────────────────────────── -->
+    <section class="docs-seccion" id="daemon" data-titulo="Daemon, orbe y panel">
+      <h2>El daemon, el orbe y el panel</h2>
+      <p>
+        El daemon arranca con la sesión y es quien corre los motores. El hook
+        —que es efímero— le pasa el diff por una tubería con nombre protegida
+        por SID y DACL de sólo-usuario, y espera el veredicto.
+      </p>
+      <p>
+        Con una excepción: la <strong>compuerta de secretos no se analiza
+        aquí</strong>. Corre antes, dentro del proceso del hook, porque es
+        fail-closed y no puede depender de que el agente esté vivo. Cuando frena
+        algo sí le avisa —y por eso el orbe se pone en rojo y el panel se abre
+        con el archivo y la línea—, pero ese aviso nunca lleva el valor de la
+        credencial. Ver <a href="#bloqueado-secreto">si es un secreto</a>.
+      </p>
+      <div class="nota">
+        <b>El daemon no commitea ni empuja.</b>
+        Su trabajo es mirar y responder: no escribe en tu historial.
+      </div>
+
+      <h3 id="daemon-orbe">El orbe</h3>
+      <p>
+        Vive en la esquina de la pantalla. Cambia de clima según el estado y los
+        cambios <strong>se funden</strong> en unos 0,8 segundos: nunca saltan.
+      </p>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th>Estado</th><th>Clima</th><th>Susurro</th><th>Cuándo</th></tr></thead>
+          <tbody id="estados-tabla"></tbody>
+        </table>
+      </div>
+      <ul>
+        <li><strong>Clic</strong> — abre o cierra el panel, que florece desde el orbe y se pliega de vuelta.</li>
+        <li><strong>Clic derecho</strong> — el menú.</li>
+        <li><strong>El susurro</strong> — al cambiar de estado aparece un texto que se desvanece solo. Mientras el análisis corre no caduca: va diciendo cuántas capas llevan, porque una capa lenta puede tardar más que cualquier temporizador razonable.</li>
+        <li><strong>Prohibido por diseño</strong> — modales, sonidos, notificaciones emergentes, robarte el foco.</li>
+      </ul>
+      <div class="nota">
+        <b>La ventana del orbe se recorta a lo que se ve.</b>
+        Mide 300×180 px y de eso sólo se ven 84 px de orbe; el resto era aire
+        transparente que seguía siendo ventana, estaba siempre encima y se comía
+        cada clic que cayera ahí. La página mide dónde acabó su contenido y el
+        daemon le da esa forma a la ventana.
+      </div>
+
+      <h3 id="daemon-panel">El panel</h3>
+      <p>
+        Sale del orbe y trae, en este orden: el veredicto, la paridad con el CI,
+        los bloqueantes en acordeón con su insignia de pilar, las sugerencias y
+        las capas que no pudieron mirar. Cada hallazgo lleva el código señalado,
+        por qué importa, cómo arreglarlo y los dos botones de feedback.
+      </p>
+
+      <h3 id="daemon-capas">El vocabulario de las capas</h3>
+      <p>
+        La cabecera del panel enumera todas las capas, no sólo las que
+        fallaron. Existe porque antes «corrió y no encontró nada» y «no corrió»
+        llegaban a la pantalla idénticos — el mismo silencio que este producto
+        existe para no producir.
+      </p>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th>Estado</th><th>Qué significa</th></tr></thead>
+          <tbody id="capas-tabla"></tbody>
+        </table>
+      </div>
+
+      <h3 id="daemon-explorador">El explorador del código</h3>
+      <p>
+        <code>codeguard graph --deep</code> abre un mapa a nivel de función:
+        quién llama a quién, qué consulta sale de dónde y dónde cayeron los
+        hallazgos del último análisis. Corre local, sin navegador.
+      </p>
+    </section>
+
+    <!-- ── me bloqueó ──────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="bloqueado" data-titulo="Me bloqueó, ¿ahora qué?">
+      <h2>Me bloqueó, ¿ahora qué?</h2>
+      <p>
+        Lo primero: el commit <strong>no existe</strong>. No hay nada que
+        deshacer. Tu trabajo sigue donde estaba, preparado en el índice.
+      </p>
+
+      <h3 id="bloqueado-leer">Leer el bloqueo</h3>
+      <p>El hook escribe en la terminal, una línea por hallazgo:</p>
+      <pre>CodeGuard  secretos <span class="k">✓</span>
+CodeGuard  formato/lint/tipos/reglas/migraciones <span class="m">✗</span>
+CodeGuard    <span class="k">[cookie-sin-httponly]</span> src/api.ts:3  Cookie de sesión sin httpOnly
+CodeGuard  <span class="m">BLOQUEADO: 1 problema(s) que el CI también rechazaría</span></pre>
+      <p>
+        Entre corchetes va la <strong>regla</strong>, después el
+        <strong>archivo y la línea</strong>, y luego qué detectó. Para los
+        bloqueos de las capas deterministas, el panel añade el porqué y el cómo
+        arreglarlo, con el código señalado.
+      </p>
+
+      <h3 id="bloqueado-secreto">Si es un secreto</h3>
+      <div class="nota rojo">
+        <b>Rota la credencial primero.</b>
+        Borrarla del historial no la invalida. Quien la haya visto la sigue
+        teniendo. Primero se revoca en el proveedor, y sólo después se limpia el
+        repositorio.
+      </div>
+      <p>
+        Un secreto no se puede silenciar: no entra en la baseline y no baja a
+        aviso por el feedback del equipo.
+      </p>
+      <p>
+        La compuerta corre dentro del proceso del hook y detiene el commit ahí
+        mismo. Después avisa al agente: <strong>el orbe se pone en rojo y el
+        panel se abre</strong> —<code>auto_open_panel: on_block</code> vale
+        también para esto— con el archivo y la línea de cada secreto y el aviso
+        de rotar la credencial primero.
+      </p>
+      <div class="nota menta">
+        <b>El panel te dice dónde, nunca qué.</b>
+        Por ese aviso viajan el repositorio, la rama, cuántos secretos se
+        frenaron y dónde están. Lo que no viaja es el hallazgo completo, que es
+        el que lleva la credencial dentro. Y no es una limitación técnica: es
+        que <em>un panel se comparte por pantalla</em>, y el valor ya lo tienes
+        tú en tu editor. Enseñarlo ahí sería sacar a una segunda pantalla justo
+        lo que se acaba de impedir que saliera al repositorio.
+      </div>
+      <p>
+        El aviso es un extra, no una dependencia: si el agente está apagado, el
+        commit se bloquea igual. El veredicto sale siempre por la salida de
+        error del commit, con archivo y línea, y el intento queda registrado en
+        el historial local — la pestaña <em>Historial</em> del panel lo lee de
+        ahí.
+      </p>
+
+      <h3 id="bloqueado-formato">Si es formato</h3>
+      <p>Se arregla solo. El formateador de cada lenguaje lo corrige:</p>
+      <pre><span class="p">PS&gt;</span> gofmt -w .          <span class="c"># Go</span>
+<span class="p">PS&gt;</span> ruff format .       <span class="c"># Python</span>
+<span class="p">PS&gt;</span> npx eslint --fix .  <span class="c"># TS/JS</span>
+<span class="p">PS&gt;</span> dotnet format       <span class="c"># C#</span></pre>
+
+      <h3 id="bloqueado-preexistente">Si el hallazgo ya estaba antes</h3>
+      <p>
+        No debería bloquear: para eso está la baseline. Si un repositorio se
+        enroló hace tiempo y aparece deuda vieja, regenérala:
+      </p>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard baseline</span></pre>
+
+      <h3 id="bloqueado-falso">Si crees que es un falso positivo</h3>
+      <p>
+        Pulsa <em>falso positivo</em> en el panel. No es un botón decorativo: es
+        la entrada de la auto-calibración, y con suficientes votos la regla baja
+        sola a aviso en ese repositorio. Un falso positivo confirmado en una
+        regla determinista se corrige o se apaga; no se tolera.
+      </p>
+
+      <h3 id="bloqueado-nadie">Si necesitas commitear ya</h3>
+      <pre><span class="p">PS&gt;</span> git commit --no-verify -m <span class="s">"…"</span></pre>
+      <div class="nota ambar">
+        <b><code>--no-verify</code> existe y no es hacer trampa.</b>
+        El commit pasa. Lo que ocurre es que el hook <code>post-commit</code> lo
+        registra como bypass — y eso es una señal de producto, no un castigo: un
+        repositorio con muchos bypass está diciendo que alguna regla molesta más
+        de lo que ayuda.
+      </div>
+      <p>
+        La única cosa que <code>--no-verify</code> no debería saltarse es un
+        secreto. Si el bloqueo era ese, rota la credencial.
+      </p>
+
+      <h3 id="bloqueado-agente">Pasarle los hallazgos a un agente de código</h3>
+      <p>
+        <code>codeguard report</code> escribe
+        <code>.codeguard/HALLAZGOS.md</code> con instrucciones precisas, pensado
+        para entregárselo a Claude Code, Codex, Cursor o similares. Es
+        re-ejecutable: al volver a correrlo marca como RESUELTOS los que ya no
+        aparecen.
+      </p>
+      <div class="nota menta">
+        <b>El informe no declara terminado lo que no revisó.</b>
+        <code>COMPLETADO</code> exige que no queden bloqueantes <em>y</em> que
+        todas las capas hayan corrido. Si no, dice <code>PARCIAL</code> y con
+        qué faltó. Importa porque ese archivo es el criterio de terminado que se
+        le entrega a un agente.
+      </div>
+      <p>
+        Los agentes de codificación funcionan sin ninguna integración: hacen
+        <code>git commit</code>, el hook dispara igual, leen el bloqueo por la
+        salida de error, corrigen y reintentan.
+      </p>
+    </section>
+
+    <!-- ── CI ──────────────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="ci" data-titulo="En el CI">
+      <h2>En el CI</h2>
+      <p>
+        Es el <strong>mismo binario</strong> con el <strong>mismo rulepack</strong>.
+        Ahí está la paridad entera: no hay dos implementaciones que mantener
+        sincronizadas.
+      </p>
+      <pre><span class="k">- name</span>: CodeGuard
+  <span class="k">run</span>: |
+    codeguard ci --base ${{ github.event.pull_request.base.sha }} \
+                 --head ${{ github.sha }} \
+                 --format sarif --out codeguard.sarif
+
+<span class="k">- uses</span>: github/codeql-action/upload-sarif@&lt;sha&gt;
+  <span class="k">with</span>:
+    <span class="k">sarif_file</span>: codeguard.sarif</pre>
+      <p>
+        Sale con código 1 si hay bloqueantes. Con <code>--shadow</code> registra
+        todo pero nunca falla el job, que es como se estrena en un repositorio
+        grande sin parar a nadie el primer día.
+      </p>
+
+      <h3 id="ci-diferencias">Qué cambia respecto a tu máquina</h3>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th></th><th>En local</th><th>En el CI</th></tr></thead>
+          <tbody>
+            <tr><td>CVE crítico</td><td>Avisa</td><td><strong>Bloquea</strong></td></tr>
+            <tr><td>Base de vulnerabilidades</td><td>No se actualiza (no cabe en el hook)</td><td>Se actualiza</td></tr>
+            <tr><td>Secretos</td><td>El índice (<code>--staged</code>)</td><td>El <strong>historial</strong> del rango</td></tr>
+            <tr><td>Caché de resultados</td><td>Sí</td><td>No — el runner es efímero y nunca acertaría</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="nota menta">
+        <b>Por qué en el CI se escanea el historial y no el diff.</b>
+        Un secreto añadido en un commit y borrado en el siguiente deja el diff
+        de árboles <em>vacío</em>, y sin embargo sigue en el historial: quien
+        clone el repositorio lo tiene. No hace falta un atacante — es el flujo
+        de quien commitea una credencial, se da cuenta y la quita creyendo que
+        ya está.
+      </div>
+    </section>
+
+    <!-- ── modelo ──────────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="modelo" data-titulo="El modelo (opcional)">
+      <h2>El modelo (opcional)</h2>
+      <p>
+        La capa de consejo es opcional y se elige. Corre <strong>después</strong>
+        de responderle al hook, así que su latencia nunca toca tu commit, y
+        <strong>jamás bloquea</strong>.
+      </p>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard config</span>          <span class="c"># abrir la ventana de configuración</span>
+<span class="p">PS&gt;</span> <span class="k">codeguard config --ver</span>    <span class="c"># ver la configuración actual</span>
+<span class="p">PS&gt;</span> <span class="k">codeguard config --probar</span> <span class="c"># una llamada real al modelo</span></pre>
+      <p>
+        Habla el dialecto de OpenAI y el de Anthropic, con preajustes para Azure
+        AI Foundry, OpenAI, Anthropic, OpenRouter, Groq, DeepSeek, Ollama y LM
+        Studio. Los dos últimos corren en tu propia máquina: el código no sale
+        de ahí.
+      </p>
+
+      <h3 id="modelo-clave">La clave</h3>
+      <div class="nota menta">
+        <b>La clave nunca se escribe en un archivo de CodeGuard.</b>
+        La configuración guarda sólo el <em>nombre</em> de la variable de
+        entorno que la contiene (<code>api_key_env</code>). La clave vive en el
+        Administrador de credenciales de Windows, se lee en el momento de
+        usarla, y no viaja a ningún motor: el entorno de los motores se
+        construye con una lista de permitidos, no de prohibidos.
+      </div>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard config --guardar-clave</span> FOUNDRY_API_KEY</pre>
+      <p>Lee la clave por la entrada estándar y la guarda en la bóveda del usuario.</p>
+
+      <h3 id="modelo-redaccion">Qué sale a la red y qué no</h3>
+      <ul>
+        <li>El diff se <strong>redacta</strong> antes de cualquier llamada: nada que parezca una credencial sale.</li>
+        <li>Sólo se pide consejo si el riesgo del cambio supera el umbral. Por debajo, no hay llamada.</li>
+        <li>Lo que vuelve pasa por una verificación anti-alucinación: ¿el archivo está en el diff?, ¿la línea existe?, ¿la confianza es suficiente? Lo que no pasa se descarta y se cuenta.</li>
+        <li>El modelo <strong>no ejecuta código</strong> y no tiene camino hacia ninguna acción.</li>
+      </ul>
+      <p>
+        Con el modelo apagado o sin conexión, CodeGuard funciona igual: el orbe
+        se pone en <em>sin modelo, reglas al día</em> y las compuertas
+        deterministas siguen aplicándose enteras.
+      </p>
+    </section>
+
+    <!-- ── contención ──────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="contencion" data-titulo="Contención de los motores">
+      <h2>Contención de los motores</h2>
+      <p>
+        Los motores son binarios de terceros que corren sobre tu código en cada
+        commit. Corren acotados, y conviene decir con precisión hasta dónde:
+      </p>
+      <ul>
+        <li><strong>Entorno por lista de permitidos</strong>, no de prohibidos — una lista de prohibidos deja pasar el siguiente secreto que alguien añada. La clave del modelo no llega a ningún motor.</li>
+        <li><strong>Token restringido</strong> — sin privilegios salvo el de recorrer directorios.</li>
+        <li><strong>Job object</strong> — mueren con el plazo junto a todos sus hijos, con tope de memoria y de procesos, y sin acceso al portapapeles, al escritorio ni a ventanas ajenas.</li>
+        <li><strong>Identidad verificada</strong> — cada motor descargable se compara contra el SHA-256 que publicaron sus autores.</li>
+      </ul>
+      <div class="nota ambar">
+        <b>El alcance de la contención, dicho con precisión.</b>
+        Acota el proceso, el entorno y los privilegios; no aísla el sistema de
+        archivos: un motor accede a los archivos con los permisos de tu
+        usuario.
+      </div>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard engines</span>            <span class="c"># identidad de cada motor</span>
+<span class="p">PS&gt;</span> <span class="k">codeguard engines --auditar</span>  <span class="c"># CVEs en lo que repartimos</span></pre>
+
+      <h3 id="contencion-firma">Firma de código</h3>
+      <div class="nota ambar">
+        <b>El instalador todavía no está firmado.</b>
+        Mientras el certificado esté en trámite, un EDR puede marcarlo como
+        sospechoso — y con razón: sin firma es indistinguible de un dropper. Se
+        dice aquí en vez de esperar a que alguien lo descubra.
+      </div>
+    </section>
+
+    <!-- ── problemas ───────────────────────────────────────────────────── -->
+    <section class="docs-seccion" id="problemas" data-titulo="Problemas frecuentes">
+      <h2>Problemas frecuentes</h2>
+
+      <h3 id="problemas-secretos">«La compuerta de secretos no pudo correr (fail-closed)»</h3>
+      <p>
+        gitleaks no está o no arranca. Es el único error que detiene un commit,
+        y a propósito.
+      </p>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard repair</span></pre>
+
+      <h3 id="problemas-rulepack">«Este repo apunta al rulepack X y no está instalado»</h3>
+      <p>
+        Sin rulepack no hay reglas de la casa, y por tanto no hay paridad con el
+        CI. Actualiza la instalación, o vendorea el rulepack en el repositorio
+        como respaldo.
+      </p>
+
+      <h3 id="problemas-frio">«No cupo en el plazo de esta corrida»</h3>
+      <p>
+        No es un fallo. staticcheck compila el módulo y eslint arranca node: la
+        primera corrida en frío es la cara. Con el caché caliente vuelven a
+        entrar — en una instalación limpia se midió que aparecían fuera de plazo
+        y en la corrida siguiente tardaban medio segundo.
+      </p>
+
+      <h3 id="problemas-agente">«El agente no está corriendo»</h3>
+      <p>
+        El daemon está parado. Los commits siguen revisándose —el hook corre por
+        su cuenta— pero en frío y sin caché, así que tardan más, y no verás ni
+        orbe ni panel.
+      </p>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard daemon</span></pre>
+
+      <h3 id="problemas-motor">Un motor aparece como ausente</h3>
+      <p>
+        Es configuración, no avería: ese motor no está instalado en esta
+        máquina. El commit no se bloquea por ello; lo que pasa es que esa capa
+        no miró, y el panel lo dice.
+      </p>
+      <pre><span class="p">PS&gt;</span> <span class="k">codeguard repair</span>
+<span class="p">PS&gt;</span> <span class="k">codeguard engines</span></pre>
+
+      <h3 id="problemas-squawk">squawk bloquea con un arreglo imposible</h3>
+      <p>
+        Casi seguro que tus migraciones no son de PostgreSQL y
+        <code>migrations_dialect</code> se quedó en <code>postgres</code>.
+        Declara el motor real en <code>.codeguard/config.yaml</code>: eso apaga
+        la capa, que es lo correcto — squawk sólo entiende PostgreSQL.
+      </p>
+
+      <h3 id="problemas-vacio">«Análisis omitido»</h3>
+      <p>Hay cuatro motivos, y los cuatro se dicen con su nombre:</p>
+      <div class="tabla-caja">
+        <table>
+          <thead><tr><th>Motivo</th><th>Qué significa</th></tr></thead>
+          <tbody>
+            <tr><td>repo no enrolado</td><td>Falta <code>.codeguard/config.yaml</code>. Corre <code>codeguard init</code>.</td></tr>
+            <tr><td>sin diff que analizar</td><td>No hay nada preparado.</td></tr>
+            <tr><td>merge o revert</td><td>Funcionamiento normal: no hay nada que revisar que no se haya revisado ya.</td></tr>
+            <tr><td>todos los archivos tocados están excluidos</td><td>Decisión del equipo, no avería. El tono del mensaje y el color del orbe lo reflejan.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer class="pie">
+  <div class="envoltura pie-caja">
+    <div>
+      <p class="pie-marca">CodeGuard</p>
+      <p class="apagado">Agente local de análisis pre-commit para Windows.</p>
+    </div>
+    <nav class="pie-nav" aria-label="Pie">
+      <a href="index.html">Portada</a>
+      <a href="#instalacion">Instalación</a>
+      <a href="#comandos">Comandos</a>
+      <a href="#motores">Motores</a>
+      <a href="#bloqueado">Me bloqueó, ¿ahora qué?</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

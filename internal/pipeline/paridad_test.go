@@ -227,8 +227,13 @@ func TestUnRulepackAusenteLoDicenLasDosRutas(t *testing.T) {
 	}
 
 	git(t, repo, "commit", "-q", "-m", "sin rulepack", "--no-verify")
-	salidaCI, _ := correrCon(t, bin, repo, datos, "ci",
+	// correrComoCI y no correrCon: con GITHUB_ACTIONS=true, que es lo que marca el
+	// run como "ci" y hace que la política §7 aplique su cara de CI.
+	salidaCI, _ := correrComoCI(t, bin, repo, datos, "ci",
 		"--base", base, "--head", "HEAD", "--out", filepath.Join(t.TempDir(), "x.sarif"), "--shadow")
+	// Antes de creerse lo que diga la segunda ruta, comprobar que fue de verdad
+	// la ruta del CI. Ver comentario de exigirQueSeRegistraraComoCI.
+	exigirQueSeRegistraraComoCI(t, filepath.Join(datos, "codeguard", "codeguard.db"), salidaCI)
 	if !strings.Contains(salidaCI, "rulepack") {
 		t.Errorf("el CI NO avisó de que el rulepack anclado no está instalado. "+
 			"Si una ruta aplica las reglas de la casa y la otra no, la paridad se rompe "+
@@ -307,6 +312,56 @@ func hallazgosDe(t *testing.T, rutaDB, entorno string) map[string]hallazgo {
 		out[huella] = h
 	}
 	return out
+}
+
+// exigirQueSeRegistraraComoCI comprueba en la BASE que el run que se acaba de
+// hacer quedó registrado como "ci".
+//
+// Existe porque una prueba de paridad que corre dos veces la misma ruta no
+// prueba ninguna paridad, y por fuera no se distingue: `codeguard ci` invocado
+// sin GITHUB_ACTIONS se ejecuta igual, imprime parecido y se registra como
+// "local". Esta prueba llamaba a correrCon en su segunda ruta —sin la variable—
+// y comparaba local contra local; si el aviso del CI hubiera estado roto, o
+// cableado precisamente a esa variable, habría pasado en verde.
+//
+// La comprobación va contra la base y no contra la salida a propósito: el
+// entorno del run es lo que decide qué cara de la política §7 se aplica (§7:
+// avisa en local, bloquea en CI), así que es el dato que hay que exigir. Y se
+// hace aquí, en un helper, para que la siguiente ruta de CI que alguien añada no
+// pueda volver a olvidarse de la variable en silencio.
+func exigirQueSeRegistraraComoCI(t *testing.T, rutaDB, salida string) {
+	t.Helper()
+	if _, err := os.Stat(rutaDB); err != nil {
+		t.Fatalf("no se creó la base local en %s: %v\n%s", rutaDB, err, salida)
+	}
+	db, err := sql.Open("sqlite", rutaDB+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("no se pudo abrir la base: %v", err)
+	}
+	defer db.Close()
+
+	filas, err := db.Query(`SELECT environment, COUNT(*) FROM runs GROUP BY environment`)
+	if err != nil {
+		t.Fatalf("no se pudieron leer los runs: %v", err)
+	}
+	defer filas.Close()
+	porEntorno := map[string]int{}
+	for filas.Next() {
+		var entorno string
+		var n int
+		if err := filas.Scan(&entorno, &n); err != nil {
+			t.Fatalf("fila ilegible: %v", err)
+		}
+		porEntorno[entorno] = n
+	}
+	if err := filas.Err(); err != nil {
+		t.Fatalf("lectura de runs incompleta: %v", err)
+	}
+	if porEntorno["ci"] == 0 {
+		t.Fatalf("la ruta que dice ser la del CI no se registró como \"ci\" (runs por entorno: %v).\n"+
+			"Sin GITHUB_ACTIONS=true, `codeguard ci` se registra como \"local\": la prueba "+
+			"estaría corriendo DOS VECES la ruta local y llamándolo paridad.\n%s", porEntorno, salida)
+	}
 }
 
 func diferencia(a, b map[string]hallazgo) map[string]hallazgo {

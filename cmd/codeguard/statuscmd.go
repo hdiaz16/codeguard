@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -13,6 +12,7 @@ import (
 	"codeguard/internal/config"
 	"codeguard/internal/daemon"
 	"codeguard/internal/gitdiff"
+	"codeguard/internal/migraciones"
 	"codeguard/internal/registry"
 )
 
@@ -22,6 +22,42 @@ import (
 type chequeo struct {
 	ok      bool
 	detalle string
+}
+
+// tieneSQL: si el repo declara SQL entre sus lenguajes hay algo que mirar.
+// Es la comprobación BARATA, la que decide si merece la pena preguntar al
+// disco; se lee del config para no recorrer archivos de todos los proyectos.
+func tieneSQL(cfg *config.Config) bool {
+	for _, l := range cfg.Languages {
+		if strings.EqualFold(strings.TrimSpace(l), "sql") {
+			return true
+		}
+	}
+	return false
+}
+
+// migracionesSinVigilar lista los archivos que parecen migraciones en un repo
+// cuya lista está vacía. Es la comprobación CARA, y por eso sólo se llega aquí
+// cuando el config ya dijo que hay SQL.
+//
+// Usa el mismo criterio que `init` y que el pipeline (internal/migraciones): si
+// cada superficie tuviera el suyo, `status` acusaría de algo que `init --force`
+// no arreglaría, que es exactamente el rojo sin salida que esto evita.
+func migracionesSinVigilar(root string) []string {
+	rutas, err := gitdiff.Rastreados(root)
+	if err != nil {
+		return nil // sin poder mirar, no se acusa
+	}
+	var out []string
+	for _, p := range rutas {
+		if migraciones.Parece(p) {
+			out = append(out, migraciones.Normalizar(p))
+			if len(out) == 3 {
+				break // con un ejemplo basta para el informe
+			}
+		}
+	}
+	return out
 }
 
 func statusCmd() *cobra.Command {
@@ -104,15 +140,29 @@ func revisarRepo(root string) int {
 	}
 
 	// 3. git apunta a ellos
-	if out, err := exec.Command("git", "-C", root, "config", "core.hooksPath").Output(); err == nil &&
-		strings.TrimSpace(string(out)) == ".githooks" {
-		checks["hooksPath"] = chequeo{true, "core.hooksPath = .githooks"}
-	} else {
+	//
+	// Las tres respuestas son distintas y antes dos se contaban como una: "no
+	// es .githooks" salía como «sin configurar → `codeguard install`» aunque el
+	// valor lo hubiera puesto husky. Ni era cierto ni el remedio servía —era la
+	// orden que apagaba husky, y desde que `install` se niega ni siquiera corre—.
+	// Se pregunta con el MISMO lector que usa `install` para no volver a tener
+	// dos opiniones sobre el mismo dato.
+	switch vigente, err := hooksPathVigente(root); {
+	case err != nil:
+		checks["hooksPath"] = chequeo{false, "no pude leer core.hooksPath: " + err.Error()}
+	case vigente == nil:
 		checks["hooksPath"] = chequeo{false, "core.hooksPath sin configurar → `codeguard install`"}
+	case vigente.esNuestro(root):
+		checks["hooksPath"] = chequeo{true, "core.hooksPath = " + vigente.Valor}
+	default:
+		checks["hooksPath"] = chequeo{false, fmt.Sprintf(
+			"los ganchos son de %s (core.hooksPath = %s): CodeGuard NO corre en este repo → "+
+				"llámalo desde ellos, o `codeguard install --%s` para cambiarlos",
+			vigente.nombreCorto(), vigente.Valor, banderaSustituir)}
 	}
 
 	// 4. el shim sabe dónde está el binario
-	if out, err := exec.Command("git", "-C", root, "config", "codeguard.binpath").Output(); err == nil {
+	if out, err := gitCmd("-C", root, "config", "codeguard.binpath").Output(); err == nil {
 		bin := filepath.Join(strings.TrimSpace(string(out)), "codeguard.exe")
 		if _, err := os.Stat(bin); err == nil {
 			checks["binpath"] = chequeo{true, filepath.ToSlash(filepath.Dir(bin))}
@@ -142,7 +192,26 @@ func revisarRepo(root string) int {
 	// decide si corre. Se muestra siempre que haya migraciones configuradas —
 	// un motor apagado en silencio se confunde con un motor que no encuentra
 	// nada, y son cosas muy distintas para quien confía en la cobertura.
-	if cfg != nil && len(cfg.Paths.Migrations) > 0 {
+	if cfg != nil && len(cfg.Paths.Migrations) == 0 && tieneSQL(cfg) {
+		// El repo tiene SQL y la lista está vacía: la compuerta no vigila nada.
+		//
+		// Hasta aquí este chequeo se saltaba entero cuando la lista venía vacía,
+		// así que el ÚNICO sitio que podía delatar el pilar datos apagado callaba
+		// justo en el caso roto.
+		//
+		// Pero "tiene SQL" no basta para acusar, y esto también se midió: un repo
+		// de sólo consultas (sqlc) salía ✗ para siempre, y el remedio que se le
+		// proponía —`init --force`— vuelve a dejar la lista vacía, porque esas
+		// consultas NO son migraciones. Un rojo permanente con un arreglo que no
+		// puede funcionar es peor que no avisar: enseña a ignorar el informe.
+		// Así que se pregunta lo que de verdad importa: ¿hay algo que PAREZCA
+		// una migración y nadie lo esté mirando?
+		if sueltas := migracionesSinVigilar(root); len(sueltas) > 0 {
+			checks["datos"] = chequeo{false, fmt.Sprintf(
+				"%s parece una migración y paths.migrations está vacío → `migration_unsafe` "+
+					"no la vigila; corre `codeguard init --force` o añade su ruta a mano", sueltas[0])}
+		}
+	} else if cfg != nil && len(cfg.Paths.Migrations) > 0 {
 		if cfg.Paths.MigracionesEnPostgres() {
 			nota := "postgres · squawk activo"
 			if strings.TrimSpace(cfg.Paths.MigrationsDialect) == "" {
@@ -150,8 +219,15 @@ func revisarRepo(root string) int {
 			}
 			checks["datos"] = chequeo{true, nota}
 		} else {
+			// Se enuncia como lo que es —NADA revisado— y no como un ✓ a secas.
+			//
+			// Decía "squawk no aplica" con marca de correcto, y un validador lo
+			// midió sobre un repo mal clasificado: check verde sobre migraciones
+			// de producción que ya no miraba nadie. El motor puede no aplicar por
+			// una decisión legítima del equipo, así que no es un fallo; pero
+			// tampoco es protección, y la línea no puede leerse como si lo fuera.
 			checks["datos"] = chequeo{true, cfg.Paths.DialectoMigraciones() +
-				" · squawk no aplica (sólo analiza PostgreSQL)"}
+				" · el pilar datos NO revisa nada en este repo (squawk sólo analiza PostgreSQL)"}
 		}
 	}
 

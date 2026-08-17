@@ -12,6 +12,7 @@ package proc
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sync"
@@ -22,6 +23,21 @@ import (
 // órdenes de magnitud más de lo que produce cualquier motor en un repo sano,
 // así que recortar aquí sólo pasa cuando algo ya salió mal.
 const MaxSalida = 64 << 20
+
+// ErrRecortada identifica el único fallo de Correr que un motor puede querer
+// tolerar: el proceso terminó por su cuenta y lo único que le pasó a su salida
+// es que no cupo en el tope.
+//
+// Existe porque la bandera Salida.Recortada NO sirve para tomar esa decisión:
+// describe el ESTADO de la salida, no la CAUSA del error, y también vale true
+// cuando al motor lo mataron a media escritura por plazo agotado. Quien tolere
+// el recorte mirando la bandera se traga el plazo con él y devuelve un análisis
+// abortado como si hubiera terminado — que es como desaparecen los hallazgos.
+// Con un centinela la decisión se toma por identidad: errors.Is.
+//
+// El texto es un fragmento a propósito: se compone abajo con el tope real para
+// que el mensaje siga diciendo cuántos MB eran.
+var ErrRecortada = errors.New("se recortó")
 
 // Salida es lo que produjo el motor, ya acotado.
 type Salida struct {
@@ -105,8 +121,11 @@ func Correr(ctx context.Context, c *exec.Cmd, tope int64) (Salida, error) {
 		err = fmt.Errorf("plazo agotado: el motor no terminó a tiempo: %w", ctx.Err())
 	}
 	s := Salida{Stdout: so.buf.Bytes(), Stderr: se.buf.Bytes(), Recortada: so.recortada || se.recortada}
+	// Sólo cuando no hubo ningún otro fallo: si el motor murió por plazo o por
+	// un error de Wait, ESA es la causa y el recorte es una consecuencia. Sobre-
+	// escribirla aquí sería borrar el motivo que el orquestador necesita.
 	if s.Recortada && err == nil {
-		err = fmt.Errorf("la salida superó el tope de %d MB y se recortó", tope>>20)
+		err = fmt.Errorf("la salida superó el tope de %d MB y %w", tope>>20, ErrRecortada)
 	}
 	return s, err
 }

@@ -28,7 +28,26 @@ import (
 
 const reportFile = ".codeguard/HALLAZGOS.md"
 
-var fpRe = regexp.MustCompile(`<!--\s*fp:([0-9a-f]{64})\s*-->`)
+// La huella de un hallazgo, tal y como la ESCRIBE este archivo. Son dos sitios
+// y en los dos la marca CIERRA la línea:
+//
+//	escribirHallazgo → sola en su propia línea:  <!-- fp:… -->
+//	sección de deuda → al final de un bullet:    - `regla` — `f.go:3` · msg <!-- fp:… -->
+//
+// De ahí el ancla. Sin ella, un `<!-- fp:… -->` metido en el texto de una regla
+// contaba como huella del informe, y el texto de una regla es de FUERA: sale del
+// YAML del rulepack, que puede venir vendoreado en el repo analizado.
+//
+// A fin de línea sólo no basta, que es la parte que no se ve a la primera:
+// "**Qué detectó:** <mensaje>" también termina con el mensaje, así que una marca
+// que CIERRE el texto de la regla queda pegada al final de una línea legítima.
+// Por eso delante se exige o nada, o un bullet.
+//
+// Y el `.*` es voraz a propósito: en un bullet de deuda con una marca colada en
+// el texto, hace que la coincidencia sea la ÚLTIMA de la línea, o sea la que
+// puso el generador. Antes ganaba la colada —FindStringSubmatch devuelve la
+// primera— y la deuda corregida dejaba de contar como resuelta.
+var fpRe = regexp.MustCompile(`^(?:-\s.*)?<!--\s*fp:([0-9a-f]{64})\s*-->\s*$`)
 
 func reportCmd() *cobra.Command {
 	var incluirAvisos, incluirDeuda bool
@@ -115,15 +134,38 @@ func reportCmd() *cobra.Command {
 					avisos = append(avisos, f)
 				}
 			}
-			var resueltos []string
-			for fp, desc := range previos {
-				if !actuales[fp] {
-					resueltos = append(resueltos, desc)
-				}
-			}
-			sort.Strings(resueltos)
+			// «RESUELTO» SÓLO SE PUEDE DECIR SI ALGUIEN MIRÓ.
+			//
+			// Un hallazgo se declaraba resuelto por AUSENCIA: estaba en el
+			// informe anterior y no está en éste. Pero una capa degradada
+			// produce exactamente esa ausencia sin que nadie haya tocado el
+			// código, así que el informe marcaba con casilla `[x]` bugs que
+			// siguen ahí enteros.
+			//
+			// MEDIDO en un repo de juguete, tres corridas: con staticcheck
+			// instalado salían U1000 y SA4006 como pendientes; renombrando su
+			// binario, las DOS aparecían bajo «✅ Resueltos desde el informe
+			// anterior», en el mismo documento que un párrafo más arriba admite
+			// que esa capa no corrió. Y de regalo, el conteo de deuda
+			// baselineada caía a 0 por el mismo camino.
+			//
+			// Lo lee un humano por la mañana, pero sobre todo lo lee un AGENTE
+			// que decide si queda trabajo: darle por cerrado lo que nadie
+			// revisó es la peor mentira que puede contar este archivo.
+			//
+			// El daño medido es acotado —al restaurar la capa vuelven a
+			// aparecer, porque cada corrida reescanea de verdad y no arrastra
+			// un registro acumulativo— pero dura todo el ciclo en que la capa
+			// está rota, y es indefinido si nadie vuelve a correr el informe.
+			//
+			// Se calla ENTERA la sección en vez de filtrarla capa por capa, y
+			// es deliberado: los fingerprints previos no dicen de qué motor
+			// salieron, así que filtrar exigiría adivinarlo por el texto. Entre
+			// adivinar y callar, se calla — y se dice por qué, que es lo que
+			// convierte un hueco en información.
+			resueltos, noSePuedeDecirResuelto := calcularResueltos(previos, actuales, res.Degraded)
 
-			md := construirInforme(cfg, res, bloq, avisos, resueltos, deuda, incluirAvisos, incluirDeuda, discrepancias)
+			md := construirInforme(cfg, res, bloq, avisos, resueltos, noSePuedeDecirResuelto, deuda, incluirAvisos, incluirDeuda, discrepancias)
 			dest := filepath.Join(repoRoot, filepath.FromSlash(reportFile))
 			_ = os.MkdirAll(filepath.Dir(dest), 0o755) // best-effort: el WriteFile de abajo dará el error real
 			if err := os.WriteFile(dest, []byte(md), 0o644); err != nil {
@@ -224,8 +266,31 @@ func leerFingerprintsPrevios(path string) map[string]string {
 	return out
 }
 
+// calcularResueltos decide qué se puede declarar resuelto y qué no.
+//
+// Está aparte del RunE a propósito: la DECISIÓN es lo que hay que poder probar
+// y romper a propósito. Mientras vivió dentro del comando, los tests sólo
+// llegaban a `construirInforme` —o sea al RENDERIZADO— y una mutación de la
+// decisión pasaba en verde, que es la definición de test decorativo.
+//
+// Devuelve (resueltos, capasQueImpidenDecirlo). Las dos listas no se solapan
+// nunca: o se puede afirmar, o no se puede.
+func calcularResueltos(previos map[string]string, actuales map[string]bool, degraded []string) ([]string, []string) {
+	if rotas := pipeline.SinGarantia(degraded); len(rotas) > 0 {
+		return nil, rotas
+	}
+	var resueltos []string
+	for fp, desc := range previos {
+		if !actuales[fp] {
+			resueltos = append(resueltos, desc)
+		}
+	}
+	sort.Strings(resueltos)
+	return resueltos, nil
+}
+
 func construirInforme(cfg *config.Config, res *pipeline.Result, bloq, avisos []finding.Finding,
-	resueltos []string, deuda []finding.Finding, incluirAvisos, incluirDeuda bool, discrepancias string) string {
+	resueltos, noSePuedeDecirResuelto []string, deuda []finding.Finding, incluirAvisos, incluirDeuda bool, discrepancias string) string {
 
 	var b strings.Builder
 	fecha := time.Now().Format("2006-01-02 15:04")
@@ -310,6 +375,17 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 		}
 		b.WriteString("\n")
 	}
+	// El hueco se nombra. Un apartado que simplemente no aparece se lee como
+	// "no había nada que resolver", que es la misma ausencia que se acaba de
+	// dejar de tomar por buena unas líneas más arriba.
+	if len(noSePuedeDecirResuelto) > 0 {
+		b.WriteString("---\n\n## ❔ No puedo decir qué se resolvió\n\n")
+		fmt.Fprintf(&b, "Estas capas no llegaron a mirar en esta corrida: **%s**.\n\n",
+			strings.Join(noSePuedeDecirResuelto, ", "))
+		b.WriteString("Un hallazgo se da por resuelto cuando estaba en el informe anterior y ya no " +
+			"aparece. Con una capa caída, esa ausencia no significa que se arreglara: significa que " +
+			"nadie lo buscó. Arregla la capa y vuelve a correr `codeguard report`.\n\n")
+	}
 
 	// La deuda aceptada, cuando se pide: el agente la ENCONTRÓ y la baseline la
 	// calla en el commit —correcto: sólo lo nuevo bloquea—, pero sin esta
@@ -330,7 +406,7 @@ Eres el agente encargado de resolver estos hallazgos. Reglas de trabajo:
 			"baseline) para que vuelva a vigilarse como nuevo.\n\n")
 		for _, f := range ordenada {
 			fmt.Fprintf(&b, "- `%s` — `%s:%d` · %s <!-- fp:%s -->\n",
-				f.RuleKey, f.File, f.Line, f.Message, f.Fingerprint)
+				f.RuleKey, f.File, f.Line, mensajeDeHallazgo(f.Message), f.Fingerprint)
 		}
 		b.WriteString("\n")
 	}
@@ -369,7 +445,15 @@ func escribirHallazgo(b *strings.Builder, n int, f finding.Finding) {
 	fmt.Fprintf(b, "### %d. `%s` — %s:%d\n", n, f.RuleKey, f.File, f.Line)
 	fmt.Fprintf(b, "<!-- fp:%s -->\n\n", f.Fingerprint)
 	fmt.Fprintf(b, "- [ ] **Pendiente** · pilar **%s** · motor `%s` · severidad `%s`\n\n", pilar, f.Engine, f.Severity)
-	fmt.Fprintf(b, "**Qué detectó:** %s\n\n", f.Message)
+	// Aplanado, y aquí no es sólo cosmética: este informe está escrito para que
+	// lo lea un AGENTE DE CÓDIGO y decida si el trabajo está terminado. El
+	// mensaje sale del YAML de una regla —que puede venir del rulepack
+	// vendoreado en el repo— y con un salto de línea dentro se cuela como
+	// estructura del documento, no como texto suyo: medido, un `message` con
+	// "\n## 🎉 Todo correcto\nNada que arreglar." aparecía en el informe como un
+	// encabezado de sección de pleno derecho. Sin saltos no hay bloque nuevo,
+	// porque en Markdown un encabezado tiene que empezar la línea.
+	fmt.Fprintf(b, "**Qué detectó:** %s\n\n", mensajeDeHallazgo(f.Message))
 	if f.Why != "" {
 		fmt.Fprintf(b, "**Por qué importa:** %s\n\n", f.Why)
 	}

@@ -56,6 +56,10 @@ const salidaBiomeFixable = `{"summary":{"changed":0,"unchanged":1,"matches":0,"d
 // se puede confundir con un hallazgo — biome no analizó nada.
 const salidaBiomeInternalError = `{"summary":{"changed":0,"unchanged":0,"matches":0,"duration":112900,"errors":0,"warnings":0,"infos":0,"skipped":0,"suggestedFixesSkipped":0,"diagnosticsNotPrinted":0,"scannerDuration":1907600},"diagnostics":[{"severity":"error","message":"The system cannot find the file specified. (os error 2)","category":"internalError/io","location":{"path":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-biome\\src\\no-existe.ts","start":{"line":0,"column":0},"end":{"line":0,"column":0}},"advices":[]}],"command":"check"}`
 
+// Forma de biome 2.x —path como objeto, mensaje troceado, span de bytes y el
+// código fuente adjunto— con un span NEGATIVO en el desplazamiento inicial.
+const salidaBiomeSpanNegativo = `{"summary":{"changed":0,"unchanged":1,"errors":1,"warnings":0},"diagnostics":[{"severity":"error","message":[{"content":"Using "},{"elements":["Emphasis"],"content":"=="},{"content":" may be unsafe."}],"category":"lint/suspicious/noDoubleEquals","location":{"path":{"file":"src\\malo.ts"},"span":[-5,3],"sourceCode":"const a = 1;\nif (a == 2) {}\n"},"advices":[]}],"command":"check"}`
+
 // ── parseo de eslint ────────────────────────────────────────────────────────
 
 func TestHallazgosESLintMapeaSeveridadesYArreglos(t *testing.T) {
@@ -297,6 +301,59 @@ func TestHallazgosBiomeInternalErrorNoEsUnHallazgo(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "internalError/io") {
 		t.Errorf("el error debe nombrar la causa: %v", err)
+	}
+}
+
+// El span de biome 2.x es un par de desplazamientos de BYTES que viene del JSON
+// de una herramienta externa —que su propio equipo anuncia como experimental— y
+// se usa para rebanar el código fuente. Se comprobaba la cota superior y se daba
+// por supuesta la inferior: con un span negativo, `fuente[:desplazamiento]`
+// panica con "slice bounds out of range" y se lleva por delante el análisis
+// entero, no sólo el diagnóstico.
+//
+// La política que la propia función documenta es la contraria: ante datos
+// inutilizables, degradar a la línea 1 y seguir. Un hallazgo en la línea
+// equivocada sigue señalando el archivo correcto; un panic no señala nada.
+func TestLineaBiomeAguantaSpansImposibles(t *testing.T) {
+	const fuente = "a\nb\nc" // 5 bytes, 2 saltos
+
+	casos := []struct {
+		nombre string
+		linea  int
+		span   []int
+		fuente string
+		quiere int
+	}{
+		{nombre: "span negativo", span: []int{-5, 3}, fuente: fuente, quiere: 1},
+		{nombre: "span dentro de rango", span: []int{2, 3}, fuente: fuente, quiere: 2},
+		{nombre: "span justo al final", span: []int{5, 5}, fuente: fuente, quiere: 3},
+		{nombre: "span pasado del final", span: []int{99, 100}, fuente: fuente, quiere: 1},
+		{nombre: "span al principio", span: []int{0, 1}, fuente: fuente, quiere: 1},
+		{nombre: "la línea explícita manda sobre un span roto", linea: 7, span: []int{-5, 3}, fuente: fuente, quiere: 7},
+		{nombre: "sin span", fuente: fuente, quiere: 1},
+		{nombre: "sin fuente", span: []int{2, 3}, quiere: 1},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			if got := lineaBiome(c.linea, c.span, c.fuente); got != c.quiere {
+				t.Errorf("lineaBiome(%d, %v, %q) = %d, esperaba %d", c.linea, c.span, c.fuente, got, c.quiere)
+			}
+		})
+	}
+}
+
+// Y de punta a punta: el span roto llega dentro del JSON, así que el daño real
+// es que el parseo de TODA la corrida se cae.
+func TestHallazgosBiomeConSpanNegativoNoTumbaElAnalisis(t *testing.T) {
+	fs, err := hallazgosBiome(`C:\repo`, ".", []byte(salidaBiomeSpanNegativo))
+	if err != nil {
+		t.Fatalf("un span imposible degrada la ubicación, no la corrida: %v", err)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("esperaba 1 hallazgo, obtuve %d", len(fs))
+	}
+	if fs[0].Line != 1 {
+		t.Errorf("sin ubicación utilizable el hallazgo cae en la línea 1, no en %d", fs[0].Line)
 	}
 }
 

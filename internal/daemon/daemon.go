@@ -39,8 +39,21 @@ type Server struct {
 	// OnRequest se dispara al entrar una petición (estado working en la UI).
 	OnRequest func(req *ipc.Request)
 	// OnCommand atiende peticiones de la CLI hacia la UI (p.ej. abrir el grafo).
-	OnCommand func(cmd, repoRoot string)
-	OnResult  OnResult
+	//
+	// Recibe la petición ENTERA y no sólo la ruta: el bloqueo por secreto
+	// necesita además cuántos fueron, y pasarle a la UI un canal recortado
+	// obligaba a inventar un segundo camino para cada comando que llevara un
+	// dato más.
+	OnCommand func(cmd string, req *ipc.Request)
+	// OnProgreso se dispara con cada paso de la etapa 2 MIENTRAS corre, para
+	// que el orbe pueda enseñar el análisis avanzando en vez de quedarse mudo
+	// los cuatro o cinco segundos que dura.
+	//
+	// Corre en las goroutines de los motores, en el camino del commit: lo que se
+	// haga aquí NO puede bloquear (ver el contrato en pipeline/progreso.go). En
+	// nil —que es lo normal fuera del daemon con ventana— no cuesta nada.
+	OnProgreso func(req *ipc.Request, av pipeline.Avance)
+	OnResult   OnResult
 	// Shadow, si no es nil, corre las etapas 3-6 (LLM en sombra) DESPUÉS de
 	// responder al hook — nunca en el camino del commit.
 	Shadow *shadow.Runner
@@ -138,9 +151,28 @@ func short(s string) string {
 // repo de prueba: semgrep "corrió" en 0 ms con 0 hallazgos y la baseline se
 // escribió sin cobertura de reglas. La instalación estándar es el último
 // recurso porque siempre está donde está, sin importar quién arrancó el proceso.
+// El del repo va el ÚLTIMO, y esto es una decisión de seguridad, no de orden.
+//
+// Iba primero, y con eso el repo ANALIZADO decidía qué reglas se le aplicaban:
+// bastaba traer un `rulepacks/<la version que pinnea>/` con reglas de relleno
+// para que las de la casa no llegaran a mirar el código. Medido: el mismo
+// archivo con una inyección SQL de manual sale BLOQUEADO con el rulepack
+// instalado y "formato/lint/tipos/reglas/migraciones ✓  listo — commit
+// permitido" con el del repo. Sin carrera y sin atacante sofisticado: basta
+// clonar el repositorio.
+//
+// El vendoreado sigue existiendo porque resuelve un fallo real —un binario que
+// no es el instalado no tiene rulepacks al lado, y sin esto cada repo perdería
+// las 119 reglas EN SILENCIO—, pero como RESPALDO: se usa cuando la versión no
+// está instalada, que es el caso que lo justificó. Si están las dos, el mismo
+// número nombrando dos artefactos distintos es una colisión, y en una colisión
+// gana el de la organización: la versión es una promesa de paridad con el CI.
+//
+// Un equipo que de verdad necesite reglas propias las publica con SU número de
+// versión; lo que no puede es reutilizar el de la casa para otra cosa.
 func RulepackDir(repoRoot, version string) string {
 	local := filepath.Join(repoRoot, "rulepacks", version)
-	candidatos := []string{local}
+	var candidatos []string
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		candidatos = append(candidatos,
@@ -150,6 +182,7 @@ func RulepackDir(repoRoot, version string) string {
 	if base := os.Getenv("LOCALAPPDATA"); base != "" {
 		candidatos = append(candidatos, filepath.Join(base, "CodeGuard", "rulepacks", version))
 	}
+	candidatos = append(candidatos, local)
 	for _, c := range candidatos {
 		if _, err := os.Stat(c); err == nil {
 			return c
@@ -158,6 +191,17 @@ func RulepackDir(repoRoot, version string) string {
 	// Ninguno existe: se devuelve la ruta del repo para que el mensaje de error
 	// hable del sitio donde el dev PODRÍA vendorearlo.
 	return local
+}
+
+// RulepackEsDelRepo dice si las reglas que se van a aplicar salen del repo
+// analizado en vez de las instaladas.
+//
+// Existe para poder DECIRLO. El hook ya avisaba a gritos cuando el rulepack
+// falta ("las reglas de la casa NO se aplicaron"), y callaba cuando lo
+// sustituyen — que es peor, porque no deja rastro: el veredicto sale con su ✓ y
+// nadie sabe qué reglas corrieron.
+func RulepackEsDelRepo(repoRoot, version string) bool {
+	return RulepackDir(repoRoot, version) == filepath.Join(repoRoot, "rulepacks", version)
 }
 
 // RulepacksInstalados lista las versiones disponibles junto al binario y
@@ -247,7 +291,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	// Comandos que no son análisis (los manda la CLI para que la UI actúe).
 	if req.Command != "" {
 		if s.OnCommand != nil {
-			s.OnCommand(req.Command, req.RepoRoot)
+			s.OnCommand(req.Command, req)
 		}
 		_ = ipc.WriteResponse(conn, &ipc.Response{RunID: req.RunID, Verdict: "ok"}) // ack de comando; si el pipe se cerró, no hay nada que hacer
 		return
@@ -267,9 +311,13 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		if cfg, err := config.Load(req.RepoRoot); err == nil && cfg != nil {
 			//nolint:gosec // G118: la sombra sobrevive al request a propósito (ver context.Background abajo)
 			go func() {
-				// El hook persiste el run justo después de recibir la respuesta;
-				// esta espera evita actualizar un run que aún no existe.
-				time.Sleep(2 * time.Second)
+				// El hook persiste el run al recibir esta misma respuesta, en
+				// SU proceso. La sombra no puede empezar antes de que esa fila
+				// exista: todo lo que escribe cuelga de ella.
+				if s.Shadow.Store != nil &&
+					!esperarRunPersistido(ctx, s.Shadow.Store, req.RunID, esperaMaximaDelRun) {
+					return // esperarRunPersistido ya dejó dicho el porqué
+				}
 				// context.Background a propósito (no el de la petición): la
 				// sombra corre DESPUÉS de responder al hook y sobrevive al
 				// cierre de la conexión. Atarla al contexto de la petición la
@@ -283,6 +331,71 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	// abrir una conexión por commit. Best-effort puro: jamás toca el commit.
 	if s.Shadow != nil && s.Shadow.Store != nil {
 		go syncOportunista(s.Shadow.Store)
+	}
+}
+
+// esperaMaximaDelRun es lo que la sombra aguanta a que el hook escriba la fila
+// del run. Treinta segundos es holgadísimo para un INSERT —lo normal se mide en
+// milisegundos— y aun así termina: una espera sin tope dejaría goroutines vivas
+// para siempre si el hook muere entre responder y persistir, que es justo lo que
+// pasa cuando el desarrollador aborta el commit con Ctrl-C.
+const esperaMaximaDelRun = 30 * time.Second
+
+// esperarRunPersistido espera a que la fila del run EXISTA antes de dejar
+// correr la sombra. Devuelve false si se agotó el tope o si el daemon se apaga.
+//
+// Aquí había un `time.Sleep(2 * time.Second)` con el comentario «el hook
+// persiste el run justo después de recibir la respuesta». Dos segundos no son
+// una espera, son una apuesta: quien escribe esa fila es OTRO PROCESO (el del
+// hook, ver persistRun en cmd/codeguard) sobre el mismo archivo SQLite, y su
+// escritura compite con el antivirus, con el disco y con el empuje oportunista
+// que este mismo handle() lanza en paralelo contra la misma base. Cuando el hook
+// pasaba de dos segundos, la sombra actualizaba un run que aún no existía: un
+// UPDATE de cero filas, que en database/sql no es error, y el risk_score se
+// perdía para siempre sin una línea de log.
+//
+// Sondear la fila convierte la apuesta en un hecho: se espera lo que haga falta
+// —no un número fijo elegido de memoria— y si el tope se agota se DICE. Al
+// agotarse, la sombra no corre: sus hallazgos y su telemetría cuelgan del run
+// por clave foránea, así que sin la fila no habría dónde guardarlos y lo único
+// que se conseguiría es quemar tokens en un análisis que nadie podrá leer.
+//
+// El backoff arranca en 50 ms y se dobla hasta un segundo: el caso normal —la
+// fila ya está o llega enseguida— se resuelve en un sondeo o dos, y el caso raro
+// no martillea la base justo cuando está contendida, que es lo que lo hacía
+// raro.
+func esperarRunPersistido(ctx context.Context, st *store.Store, runID string, tope time.Duration) bool {
+	inicio := time.Now()
+	espera := 50 * time.Millisecond
+	var ultimoErr error
+	for {
+		existe, err := st.RunExiste(runID)
+		if existe {
+			return true
+		}
+		if err != nil {
+			// Preguntar puede fallar por contención (SQLITE_BUSY) y el
+			// siguiente sondeo suele acertar; se guarda el último error para
+			// poder decir POR QUÉ si al final se agota el tope.
+			ultimoErr = err
+		}
+		if time.Since(inicio) >= tope {
+			log.Printf("sombra: el run %s no apareció en la base tras %s (último error: %v) — "+
+				"la sombra no corre porque sus hallazgos no tendrían dónde colgarse",
+				runID, tope, ultimoErr)
+			return false
+		}
+		t := time.NewTimer(espera)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			log.Printf("sombra: el daemon se apaga mientras esperaba al run %s — se abandona", runID)
+			return false
+		case <-t.C:
+		}
+		if espera < time.Second {
+			espera *= 2
+		}
 	}
 }
 
@@ -330,6 +443,15 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	cfg, err := config.Load(req.RepoRoot)
 	if err != nil || cfg == nil {
 		resp.Verdict = "skipped"
+		// El motivo viaja: un "no se analizó nada" sin explicación es de los que
+		// el dev aprende a ignorar. Se distinguen los dos casos porque el remedio
+		// no es el mismo — uno se arregla con `codeguard init` y el otro editando
+		// el YAML que está roto.
+		if err != nil {
+			resp.Reason = "no se pudo leer .codeguard/config.yaml: " + err.Error()
+		} else {
+			resp.Reason = "repo no enrolado (falta .codeguard/config.yaml)"
+		}
 		resp.Degraded = append(resp.Degraded, "config:unreadable")
 		return resp
 	}
@@ -355,6 +477,16 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		}
 	}
 	rulepack := RulepackDir(req.RepoRoot, cfg.Rulepack)
+	// Reglas del propio repo: se aplican (es el respaldo legítimo cuando la
+	// versión no está instalada), pero no se puede prometer paridad con el CI
+	// —nadie ha comprobado que ese directorio contenga las reglas que dice su
+	// número— y sobre todo se DICE, que era lo que faltaba.
+	if RulepackEsDelRepo(req.RepoRoot, cfg.Rulepack) {
+		resp.CIParity = false
+		resp.ParityReason = fmt.Sprintf("las reglas salieron del rulepack vendoreado en este repo "+
+			"(rulepacks/%s), no del instalado: son las que trae el repositorio", cfg.Rulepack)
+		log.Printf("rulepack del repo en %s: %s", filepath.Base(req.RepoRoot), rulepack)
+	}
 	if _, err := os.Stat(rulepack); err != nil {
 		resp.CIParity = false
 		// Este camino rompía la paridad EN SILENCIO: el dev leía "no puedo
@@ -391,6 +523,12 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		// reintenta con N-1 archivos idénticos, y esos ya no se re-analizan.
 		cache = CachePorArchivo(s.Shadow.Store, req.RepoID, "", filepath.Base(req.RepoRoot), cfg)
 	}
+	// El progreso se ata a ESTA petición: el consumidor necesita saber de qué
+	// análisis le hablan para no pintar el avance de un commit sobre otro.
+	var progreso func(pipeline.Avance)
+	if s.OnProgreso != nil {
+		progreso = func(av pipeline.Avance) { s.OnProgreso(req, av) }
+	}
 	res, err := pipeline.Run(ctx, pipeline.Options{
 		Config:       cfg,
 		Diff:         &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified, Lines: req.DiffLines},
@@ -400,16 +538,24 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		Timeout:      deadline,
 		Suppressions: baseline.Load(req.RepoRoot),
 		DemotedRules: demoted,
+		Progreso:     progreso,
 	})
 	if err != nil {
 		resp.Degraded = append(resp.Degraded, fmt.Sprintf("pipeline:%v", err))
 		return resp
 	}
 	resp.Verdict = string(res.Verdict)
+	// El motivo acompaña al veredicto. Sólo el pipeline sabe por qué se saltó el
+	// análisis, y hasta aquí ese dato moría en este proceso: el hook recibía un
+	// "skipped" mudo y no tenía con qué explicarlo. Va sin condición porque en
+	// los veredictos que no son skipped el pipeline lo deja vacío.
+	resp.Reason = res.Reason
 	resp.BlockingFindings = res.BlockingFindings
 	resp.AdvisoryFindings = res.AdvisoryFindings
 	resp.Suppressed = res.Suppressed
 	resp.Degraded = append(resp.Degraded, res.Degraded...)
+	// El estado por capa viaja para que el panel pueda decir qué miró cada motor.
+	resp.Capas = res.Capas
 	// El daemon asigna los IDs: el hook persiste con los mismos y el panel
 	// puede referenciarlos en el feedback (etapa 9).
 	for i := range res.Findings {

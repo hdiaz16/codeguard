@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"codeguard/internal/engines"
+	"codeguard/internal/engines/contrato"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 )
@@ -244,11 +246,40 @@ func cacheDeArchivosJava(fs []finding.Finding, analizados []objetivoJava) map[st
 // cuenta dotnet-vuln. Y el formato no es el problema de ese archivo.
 func jfmtDesformateados(ctx context.Context, repoRoot, absProyecto, dirProyecto, jar string, rutas []string) ([]string, error) {
 	args := append([]string{"-jar", jar, "--dry-run", "--set-exit-if-changed"}, rutas...)
-	stdout, err := jfmtCorrer(ctx, absProyecto, dirProyecto, args)
+	stdout, err := jfmtCorrer(ctx, absProyecto, dirProyecto, jar, args)
 	if err != nil {
 		return nil, err
 	}
-	return jfmtRutasCambiadas(repoRoot, dirProyecto, stdout), nil
+	cambiadas := jfmtRutasCambiadas(repoRoot, dirProyecto, stdout)
+
+	// La respuesta tiene que ser un SUBCONJUNTO de lo que preguntamos.
+	//
+	// --dry-run contesta con las rutas del lote que cambiarían, así que una línea
+	// que no estaba en el lote no es una ruta: es que lo que corrió no era
+	// google-java-format. Sin esta comprobación, cualquier texto en stdout se
+	// tomaba por una lista de archivos, la segunda pasada intentaba leerlos, no
+	// existían, y la rama de "desapareció entre las dos pasadas" lo daba por
+	// bueno. Resultado: CERO hallazgos, o sea "revisé y está bien" sobre un
+	// archivo que nadie miró.
+	//
+	// Lo destapó el test de contrato de internal/daemon poniendo un `java`
+	// impostor que escribe en stdout y sale con 1. No hace falta un impostor para
+	// que ocurra: basta un envoltorio corporativo delante del java real, o un
+	// mensaje de la JVM en otro idioma. Es la misma clase que tuvo govet y que
+	// tuvo tsc — el silencio de la avería confundido con el del éxito.
+	pedidas := make(map[string]bool, len(rutas))
+	for _, r := range rutas {
+		pedidas[rutaRepoJava(repoRoot, dirProyecto, r)] = true
+	}
+	for _, c := range cambiadas {
+		if !pedidas[c] {
+			return nil, fmt.Errorf("google-java-format contestó con %q, que no estaba en el "+
+				"lote que se le pasó: lo que corrió no es la herramienta esperada (¿un java "+
+				"distinto, o un envoltorio delante?). Salida: %s",
+				c, jRecortar(colapsar(string(stdout)), 200))
+		}
+	}
+	return cambiadas, nil
 }
 
 // jfmtRutasCambiadas traduce el stdout de --dry-run (una ruta por línea, con la
@@ -291,7 +322,7 @@ func jfmtSoloFinalesDeLinea(ctx context.Context, repoRoot, absProyecto, dirProye
 		// ya no existe es peor que callar.
 		return true, nil
 	}
-	stdout, err := jfmtCorrer(ctx, absProyecto, dirProyecto, []string{"-jar", jar, enProyecto(dirProyecto, rel)})
+	stdout, err := jfmtCorrer(ctx, absProyecto, dirProyecto, jar, []string{"-jar", jar, enProyecto(dirProyecto, rel)})
 	if err != nil {
 		return false, err
 	}
@@ -308,7 +339,7 @@ func jfmtNormalizar(b []byte) []byte {
 // jfmtCorrer ejecuta google-java-format y separa los tres desenlaces que
 // importan: no arrancó, arrancó y falló de verdad, o arrancó y tiene algo que
 // decir.
-func jfmtCorrer(ctx context.Context, absProyecto, dirProyecto string, args []string) ([]byte, error) {
+func jfmtCorrer(ctx context.Context, absProyecto, dirProyecto, jar string, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "java", args...)
 	cmd.Dir = absProyecto
 	cmd.Env = proc.Entorno()
@@ -340,8 +371,81 @@ func jfmtCorrer(ctx context.Context, absProyecto, dirProyecto string, args []str
 		return nil, fmt.Errorf("google-java-format falló en %s (código %d): %s",
 			dirProyecto, codigo, jRecortar(colapsar(string(salida.Combinada())), 400))
 	}
+	// Salió con 1 y no escribió NADA en stdout: entonces no formateó nada, y no
+	// se puede afirmar que el archivo esté bien.
+	//
+	// Con --set-exit-if-changed, el 1 significa "esto cambiaría" — y para decir
+	// eso la herramienta tiene que haber emitido el archivo ya formateado, que es
+	// justo lo que se compara. Salir con 1 y stdout vacío no es ninguno de los
+	// desenlaces previstos: es que no llegó a hacer su trabajo.
+	//
+	// Lo destapó el test de contrato de internal/daemon sustituyendo `java` por un
+	// impostor que escribe en stdout y sale con 1: jErrorDeJVM sólo reconoce los
+	// mensajes de la JVM que empiezan por "Error: " en STDERR, así que el impostor
+	// pasaba por "esto cambiaría", no había nada que comparar, y el motor devolvía
+	// CERO hallazgos — o sea, "revisé y está bien" sobre un archivo que nadie
+	// miró. Es la misma clase de fallo que tuvo govet y que tuvo tsc: el silencio
+	// de una avería confundido con el silencio del éxito.
+	//
+	// No hace falta que el impostor sea artificial para que ocurra: basta un java
+	// que escriba su queja en stdout, un mensaje de la JVM en otro idioma que no
+	// empiece por "Error: ", o un envoltorio corporativo delante del java real.
+	if codigo == 1 && len(salida.Stdout) == 0 {
+		return nil, fmt.Errorf("google-java-format salió con 1 en %s y no devolvió el archivo "+
+			"formateado: no llegó a hacer su trabajo (¿un java que no es el esperado, o un "+
+			"error de la JVM que no reconocimos?). Salida: %s",
+			dirProyecto, jRecortar(colapsar(string(salida.Combinada())), 200))
+	}
+
+	// Y EL SIMÉTRICO, que es el que quedaba: SALIR CON 0 Y CALLAR.
+	//
+	// La comprobación de arriba cubre el 1; con 0 y stdout vacío el motor daba el
+	// lote por bien formateado. En la primera pasada (--dry-run
+	// --set-exit-if-changed) eso ES el resultado legítimo de un lote impecable, y
+	// ahí está el problema: es idéntico a lo que devuelve un `java` que no ejecutó
+	// el jar. En la segunda pasada ni siquiera es legítimo —se pide el archivo
+	// formateado por stdout y un .java no formatea a la nada—, pero las dos
+	// llegaban aquí igual de mudas.
+	//
+	// A diferencia de gitleaks o `go vet -json`, aquí no hay ninguna huella que
+	// aprovechar: google-java-format limpio no escribe NADA, y ése es su contrato.
+	// Así que toca preguntarle quién es. Cuesta un arranque de JVM, sólo en el lote
+	// que sale limpio, y una vez por proceso (contrato.Identidad lo memoriza).
+	//
+	// Y esta es justo la avería que hay en la máquina donde se escribió esto: el
+	// jar de la 1.36.1 está compilado para JDK 21 (class file 65) y aquí hay JDK 17
+	// (61), así que `java -jar` muere con UnsupportedClassVersionError y la
+	// compuerta de formato de Java está apagada. Con la JVM contestando ese error,
+	// preguntar por la versión falla y el motor lo dice, que es lo que hay que hacer.
+	if codigo == 0 && len(salida.Stdout) == 0 {
+		if err := contrato.Identidad(ctx, contrato.Prueba{
+			Motor:  "google-java-format",
+			Bin:    "java",
+			Args:   []string{"-jar", jar, "--version"},
+			Dir:    absProyecto,
+			Espera: contestaAlgo,
+			Pista: "Comprueba que `java -jar \"" + jar + "\" --version` funcione: si la JVM " +
+				"es más vieja que el jar, muere con UnsupportedClassVersionError y la compuerta " +
+				"de formato de Java queda apagada.",
+		}); err != nil {
+			return nil, err
+		}
+	}
 	return salida.Stdout, nil
 }
+
+// contestaAlgo acepta cualquier respuesta con contenido, y la tolerancia es
+// deliberada y está medida al revés de lo habitual: en esta máquina el jar NO
+// ARRANCA (JDK 17 contra un jar de 21), así que no pude ver qué texto exacto
+// imprime `--version` un google-java-format que funciona. Exigir una palabra que
+// no he podido medir sería apostar la capa de formato de Java de todos los repos
+// limpios a mi memoria.
+//
+// No se pierde casi nada: la regla fuerte de este motor es la de arriba —salir
+// con 1 sin decir qué cambiaría es avería— y esa sí está medida. Lo que esta
+// comprobación añade es cazar al que no sabe ni contestar, que es exactamente el
+// caso del jar que no arranca.
+var contestaAlgo = regexp.MustCompile(`\S`)
 
 const porQueJavaFmt = "El formato inconsistente genera diffs ruidosos y discusiones sin valor. " +
 	"google-java-format es determinista: no hay dos formas de tener razón."

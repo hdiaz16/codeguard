@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/proc"
@@ -234,6 +235,9 @@ func dnbCompilar(ctx context.Context, repoRoot, csproj string) ([]finding.Findin
 	// busca, porque BaseIntermediateOutputPath no se toca.
 	privado := rutaObjPrivado(repoRoot, csproj)
 
+	// La hora de ARRANQUE, que es media prueba de identidad. Ver dnbCompiloDeVerdad.
+	inicio := time.Now()
+
 	cmd := exec.CommandContext(ctx, "dotnet", "build", path.Base(csproj),
 		"--no-restore", "--nologo", "-v", "quiet", "-clp:NoSummary", "-t:Rebuild",
 		"-p:IntermediateOutputPath="+privado,
@@ -270,12 +274,68 @@ func dnbCompilar(ctx context.Context, repoRoot, csproj string) ([]finding.Findin
 		return nil, fmt.Errorf("dotnet build falló en %s (código %d) sin errores legibles: %s",
 			csproj, codigo, dnbRecorte(texto))
 	}
+	// Y el caso simétrico, que era el que quedaba abierto: SALIÓ BIEN Y CALLÓ.
+	//
+	// El motor pide silencio a propósito —`-v quiet -clp:NoSummary --nologo`— para
+	// que la salida sean sólo diagnósticos. Medido con el SDK 8.0.300 sobre un
+	// .csproj que compila: código 0 y CERO bytes. O sea que «compilé tu proyecto y
+	// no hay errores» y «no soy dotnet y no he hecho nada» eran la misma respuesta,
+	// y la primera es la que el panel pinta en verde.
+	//
+	// Aquí no hay salida que examinar, pero tampoco hace falta preguntar a nadie
+	// quién es: una compilación DEJA UN ARTEFACTO. Se comprueba que exista y que
+	// sea de ESTA corrida, porque el directorio privado sobrevive entre commits y
+	// un ensamblado viejo dejaría pasar al impostor con la prueba de otro. -t:Rebuild
+	// garantiza que se reescriba siempre.
+	//
+	// Es mejor señal que quitar el -clp:NoSummary para exigir un "Build succeeded":
+	// ese texto está traducido en los SDK localizados, y demuestra que algo
+	// imprimió, no que algo compilara.
+	if codigo == 0 && !dnbHayErrores(diags) {
+		if err := dnbCompiloDeVerdad(privado, inicio); err != nil {
+			return nil, fmt.Errorf("dotnet build terminó con éxito en %s y no dejó rastro de "+
+				"haber compilado: %v. Con `-v quiet` un build correcto no escribe nada, así que "+
+				"el silencio no distingue «sin errores» de «no compilé»; el artefacto sí. La capa "+
+				"de compilación de C# NO revisó este cambio", csproj, err)
+		}
+	}
 
 	bases := []string{repoRoot}
 	if canon, err := filepath.EvalSymlinks(repoRoot); err == nil && canon != repoRoot {
 		bases = append(bases, canon)
 	}
 	return dnbTraducir(diags, bases), nil
+}
+
+// dnbCompiloDeVerdad busca, bajo el directorio privado de salida, algún archivo
+// escrito durante esta corrida.
+//
+// El margen de un segundo hacia atrás es por la resolución de la fecha en el
+// sistema de archivos, no por generosidad: sin él, un build de 40 ms podría
+// quedar por debajo del instante de arranque y declararse falso.
+//
+// Se recorre el directorio ENTERO porque un proyecto multi-target reparte sus
+// artefactos en un subdirectorio por framework, y basta con uno para demostrar
+// que el compilador corrió.
+func dnbCompiloDeVerdad(privado string, inicio time.Time) error {
+	umbral := inicio.Add(-time.Second)
+	var reciente string
+	err := filepath.Walk(privado, func(ruta string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || reciente != "" {
+			return nil // un directorio ilegible no prueba nada; se sigue buscando
+		}
+		if !info.ModTime().Before(umbral) {
+			reciente = ruta
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("no pude mirar %s: %v", privado, err)
+	}
+	if reciente == "" {
+		return fmt.Errorf("ni un archivo nuevo en %s", privado)
+	}
+	return nil
 }
 
 // dnbParsear extrae los diagnósticos de la salida de MSBuild, deduplicados por

@@ -12,10 +12,12 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	"codeguard/internal/engines"
+	"codeguard/internal/engines/contrato"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
@@ -366,6 +368,11 @@ var codigosDeImport = map[string]bool{
 
 const porQueMypy = "Es la configuración de tipos DEL PROPIO REPO (mypy.ini/[tool.mypy]), no una regla de CodeGuard: el CI la aplicará igual."
 
+// diceSerMypy reconoce la respuesta de `mypy --version`. En esta máquina:
+// "mypy 2.3.0 (compiled: yes)". Vale su nombre o un número de versión suelto,
+// por si algún envoltorio de entorno virtual responde sólo con el número.
+var diceSerMypy = regexp.MustCompile(`(?i)mypy|^\s*\d+\.\d+`)
+
 func correrMypy(ctx context.Context, repoRoot, dir string, rutas []string) ([]finding.Finding, error) {
 	abs := filepath.Join(repoRoot, filepath.FromSlash(dir))
 
@@ -419,7 +426,32 @@ func correrMypy(ctx context.Context, repoRoot, dir string, rutas []string) ([]fi
 		if codigo >= 2 {
 			return nil, fmt.Errorf("mypy falló en %s (código %d): %s", dir, codigo, motivo)
 		}
-		return nil, nil // código 0 o 1 sin diagnósticos: no hay nada que reportar
+		// EL 1 SE QUEDABA FUERA, Y ERA EL CASO QUE MÁS CLARO ESTÁ.
+		//
+		// El comentario de arriba razona con cuidado sobre el 2 y luego mete el 1
+		// y el 0 en la misma frase —"no hay nada que reportar"— cuando significan
+		// cosas opuestas. Para mypy el 1 es EXACTAMENTE «encontré errores de
+		// tipos»: si salió con 1 y no escribió ni un diagnóstico, lo que encontró
+		// se perdió por el camino. Llamar «limpio» a eso es la clase de fallo que
+		// dejó entrar un `return centavos` en una función que promete string.
+		if codigo == 1 {
+			return nil, fmt.Errorf("mypy salió con 1 en %s —su forma de decir «encontré "+
+				"errores de tipos»— y no escribió NI UN diagnóstico: %s. Los errores que "+
+				"encontró se perdieron, así que la capa de tipos NO está revisada", dir, motivo)
+		}
+		// Y el 0 sin salida sí es «no hay errores de tipos»… siempre que quien
+		// calló fuera mypy. Callar con éxito es justo lo que hace también una
+		// herramienta que no analizó nada, y aquí no hay salida que mirar para
+		// distinguirlas: hay que preguntarle quién es. Cuesta ~260 ms medidos, lo
+		// paga sólo el análisis limpio, y una vez por binario.
+		if err := contrato.Identidad(ctx, contrato.Version("mypy", "mypy", "--version",
+			diceSerMypy,
+			"Comprueba qué resuelve `mypy` en tu PATH (¿un entorno virtual sin activar?) "+
+				"o reinstálalo con `codeguard repair`.",
+		)); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	}
 	return hallazgosMypy(raizComparable(repoRoot), dir, out)
 }

@@ -1,0 +1,6 @@
+# El sitio se construye, no se versiona construido.
+dist/
+node_modules/
+.vite/
+
+.vercel

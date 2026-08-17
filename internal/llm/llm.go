@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"codeguard/internal/config"
@@ -26,6 +28,15 @@ type Client struct {
 	dialecto Dialecto
 	http     *http.Client
 }
+
+// leerSecreto es el punto de sustitución de las pruebas.
+//
+// La bóveda real no se puede ROMPER a propósito desde un test —haría falta
+// corromper el Administrador de credenciales del usuario, o pararle el
+// servicio— y el fallo de bóveda es justamente la rama que este código existe
+// para distinguir. Mismo patrón, y por la misma razón, que las sustituciones de
+// cmd/daemon/configllm.go.
+var leerSecreto = secreto.Leer
 
 // ClaveDe resuelve la clave del modelo, primero de la bóveda del sistema y
 // luego del entorno.
@@ -45,10 +56,76 @@ func ClaveDe(cfg config.LLM) string {
 	if cfg.APIKeyEnv == "" {
 		return ""
 	}
-	if v, err := secreto.Leer(cfg.APIKeyEnv); err == nil && v != "" {
-		return v
+	guardada, err := leerSecreto(cfg.APIKeyEnv)
+	clave, aviso := decidirClave(cfg.APIKeyEnv, guardada, err, os.Getenv(cfg.APIKeyEnv))
+	avisarDeLaBoveda(aviso)
+	return clave
+}
+
+// decidirClave dice de dónde sale la clave y qué hay que contar en voz alta.
+//
+// Es pura y vive separada de la bóveda para poder probar la distinción que
+// importa —"aquí no hay nada guardado" contra "la bóveda falló"— sin tocar el
+// Administrador de credenciales de nadie.
+//
+// Aquí estaba el defecto: `if v, err := secreto.Leer(...); err == nil && v !=
+// ""` metía las dos cosas en el mismo saco. Una bóveda corrupta, sin permisos o
+// con el servicio parado caía EXACTAMENTE igual que "todavía no se ha migrado",
+// y río abajo el síntoma era el de siempre —"sin endpoint/API key, capa
+// apagada"—, así que el dev leía "no configuraste la clave" cuando lo que
+// pasaba es que su bóveda estaba rota. La avería se disfrazaba de descuido, que
+// es el peor diagnóstico posible: manda a arreglar lo que ya estaba bien.
+//
+// La caída al entorno se CONSERVA aun con la bóveda averiada, y no es
+// resignación: la capa de consejo nunca es requisito para commitear (P2), así
+// que negarse a mirar el entorno convertiría un fallo de la bóveda en una capa
+// apagada incluso cuando la variable tiene una clave perfectamente buena. Lo
+// que NO se conserva es el silencio — el fallo se registra, y el aviso dice si
+// el entorno salvó la llamada o si además se quedó sin clave.
+func decidirClave(nombreVar, guardada string, errBoveda error, delEntorno string) (clave, aviso string) {
+	switch {
+	case errBoveda == nil && guardada != "":
+		return guardada, ""
+	case errBoveda == nil || secreto.NoEncontrado(errBoveda):
+		// El camino de siempre: no hay nada guardado —no se ha migrado, o esta
+		// máquina no tiene bóveda—. Se cae al entorno sin decir nada, porque no
+		// ha fallado nada.
+		return delEntorno, ""
 	}
-	return os.Getenv(cfg.APIKeyEnv)
+	if delEntorno != "" {
+		return delEntorno, fmt.Sprintf("la bóveda no pudo leer %s (%v). Se usó el valor de la "+
+			"variable de entorno, así que la capa sigue en pie, pero la clave GUARDADA no se está "+
+			"leyendo: revisa el Administrador de credenciales", nombreVar, errBoveda)
+	}
+	return "", fmt.Sprintf("la bóveda no pudo leer %s (%v) y la variable de entorno tampoco tiene "+
+		"valor: la capa de consejo queda apagada por un FALLO de la bóveda, no porque falte "+
+		"configurar la clave", nombreVar, errBoveda)
+}
+
+var (
+	muAviso     sync.Mutex
+	ultimoAviso string
+)
+
+// avisarDeLaBoveda registra el fallo, pero no una vez por llamada.
+//
+// ClaveDe se consulta en CADA uso —a propósito, ver arriba— y la pantalla de
+// configuración la llama en cada refresco: sin filtro, una bóveda averiada
+// escribe la misma línea decenas de veces y entierra todo lo demás en el log,
+// que es otra forma de no decir nada.
+//
+// Se recuerda el último aviso y no un "ya avisé" a secas, y el camino bueno
+// pasa por aquí con la cadena vacía para BORRAR esa memoria. Así, un fallo que
+// se arregla y vuelve se cuenta las dos veces; con un sync.Once, la segunda
+// avería habría sido tan muda como el bug que este código viene a quitar.
+func avisarDeLaBoveda(aviso string) {
+	muAviso.Lock()
+	repetido := aviso == ultimoAviso
+	ultimoAviso = aviso
+	muAviso.Unlock()
+	if aviso != "" && !repetido {
+		log.Printf("clave del modelo: %s", aviso)
+	}
 }
 
 // New devuelve nil (sin error) cuando la capa no se puede usar: sin endpoint,
@@ -87,8 +164,27 @@ func NewConClave(cfg config.LLM, key string) *Client {
 		endpoint: endpoint,
 		apiKey:   key,
 		dialecto: dial,
-		// El límite real lo pone el context de cada llamada; este es el techo.
-		http: &http.Client{Timeout: 3 * time.Minute},
+		// SIN plazo en el Client: el que manda es el context de cada llamada.
+		//
+		// Aquí había un `Timeout: 3 * time.Minute` con un comentario que lo
+		// llamaba "el techo", y era un techo ESCONDIDO. http.Client.Timeout cubre
+		// la petición entera, incluida la lectura del cuerpo —o sea, todo el
+		// stream—, así que cortaba a los tres minutos por mucho más plazo que
+		// hubiera pedido el llamador. Y corta como un error de red cualquiera: la
+		// sombra lo clasifica como "timeout", de modo que el síntoma es idéntico
+		// al de un plazo agotado y no hay nada que delate el tope de tres minutos
+		// que nadie configuró.
+		//
+		// Importa porque timeout_ms no tiene tope en la config y el techo de
+		// salida del dialecto de Anthropic en streaming es de 64000 tokens: un
+		// razonador los gasta de sobra en más de tres minutos. Quien subiera
+		// timeout_ms a diez minutos seguía cortado a los tres.
+		//
+		// Quitarlo no deja llamadas colgadas: los CUATRO caminos que usan este
+		// Client —Complete y CompleteStream, en los dos dialectos— empiezan por
+		// context.WithTimeout(ctx, timeout) y son los únicos que lo tocan. El
+		// plazo sigue existiendo; ahora es el que se pidió.
+		http: &http.Client{},
 	}
 }
 

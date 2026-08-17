@@ -3,6 +3,7 @@ package pipeline
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -11,7 +12,43 @@ import (
 	"codeguard/internal/config"
 	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
+	"codeguard/internal/migraciones"
 )
+
+// migracionSinVigilar devuelve la etiqueta de degradación cuando el commit
+// cambia el esquema y la compuerta de migraciones no lo estaba mirando.
+//
+// Sólo se queja de archivos que PARECEN migraciones. Una consulta de sqlc o un
+// modelo de dbt fuera de `paths.migrations` es lo correcto, y avisar de ellos
+// en cada commit convertiría esto en ruido que se aprende a ignorar — que es
+// otra forma de no avisar.
+//
+// Con otro motor declarado no se dice nada: squawk sólo entiende PostgreSQL,
+// así que ahí la lista vacía no es un descuido sino una consecuencia, y mandar
+// al dev a editar `paths.migrations` no le arreglaría nada.
+func migracionSinVigilar(cfg *config.Config, files []gitdiff.ChangedFile) string {
+	if cfg == nil || !cfg.Paths.MigracionesEnPostgres() {
+		return ""
+	}
+	globs := migraciones.Compilar(cfg.Paths.Migrations)
+	var fuera []string
+	for _, f := range files {
+		if f.Status == "D" || !migraciones.Parece(f.Path) {
+			continue
+		}
+		if !migraciones.CasaAlguno(globs, migraciones.Normalizar(f.Path)) {
+			fuera = append(fuera, f.Path)
+		}
+	}
+	if len(fuera) == 0 {
+		return ""
+	}
+	// La etiqueta corta viaja al veredicto; los archivos concretos, al log,
+	// igual que el resto de degradaciones.
+	log.Printf("migraciones fuera de paths.migrations (%d): %s",
+		len(fuera), strings.Join(fuera, ", "))
+	return "squawk:migracion-sin-vigilar"
+}
 
 // Este archivo implementa las reglas del playbook que no son propiedades del
 // código sino del repositorio y del cambio: si las dependencias quedan fijadas

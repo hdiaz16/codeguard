@@ -47,12 +47,45 @@ if ($SoloRepos) {
 }
 
 Step "Deteniendo el daemon"
-Get-Process codeguard-daemon -ErrorAction SilentlyContinue | Stop-Process -Force -Confirm:$false
+# PRIMERO se le pide, DESPUES se le mata. Un daemon fusilado con Stop-Process
+# no llega a quitar su icono, y Windows deja un orbe FANTASMA pintado en la
+# bandeja hasta que algo la refresca (en la bandeja nueva de Windows 11, solo
+# reiniciar Explorer, que no es cosa que un desinstalador deba hacer). El
+# apagado por IPC pasa por app.Quit(), el mismo camino que el boton "Salir de
+# CodeGuard" del menu, y ese si desmonta la bandeja. El taskkill queda como
+# ultimo recurso: un daemon viejo (< 1.13.1) no conoce el comando, y un daemon
+# colgado no contesta.
+$cg = Join-Path $Root "bin\codeguard.exe"
+$vivo = Get-Process codeguard-daemon -ErrorAction SilentlyContinue
+if ($vivo -and (Test-Path $cg)) {
+    & $cg daemon-stop 2>&1 | Out-Null
+    $vivo = Get-Process codeguard-daemon -ErrorAction SilentlyContinue
+}
+if ($vivo) {
+    $vivo | Stop-Process -Force -Confirm:$false
+    Write-Host "    (a la fuerza: puede quedar un icono fantasma en la bandeja hasta reiniciar Explorer)" -ForegroundColor Yellow
+}
 Start-Sleep 1
 Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
     Where-Object { $_.CommandLine -like "*codeguard*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -Confirm:$false -ErrorAction SilentlyContinue }
 Ok "detenido"
+
+# La entrada de "Aplicaciones instaladas" que deja CodeGuard-Setup.exe (Inno).
+# Este script y el Setup son dos caminos de instalacion que no se conocian:
+# desinstalar por aqui dejaba la entrada fantasma en el panel de Windows
+# apuntando a una version vieja, y ejecutar aquel unins000.exe despues podia
+# comerse una instalacion nueva hecha por script. Se quita la entrada y sus
+# archivos; los archivos reales los borra este script pieza a pieza mas abajo.
+Step "Quitando el registro del instalador grafico (si existe)"
+Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
+    Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName -like "CodeGuard*" } |
+    ForEach-Object { Remove-Item $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue }
+foreach ($f in @("unins000.dat", "unins000.exe")) {
+    $p = Join-Path $Root $f
+    if (Test-Path $p) { Remove-Item -Force $p -ErrorAction SilentlyContinue }
+}
+Ok "sin entradas duplicadas en Apps instaladas"
 
 Step "Quitando el arranque con la sesion"
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CodeGuard" -ErrorAction SilentlyContinue
@@ -111,3 +144,8 @@ foreach ($r in $Repos) {
 
 Write-Host ""
 Write-Host "CodeGuard desinstalado." -ForegroundColor Green
+# Explicito: sin esto, el script devolvia el exit code del ULTIMO comando
+# nativo que corrio — p.ej. el daemon-stop fallido contra un daemon viejo — y
+# cualquier automatizacion que llame al desinstalador leia "fallo" sobre una
+# desinstalacion que termino entera y bien (medido: exit 2 con salida perfecta).
+exit 0

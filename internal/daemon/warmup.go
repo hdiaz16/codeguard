@@ -20,12 +20,31 @@ import (
 // debe pagar el tsc frío. El daemon recuerda qué repos atiende y recalienta
 // sus compiladores incrementales al arrancar, en background.
 
+// warmListPath es dónde se apunta qué repos precalentar. Absoluta o nada, por
+// el mismo motivo y con la misma forma que registry.path, store.DefaultPath y
+// cmd/codeguard.dirDatos: `base == ""` deja pasar el valor en blanco y el
+// relativo, y filepath.Join no falla con ellos — devuelve una ruta relativa al
+// directorio de trabajo.
+//
+// La consecuencia aquí es menor que en los otros tres y conviene decirlo con
+// precisión en vez de exagerarla: esto corre en el daemon, cuyo directorio de
+// trabajo no es el repositorio que se analiza, así que el archivo no aterriza en
+// el árbol del usuario sino donde se lanzara el daemon. Se arregla igual porque
+// es la misma clase de bug —ya nos ha costado cuatro hallazgos— y porque "el CWD
+// del daemon nunca será un repo" es exactamente el tipo de suposición que deja
+// de ser cierta sin que nadie lo note.
+//
+// Devolver "" es seguro: los dos llamadores abren el archivo y ya tratan el
+// error como "no hay lista".
 func warmListPath() string {
-	base := os.Getenv("LOCALAPPDATA")
-	if base == "" {
-		base = os.TempDir()
+	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard")
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(os.TempDir(), "codeguard")
 	}
-	return filepath.Join(base, "codeguard", "warm-repos.txt")
+	if !filepath.IsAbs(dir) {
+		return ""
+	}
+	return filepath.Join(dir, "warm-repos.txt")
 }
 
 var warmMu sync.Mutex
@@ -81,7 +100,8 @@ func WarmTrivyDB(ctx context.Context) {
 	// además corría sin la contención de los motores. Con la descarga propia
 	// (internal/trivydb: digests verificados antes de abrir nada), trivy pasa
 	// a correr SIEMPRE con --skip-db-update y la excepción de oras deja de
-	// tener ruta viva.
+	// tener ruta viva. (Esto también deja sin objeto el entorno acotado que la
+	// rama de casa le ponía al subproceso: ya no hay subproceso.)
 	if err := trivydb.Actualizar(c, filepath.Join(os.Getenv("LOCALAPPDATA"), "trivy")); err != nil {
 		log.Printf("trivy: no se pudo refrescar la DB: %v", err)
 		return
@@ -180,6 +200,10 @@ func WarmAll(ctx context.Context) {
 		cmd := exec.CommandContext(wctx, bin, args...)
 		proc.SinVentana(cmd)
 		cmd.Dir = repo
+		// El mismo entorno con el que corre el tsc del análisis
+		// (linters/exec.go:21). Calentar con un entorno distinto del real,
+		// además de regalarle la clave, calentaría otra cosa.
+		cmd.Env = proc.Entorno()
 		_ = cmd.Run() // el exit code no importa: solo queremos el caché caliente
 		cancel()
 		log.Printf("precalentado tsc en %s (%.1f s)", filepath.Base(repo), time.Since(start).Seconds())

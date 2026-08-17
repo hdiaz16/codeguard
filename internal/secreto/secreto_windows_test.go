@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/windows/registry"
 )
 
 // El ciclo completo contra la bóveda de VERDAD, no contra un doble.
@@ -99,6 +101,46 @@ func TestElSecretoNoAcabaEnElEntorno(t *testing.T) {
 	for _, e := range os.Environ() {
 		if strings.Contains(e, valor) {
 			t.Fatalf("el valor se filtró al entorno: %q", e)
+		}
+	}
+	exigirQueNoEsteEnElEntornoPersistente(t, variable)
+}
+
+// exigirQueNoEsteEnElEntornoPersistente mira HKCU\Environment, que es DONDE VIVE
+// el entorno del usuario.
+//
+// Es la comprobación que le faltaba a la prueba y sin la cual no probaba lo que
+// dice. os.Getenv y os.Environ sólo enseñan el entorno de ESTE proceso, y una
+// implementación que persistiera la clave al estilo `setx` escribe en el
+// registro sin tocar el proceso en curso: la variable no aparecería por ninguna
+// de las dos vías y la prueba habría dado por bueno exactamente el fallo que
+// dice descartar. El daño de ese fallo es que la clave queda legible para
+// cualquier proceso del usuario y sobrevive a la desinstalación.
+//
+// Se leen los NOMBRES de los valores en vez de pedir el valor con
+// GetStringValue a propósito: GetStringValue devuelve ErrUnexpectedType si el
+// dato es REG_EXPAND_SZ —que es como Windows guarda buena parte de las variables
+// de usuario—, así que preguntar por el valor podría dar "no está" teniéndolo
+// delante.
+func exigirQueNoEsteEnElEntornoPersistente(t *testing.T, variable string) {
+	t.Helper()
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE)
+	if err != nil {
+		t.Fatalf("no se pudo abrir HKCU\\Environment, así que la prueba NO comprobó "+
+			"lo que dice comprobar: %v", err)
+	}
+	defer k.Close()
+
+	nombres, err := k.ReadValueNames(0)
+	if err != nil {
+		t.Fatalf("no se pudieron leer los valores de HKCU\\Environment: %v", err)
+	}
+	for _, n := range nombres {
+		if strings.EqualFold(n, variable) {
+			t.Errorf("la clave quedó en el ENTORNO PERSISTENTE del usuario "+
+				"(HKCU\\Environment\\%s). Ahí la lee cualquier proceso que arranque "+
+				"después y sobrevive a la desinstalación: es justo lo que la bóveda "+
+				"existe para evitar.", n)
 		}
 	}
 }

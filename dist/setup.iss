@@ -10,7 +10,7 @@
 ; =============================================================================
 
 #define MyAppName "CodeGuard"
-#define MyAppVersion "1.9.3"
+#define MyAppVersion "1.14.0"
 ; reglas.iss lo genera build-dist.ps1 contando el rulepack: el numero que se le
 ; promete al usuario no se escribe a mano (llego a decir 112 con 119 instaladas)
 #include "reglas.iss"
@@ -54,7 +54,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Messages]
 ; copy minimo: el asistente habla claro y corto
 spanish.WelcomeLabel1=CodeGuard
-spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus {#MyRuleCount} reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk, ruff y mypy (vía pip)%n  •  govulncheck y staticcheck, que se COMPILAN: un par de minutos%n%nTodos los motores son necesarios: sin ellos la paridad con el CI se rompe.
+spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus {#MyRuleCount} reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk, ruff y mypy (vía pip)%n  •  govulncheck y staticcheck, que se COMPILAN: un par de minutos%n%nSon 9 de los 16 motores. gofmt va dentro de CodeGuard, y los 6 restantes%n(go vet, tsc, eslint y los tres de .NET) usan las herramientas que YA tienes:%nGo, Node y el SDK de .NET. Para tsc y eslint es deliberado — se usa la versión%nde tu proyecto, que es la que corre en el CI; imponer la nuestra rompería la%nparidad en vez de defenderla. Si a tu repo le falta alguna, el agente te lo%ndice en cada análisis en vez de callárselo.
 spanish.FinishedHeadingLabel=Listo.
 spanish.FinishedLabelNoIcons=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)
 spanish.FinishedLabel=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)
@@ -97,9 +97,13 @@ Filename: "powershell.exe"; \
     Description: "Iniciar CodeGuard ahora (el orbe)"; \
     Flags: nowait postinstall skipifsilent runhidden
 
-[UninstallRun]
-Filename: "taskkill.exe"; Parameters: "/F /IM {#MyDaemonExe}"; \
-    Flags: runhidden; RunOnceId: "PararDaemon"
+; [UninstallRun] ya no mata al daemon: lo hace InitializeUninstall ([Code]),
+; que ademas ESPERA a que el proceso muera de verdad. El taskkill suelto de
+; aqui tenia dos fallos medidos: (1) un proceso fusilado no quita su icono de
+; la bandeja (orbe fantasma), y (2) taskkill devuelve 0 cuando Windows ACEPTA
+; la orden, no cuando solto el ejecutable — 110 ms despues el borrado de
+; codeguard-daemon.exe fallaba con "in use (5)", el desinstalador no
+; reintentaba, y aun asi reportaba exito dejando 23.7 MB huerfanos.
 
 [UninstallDelete]
 ; Los motores NO se borran, y es deliberado.
@@ -282,13 +286,59 @@ begin
 end;
 
 // ── el daemon no puede estar corriendo mientras se reemplaza su .exe ─────
-function PrepareToInstall(var NeedsRestart: Boolean): String;
+//
+// DetenerDaemon lo comparten instalar y desinstalar, y hace TRES cosas que el
+// taskkill suelto de antes no hacia, las tres medidas:
+//
+//  1. PRIMERO PIDE: `codeguard daemon-stop` apaga por el mismo camino que el
+//     boton "Salir de CodeGuard" del menu, que desmonta el icono de la bandeja
+//     antes de morir. Un proceso fusilado con taskkill deja el icono PINTADO
+//     —el orbe fantasma— y en la bandeja de Windows 11 solo lo limpia
+//     reiniciar Explorer. Con un daemon viejo (< 1.13.1) o colgado el comando
+//     no surte efecto y se cae al taskkill de siempre.
+//  2. LUEGO ESPERA a que el proceso MUERA DE VERDAD. taskkill devuelve 0
+//     cuando Windows acepta la orden, no cuando solto el ejecutable: 110 ms
+//     despues, el borrado de codeguard-daemon.exe fallaba con "in use (5)",
+//     el desinstalador no reintentaba y aun asi decia "succeeded" — dejando
+//     23.7 MB huerfanos para siempre. El sondeo con tasklist|find espera al
+//     hecho, no a la promesa (find sale 1 cuando ya no esta).
+//  3. Y UN MARGEN FINAL: entre que el proceso desaparece de la lista y Windows
+//     libera el mapeo del .exe pasan unos milisegundos mas.
+procedure DetenerDaemon();
 var
-  R: Integer;
+  R, Intento: Integer;
 begin
+  // Por las buenas. En una instalacion desde cero el exe aun no existe y
+  // Exec simplemente falla: no hay daemon que apagar.
+  Exec(ExpandConstant('{app}\bin\{#MyAppExe}'), 'daemon-stop', '',
+       SW_HIDE, ewWaitUntilTerminated, R);
+  // Por las malas, para el daemon viejo o colgado.
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#MyDaemonExe}', '',
        SW_HIDE, ewWaitUntilTerminated, R);
+  // Y esperar al HECHO: hasta 5 s sondeando la lista de procesos.
+  for Intento := 1 to 25 do
+  begin
+    Exec(ExpandConstant('{cmd}'),
+         '/c tasklist /FI "IMAGENAME eq {#MyDaemonExe}" | find /I "{#MyDaemonExe}" >nul',
+         '', SW_HIDE, ewWaitUntilTerminated, R);
+    if R <> 0 then break;
+    Sleep(200);
+  end;
+  Sleep(300);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  DetenerDaemon();
   Result := '';
+end;
+
+// El desinstalador tenia el mismo agujero por su propio camino ([UninstallRun]
+// con taskkill suelto): aqui se cierra con la misma funcion.
+function InitializeUninstall(): Boolean;
+begin
+  DetenerDaemon();
+  Result := True;
 end;
 
 // ── motores dentro del asistente: sin consolas ───────────────────────────

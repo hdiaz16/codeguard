@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -55,11 +56,82 @@ func CanonicalRepoID(remoteURL string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+// RepoIDDe es el ÚNICO sitio donde se decide bajo qué identificador vive un
+// repositorio en la base.
+//
+// Con remote manda el remote, y eso es lo que hace que dos clones del mismo
+// repositorio —en dos máquinas o en dos carpetas— compartan historial. Sin
+// remote se cae a la carpeta, porque un repositorio local sigue siendo un
+// repositorio y sus hallazgos tienen que ir a algún cajón estable.
+//
+// Existe porque este cálculo estaba repetido en CINCO sitios y sólo DOS tenían
+// el respaldo. Los otros tres —`codeguard stats`, el caché por archivo y el
+// RepoID que el gancho manda al daemon— llamaban a CanonicalRepoID("") y se
+// quedaban con la cadena vacía: guardaban bajo un identificador y leían bajo
+// otro. Medido en un repo recién creado sin `origin`: 21 hallazgos en la base y
+// `codeguard stats` respondiendo "sin hallazgos registrados todavía".
+//
+// Un repositorio sin remote es justo el de quien acaba de crear algo para
+// probar el producto, así que el fallo caía entero sobre la primera impresión.
+//
+// La ruta se normaliza a barras normales antes de tomar la última parte: el
+// daemon las entrega ya normalizadas y la CLI no, y sin esto el panel y la
+// terminal hablarían de repositorios distintos.
+func RepoIDDe(repoRoot, remote string) string {
+	if strings.TrimSpace(remote) != "" {
+		return CanonicalRepoID(remote)
+	}
+	limpia := strings.TrimRight(strings.ReplaceAll(repoRoot, `\`, "/"), "/")
+	nombre := limpia
+	if i := strings.LastIndex(limpia, "/"); i >= 0 {
+		nombre = limpia[i+1:]
+	}
+	return CanonicalRepoID("local/" + nombre)
+}
+
+// busyTimeoutMS es cuánto espera una conexión a que OTRO PROCESO suelte la
+// base antes de rendirse: hook, ci y daemon comparten el mismo archivo (ver
+// DefaultPath) y el arbitraje entre procesos sólo puede ser esperar y
+// reintentar.
+const busyTimeoutMS = 5000
+
+func Open(path string) (*Store, error) { return abrir(path, busyTimeoutMS) }
+
+// abrir concentra la política de conexión en un solo sitio. El busy_timeout va
+// como parámetro porque es una política —cuánto se aguanta a otro proceso—, no
+// una constante del esquema: bajarlo deja al descubierto la contención DENTRO
+// del proceso, que es exactamente lo que el pool de abajo tiene que eliminar.
+func abrir(path string, busyMS int) (*Store, error) {
+	db, err := sql.Open("sqlite", fmt.Sprintf(
+		"%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)", path, busyMS))
 	if err != nil {
 		return nil, err
 	}
+	// UNA conexión, a propósito, y no es una cifra conservadora que se pueda
+	// subir: SQLite es un motor embebido que admite UN escritor a la vez. El
+	// default de database/sql (conexiones ilimitadas) está pensado para motores
+	// cliente-servidor con varios escritores; sobre este archivo lo único que
+	// produce es que el proceso se pelee consigo mismo y devuelva SQLITE_BUSY
+	// justo cuando más trabajo hay. Con una sola conexión, la cola la hace
+	// database/sql —que sabe esperar sin reintentar a ciegas— y el
+	// SQLITE_BUSY de dentro del proceso desaparece; el busy_timeout queda para
+	// lo único que puede arbitrar: hook vs daemon vs ci, que son procesos
+	// distintos.
+	//
+	// Y no se paga nada por ello, contra lo que dice la intuición: BenchmarkLecturas,
+	// tres repeticiones de cada configuración en la misma máquina, da 2.15-2.29 ms/op
+	// con una conexión frente a 3.19-22.08 sin límite. Una sola conexión es entre un
+	// 35% y un 50% MÁS RÁPIDA en lectura, y muchísimo más estable — la cola de
+	// database/sql sale más barata que la contención por el archivo. Si algún día
+	// molestara de verdad, la salida NO es subir este número: es un segundo pool de
+	// sólo lectura.
+	//
+	// ConnMaxLifetime(0) = la conexión no caduca. Reciclarla no compra nada
+	// aquí (no hay servidor al otro lado que cierre sesiones) y cada
+	// reconexión volvería a aplicar los PRAGMA.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
 	s := &Store{db: db}
 	if err := s.migrate(); err != nil {
 		db.Close()
@@ -251,11 +323,97 @@ func (s *Store) SaveLLMFindings(runID string, fs []finding.Finding) error {
 	return tx.Commit()
 }
 
-// UpdateRunLLM anota el puntaje de riesgo y si se usó el modelo.
+// ErrRunNoExiste dice que el UPDATE no encontró la fila del run.
+//
+// Existe porque database/sql NO considera error un UPDATE que no toca ninguna
+// fila: err llega nil y las cero filas se pierden sin dejar rastro. Aquí ese
+// silencio costaba datos. La sombra corre en el proceso del DAEMON, pero quien
+// escribe la fila del run es el proceso del HOOK (persistRun, en cmd/codeguard)
+// justo después de recibir la respuesta. Cuando el hook tardaba —antivirus,
+// disco, contención sobre el mismo SQLite—, la sombra actualizaba un run que
+// todavía no existía: cero filas, err nil, y el risk_score y el llm_used se
+// perdían para siempre y en silencio.
+//
+// Que sea un error con nombre es lo que permite al llamador distinguir las tres
+// cosas que antes eran indistinguibles: se escribió, todavía no está, o la base
+// falló.
+var ErrRunNoExiste = errors.New("el run todavía no está en la base")
+
+// UpdateRunLLM anota el puntaje de riesgo y si se usó el modelo. Devuelve
+// ErrRunNoExiste envuelto si el UPDATE no tocó ninguna fila.
+//
+// De paso reencola el run para el central: risk_score y llm_used son los ÚNICOS
+// campos del run que se escriben después de crearlo, así que este método es el
+// único sitio donde puede saberse que una fila ya empujada cambió.
 func (s *Store) UpdateRunLLM(runID string, riskScore int, llmUsed bool) error {
-	_, err := s.db.Exec(`UPDATE runs SET risk_score = ?, llm_used = ? WHERE id = ?`,
+	res, err := s.db.Exec(`UPDATE runs SET risk_score = ?, llm_used = ? WHERE id = ?`,
 		riskScore, b2i(llmUsed), runID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		// Un driver que no sabe cuántas filas tocó no puede afirmar que tocó
+		// alguna: se dice, no se supone.
+		return fmt.Errorf("no se pudo saber si el run %s se actualizó: %w", runID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("anotando riesgo del run %s: %w", runID, ErrRunNoExiste)
+	}
+	if err := s.reencolarRunParaCentral(runID); err != nil {
+		// El riesgo YA quedó anotado en local; lo que falló es el aviso al
+		// sync. El mensaje lo dice para que nadie lo lea como una pérdida.
+		return fmt.Errorf("riesgo anotado, pero el run %s no se pudo reencolar para el central: %w", runID, err)
+	}
+	return nil
+}
+
+// reencolarRunParaCentral retrocede la marca de agua del sync para que un run
+// que YA viajó vuelva a viajar.
+//
+// La marca de sync_marcas es un `id > ultima`: una fila que ya se empujó no se
+// vuelve a mirar nunca. Eso es correcto para todo lo que es inmutable —
+// findings, feedback y llm_calls se escriben una vez y no cambian—, pero el run
+// NO lo es: SaveRun lo inserta con risk_score y llm_used en su DEFAULT 0 y la
+// sombra los rellena después, hasta un minuto más tarde (plazoSombra). Como el
+// empuje oportunista del daemon dispara sin coordinarse con la sombra, si se
+// cuela en esa ventana el central se queda con risk_score=0.
+//
+// El ON CONFLICT (id) DO UPDATE del INSERT de runs (ver sync.go) sabe corregir
+// esa fila, pero sólo puede hacerlo si la fila vuelve a pasar por ahí — y por
+// la marca no volvía. Sin esto, aquel 0 era definitivo: risk_score no se lee en
+// ningún otro sitio del producto, el central es su único consumidor.
+//
+// Retroceder al id inmediatamente anterior re-empuja este run y los posteriores;
+// el ON CONFLICT los absorbe sin duplicar y son los de los últimos minutos, así
+// que el coste es de unas pocas filas. La condición `ultima >= ?` evita tocar la
+// marca cuando el run todavía no había viajado, que es el caso normal.
+//
+// Best-effort, como toda la telemetría: si un empuje está corriendo AHORA MISMO
+// y termina después de este retroceso, guardará su marca adelantada y se lo
+// llevará por delante. Eso deja las cosas exactamente como estaban antes de
+// existir esta función, nunca peor.
+func (s *Store) reencolarRunParaCentral(runID string) error {
+	var anterior sql.NullString // NULL si es el primer run: marca vacía = desde el principio
+	if err := s.db.QueryRow(`SELECT MAX(id) FROM runs WHERE id < ?`, runID).Scan(&anterior); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE sync_marcas SET ultima = ?, actualizada_at = ?
+		WHERE tabla = 'runs' AND ultima >= ?`, anterior.String, nowISO(), runID)
 	return err
+}
+
+// RunExiste dice si la fila del run ya está escrita. Es la señal con la que el
+// daemon espera al proceso del hook en vez de dormir una cantidad fija de
+// segundos (ver esperarRunPersistido). El error se devuelve en vez de doblarse
+// en un false: "no está" y "no se pudo preguntar" no son lo mismo.
+func (s *Store) RunExiste(runID string) (bool, error) {
+	var uno int
+	err := s.db.QueryRow(`SELECT 1 FROM runs WHERE id = ?`, runID).Scan(&uno)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // DiffCacheGet / DiffCachePut: caché de resultados LLM por diff (§9).
@@ -460,11 +618,31 @@ func (s *Store) DemotedRules(repoID string, minVotes int, maxFPRate float64) (ma
 
 // DefaultPath es la BD local por usuario, compartida por hook, ci y daemon.
 func DefaultPath() string {
-	base := os.Getenv("LOCALAPPDATA")
-	if base == "" {
-		base = os.TempDir()
+	// Lo que se impone es que la ruta sea ABSOLUTA, no que la variable no esté
+	// vacía. No es lo mismo: con LOCALAPPDATA en blanco o con un valor relativo
+	// puesto a mano, filepath.Join devolvía algo como `.\   \codeguard\codeguard.db`,
+	// relativo al directorio de trabajo — que durante un commit es el repo que se
+	// está analizando. La base de datos acababa DENTRO del repo del usuario, donde
+	// además puede terminar commiteada.
+	//
+	// Y había una segunda consecuencia, más difícil de diagnosticar: cmd/codeguard
+	// resuelve la MISMA base por su cuenta (dirDatos) y ésa sí exigía ruta
+	// absoluta, así que en ese estado las dos puertas apuntaban a archivos
+	// DISTINTOS y el usuario veía un historial u otro según por qué comando
+	// entrara.
+	//
+	// Es la misma clase que H007, N001 y N003, con la misma lección: la guarda va
+	// donde se resuelve la ruta. Aquí faltaba generalizarla a esta segunda puerta.
+	dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard")
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(os.TempDir(), "codeguard")
 	}
-	dir := filepath.Join(base, "codeguard")
+	if !filepath.IsAbs(dir) {
+		// Sin ningún sitio absoluto donde escribir, se devuelve vacío y Open
+		// falla en voz alta. Es preferible a inventar una ruta: una base de
+		// datos en el sitio equivocado no se nota hasta que faltan los datos.
+		return ""
+	}
 	_ = os.MkdirAll(dir, 0o755) // best-effort: Open dará el error real si no se puede escribir
 	return filepath.Join(dir, "codeguard.db")
 }

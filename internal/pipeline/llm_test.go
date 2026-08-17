@@ -300,14 +300,16 @@ func prepararLLM(t *testing.T) (bin, binDaemon, repo, datos, pipe string) {
 	binDaemon = construirDaemon(t)
 	repo = repoLimpio(t)
 	datos = t.TempDir()
-	// Un pipe por prueba: si dos compartieran nombre, la segunda hablaría con
-	// el daemon de la primera y mediría su configuración.
-	pipe = `\\.\pipe\codeguard-verificacion-llm-` + strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r == ' ' {
-			return '-'
-		}
-		return r
-	}, t.Name())
+	// Un pipe por prueba Y POR PROCESO: si dos compartieran nombre, la segunda
+	// hablaría con el daemon de la primera y mediría su configuración.
+	//
+	// Sólo con el nombre de la prueba faltaba la mitad, y costó una mañana: dos
+	// CORRIDAS del mismo test caen en el mismo nombre, así que un daemon que
+	// sobrevivió a una corrida anterior se quedaba con el pipe y todas las
+	// siguientes hablaban con él. Se midió en esta máquina, con un huérfano de
+	// las 23:36 que dejaba este test en rojo pasara lo que pasara. El PID es lo
+	// que separa dos ejecuciones del mismo binario de pruebas.
+	pipe = pipeDePrueba(t) + "-llm"
 	return bin, binDaemon, repo, datos, pipe
 }
 

@@ -109,6 +109,19 @@ func moduloDe(repoRoot, rel string) (string, bool) {
 type envoltura struct {
 	OSV     *fichaOSV `json:"osv"`
 	Finding *hallazgo `json:"finding"`
+	// Config es el primer mensaje del flujo, y aquí no está por sus datos: está
+	// porque es la PRUEBA de que quien escribió esto es govulncheck. Ver
+	// interpretar.
+	Config *configDelEscaner `json:"config"`
+}
+
+// configDelEscaner es la cabecera con la que govulncheck se presenta:
+//
+//	{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck",
+//	           "scanner_version":"v1.6.0","db":"https://vuln.go.dev", …}}
+type configDelEscaner struct {
+	Nombre  string `json:"scanner_name"`
+	Version string `json:"scanner_version"`
 }
 
 type fichaOSV struct {
@@ -198,10 +211,31 @@ func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string) ([
 	return interpretar(salida.Stdout, dir, e.BlockReachable)
 }
 
+// interpretar lee el flujo de govulncheck, y ADEMÁS exige que el flujo exista.
+//
+// EL SILENCIO QUE ERA UN ✓ VERDE. Un módulo sin vulnerabilidades no produce
+// ninguna envoltura "finding", así que el bucle salía por io.EOF en la primera
+// vuelta y el motor devolvía (nil, nil): «analizado, sin CVEs alcanzables». Con
+// stdout VACÍO daba exactamente lo mismo, y stdout vacío es lo que deja una
+// herramienta que no analizó nada.
+//
+// Aquí la señal no había que inventarla ni preguntarla: govulncheck ABRE su flujo
+// presentándose. Medido sobre un módulo limpio con una sola dependencia:
+//
+//	393 983 bytes, código 0, y el primer mensaje es
+//	{"config":{…,"scanner_name":"govulncheck","scanner_version":"v1.6.0",…}}
+//
+// Stdout vacío con código 0 es IMPOSIBLE en la herramienta de verdad. Y como la
+// cabecera trae su nombre, la misma comprobación que demuestra que analizó
+// demuestra que quien analizó era govulncheck — sin lanzar un proceso extra para
+// preguntárselo, que es lo que hay que hacer con las herramientas que no dejan
+// esta huella.
 func interpretar(raw []byte, dir string, bloquea bool) ([]finding.Finding, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	resumen := map[string]string{}
 	var crudos []hallazgo
+	var seIdentifico bool
+	var mensajes int
 	for {
 		var env envoltura
 		if err := dec.Decode(&env); err == io.EOF {
@@ -209,12 +243,43 @@ func interpretar(raw []byte, dir string, bloquea bool) ([]finding.Finding, error
 		} else if err != nil {
 			return nil, fmt.Errorf("salida de govulncheck ilegible: %v", err)
 		}
+		mensajes++
+		if env.Config != nil && strings.EqualFold(env.Config.Nombre, "govulncheck") {
+			seIdentifico = true
+		}
 		if env.OSV != nil {
 			resumen[env.OSV.ID] = env.OSV.Summary
 		}
 		if env.Finding != nil {
 			crudos = append(crudos, *env.Finding)
 		}
+	}
+
+	// Y aquí se cobra la cabecera: sin ella, no hubo análisis que interpretar.
+	//
+	// Esto es lo que separa «el módulo no tiene CVEs alcanzables» de «lo que
+	// corrió no era govulncheck». Las dos cosas producen cero hallazgos, y hasta
+	// ahora las dos llegaban al panel como una capa revisada y en verde.
+	// Y se exigen mensajes DESPUÉS de la cabecera, no sólo la cabecera.
+	//
+	// El matiz lo puso el validador, midiendo: el mensaje `config` es byte a byte
+	// IDÉNTICO en la corrida sana y en las averiadas —289 bytes, mismos campos—
+	// así que presentarse no prueba haber escaneado. En sus escenarios eso no
+	// cambiaba nada, porque todos salían con código distinto de cero y este motor
+	// ya los rechaza más arriba. Pero la corrección es gratis y cierra el caso que
+	// no hemos visto: presentarse, salir con 0 y no decir nada más.
+	//
+	// Un escaneo de verdad habla mucho: sobre un módulo limpio con una sola
+	// dependencia son ~394 KB (SBOM, progreso, osv). El número exacto varía con el
+	// módulo y con la versión, así que no se compara con ninguna cifra: se exige
+	// que haya ALGO además de la presentación.
+	if !seIdentifico || mensajes < 2 {
+		return nil, fmt.Errorf("govulncheck no escaneó %s: su flujo abre presentándose "+
+			"({\"config\":{\"scanner_name\":\"govulncheck\",…}}) y sigue con el SBOM y el "+
+			"progreso —cientos de kilobytes incluso sobre un módulo limpio—, y aquí llegaron "+
+			"%d bytes con %d mensaje(s)%s. Sin escaneo no hay «sin vulnerabilidades»: "+
+			"comprueba qué resuelve `govulncheck` en tu PATH o reinstálalo con "+
+			"`codeguard repair`", dir, len(raw), mensajes, sinPresentarse(seIdentifico))
 	}
 
 	// UNA vulnerabilidad, UN hallazgo — aunque el código la alcance por varias
@@ -305,6 +370,16 @@ func interpretar(raw []byte, dir string, bloquea bool) ([]finding.Finding, error
 		out = append(out, f)
 	}
 	return out, nil
+}
+
+// sinPresentarse separa las dos formas de fallar esta comprobación, porque
+// mandan a mirar sitios distintos: sin cabecera, lo que corrió no era
+// govulncheck; con cabecera y nada más, era él y no llegó a escanear.
+func sinPresentarse(seIdentifico bool) string {
+	if seIdentifico {
+		return " (se presentó, pero no escaneó nada)"
+	}
+	return " (ni siquiera se presentó: lo que corrió no es govulncheck)"
 }
 
 // marcoUsuario es el último marco de la traza con posición: la traza va de la

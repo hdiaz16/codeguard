@@ -90,6 +90,66 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+// `max_diff_tokens: 0` no es "sin límite": es un diff vacío, y encima cacheado.
+//
+// La sombra trunca con `maxChars := MaxDiffTokens * 4`, así que con 0 al modelo
+// no le llega ni una línea del diff — responde que no ve nada, y ese "sin
+// hallazgos" se archiva en la caché bajo el sha del diff COMPLETO. El commit
+// queda revisado en falso y no se reintenta. El default sólo aguantaba mientras
+// el campo se OMITIERA; un 0 escrito a mano lo pisaba, y la plantilla de `init`
+// invitaba a escribirlo con un "# 0 = sin límite" que era de otro campo.
+func TestUnMaxDiffTokensDeCeroVuelveAlDefault(t *testing.T) {
+	casos := []struct {
+		nombre string
+		valor  string
+		quiero int
+	}{
+		{"cero escrito a mano", "max_diff_tokens: 0", maxDiffTokensPorDefecto},
+		{"negativo", "max_diff_tokens: -1", maxDiffTokensPorDefecto},
+		{"campo omitido", "model: \"m\"", maxDiffTokensPorDefecto},
+		{"un valor de verdad se respeta", "max_diff_tokens: 500", 500},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Setenv("LOCALAPPDATA", t.TempDir())
+			cfg, err := Load(repoConConfig(t, configMinima+"llm:\n  "+c.valor+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.LLM.MaxDiffTokens != c.quiero {
+				t.Errorf("con `%s` quedó MaxDiffTokens=%d, se esperaba %d",
+					c.valor, cfg.LLM.MaxDiffTokens, c.quiero)
+			}
+		})
+	}
+}
+
+// Y el saneamiento tiene que ir DESPUÉS de la anulación personal: el archivo
+// local reescribe el bloque llm entero, así que un 0 escrito ahí se colaría por
+// detrás de cualquier comprobación hecha antes de aplicarlo.
+func TestUnCeroEnLaAnulacionPersonalTampocoPasa(t *testing.T) {
+	local := t.TempDir()
+	t.Setenv("LOCALAPPDATA", local)
+	dirLocal := filepath.Join(local, "codeguard")
+	if err := os.MkdirAll(dirLocal, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	anulacion := "llm:\n  model: \"modelo-personal\"\n  max_diff_tokens: 0\n"
+	if err := os.WriteFile(filepath.Join(dirLocal, "llm-local.yaml"), []byte(anulacion), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(repoConConfig(t, configMinima+"llm:\n  max_diff_tokens: 8000\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.LLMLocal {
+		t.Fatal("la anulación personal debía aplicarse: sin eso la prueba no prueba nada")
+	}
+	if cfg.LLM.MaxDiffTokens != maxDiffTokensPorDefecto {
+		t.Errorf("el 0 del archivo personal quedó en pie: MaxDiffTokens=%d", cfg.LLM.MaxDiffTokens)
+	}
+}
+
 func TestSinRulepackEsError(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	if _, err := Load(repoConConfig(t, "version: 1\nlanguages: [go]\n")); err == nil {
@@ -257,5 +317,36 @@ func TestCostoMicrosCuentaLaCache(t *testing.T) {
 	// caché costaba 0 y ahora cuesta lo que cuesta.
 	if antes, _ := l.CostoMicros(ConsumoTokens{PromptTokens: 0, CacheReadTokens: 500_000}); antes == 0 {
 		t.Error("una llamada servida desde caché no es gratis")
+	}
+}
+
+// El primo vivo de max_diff_tokens: 0 — lo destapó el arreglo de aquél. Un
+// timeout_ms de 0 escrito a mano creaba un context que NACE vencido
+// (time.Duration(0) en WithTimeout es un plazo ya agotado) y la explicación
+// del panel fallaba al instante. La sombra se salvaba por el suelo de
+// plazoSombra y la UI porque trata el 0 aparte — pero eso era suerte de cada
+// llamador, no una garantía. La garantía vive en Load, donde nace el cfg.
+func TestUnTimeoutMsDeCeroVuelveAlDefault(t *testing.T) {
+	casos := []struct {
+		nombre string
+		valor  string
+		quiero int
+	}{
+		{"cero escrito a mano", "timeout_ms: 0", timeoutMsPorDefecto},
+		{"negativo", "timeout_ms: -5", timeoutMsPorDefecto},
+		{"un valor de verdad se respeta", "timeout_ms: 90000", 90000},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			t.Setenv("LOCALAPPDATA", t.TempDir())
+			cfg, err := Load(repoConConfig(t, configMinima+"llm:\n  "+c.valor+"\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.LLM.TimeoutMs != c.quiero {
+				t.Errorf("con `%s` quedó TimeoutMs=%d, se esperaba %d",
+					c.valor, cfg.LLM.TimeoutMs, c.quiero)
+			}
+		})
 	}
 }

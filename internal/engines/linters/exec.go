@@ -10,6 +10,10 @@ import (
 	"codeguard/internal/engines/proc"
 )
 
+// topeSalida es el tope por flujo de runTool. Es variable y no constante para
+// que las pruebas puedan provocar un recorte sin generar 64 MB.
+var topeSalida int64 = proc.MaxSalida
+
 // runTool ejecuta una herramienta y devuelve stdout+stderr combinados.
 // Un exit code != 0 NO es error si hubo salida (los linters salen con 1
 // cuando encuentran problemas); sin salida sí es fallo de ejecución.
@@ -19,14 +23,90 @@ func runTool(ctx context.Context, dir, bin string, args ...string) (string, erro
 	// Herramientas Python en Windows: sin esto leen/escriben en cp1252
 	// y rompen los acentos (mismo fix que en el adaptador de semgrep).
 	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
-	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
+	salida, err := proc.Correr(ctx, cmd, topeSalida)
 	var exitErr *exec.ExitError
-	if err != nil && !errors.As(err, &exitErr) && !salida.Recortada {
-		return "", err // no arrancó (binario ausente, permisos...)
+	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, proc.ErrRecortada) {
+		return "", err // no arrancó (binario ausente, permisos...) o venció el plazo
 	}
+	// El recorte se tolera por la IDENTIDAD del error y no por la bandera
+	// salida.Recortada: la bandera también vale true cuando al motor lo mataron
+	// a media escritura, y mirarla ahí devolvía la salida parcial con err nil.
+	// El daño no era el mensaje perdido — govet cachea lo que devolvamos bajo la
+	// clave de contenido, así que el análisis a medias se congelaba y se servía
+	// en las corridas siguientes como si estuviera completo.
+	//
 	// Los linters se leen línea por línea: un texto recortado sigue siendo
 	// útil, a diferencia de un JSON a medias.
 	return string(salida.Combinada()), nil
+}
+
+// runToolConSalida es runTool diciendo ADEMÁS si el proceso salió con código
+// distinto de cero.
+//
+// Existe por un verde silencioso medido en una máquina real. El motor de tsc
+// cae a `npx --no-install tsc` cuando el repo no trae node_modules, y en esa
+// máquina eso resolvía a un paquete de npm llamado `tsc` que NO es TypeScript:
+// imprime un banner y sale con 1. runTool tolera la salida distinta de cero a
+// propósito —los linters salen con error cuando encuentran problemas— así que
+// el banner llegaba al parser, el parser no encontraba ni un diagnóstico, y
+// cero diagnósticos se reportaba como CERO HALLAZGOS. O sea: "revisé y está
+// limpio" sobre un archivo que nadie compiló. Un `return centavos` donde la
+// función promete string entró al repositorio con el ✓ verde.
+//
+// Con el código de salida, quien llama puede distinguir las tres situaciones
+// que hasta aquí se confundían en una:
+//
+//	salió 0            → miró y no encontró nada. Limpio de verdad.
+//	salió ≠0 CON diagnósticos → miró y encontró. Hallazgos.
+//	salió ≠0 SIN diagnósticos → NO miró. No se puede decir que esté limpio.
+//
+// El tercer caso es el que este producto no se puede permitir callar, porque
+// su silencio es idéntico al del primero.
+func runToolConSalida(ctx context.Context, dir, bin string, args ...string) (texto string, fallo bool, err error) {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
+	salida, err := proc.Correr(ctx, cmd, topeSalida)
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, proc.ErrRecortada) {
+		return "", true, err // no arrancó, o venció el plazo
+	}
+	return string(salida.Combinada()), errors.As(err, &exitErr), nil
+}
+
+// runToolSeparado devuelve stdout y stderr SIN MEZCLAR.
+//
+// Los dos de arriba juntan los canales, y para casi todos los linters da igual:
+// escriben sus diagnósticos por uno y no usan el otro. Pero hay herramientas que
+// reparten a propósito, y ahí la mezcla borra la información que decide si
+// analizaron o no.
+//
+// El caso que lo pidió es `go vet -json`, medido en esta máquina:
+//
+//	paquete limpio      → stdout `{}`             · stderr vacío   · código 0
+//	con diagnósticos    → stdout el JSON          · stderr vacío   · código 0
+//	no compila          → stdout VACÍO            · stderr el motivo · código 1
+//	uno roto y otro no  → stdout el JSON del bueno · stderr el motivo del roto
+//
+// Con los canales separados, "escribió algo en stdout" ES la prueba de que vet
+// analizó, y el stderr se lee como lo que es: motivos de carga, más el ruido
+// propio del toolchain (`go: downloading …`). Mezclados, ese ruido inofensivo
+// era indistinguible de un fallo de carga y govet se declaraba incapaz sobre un
+// módulo que había analizado perfectamente.
+//
+// El código de salida NO se devuelve, y no es un olvido: con -json vet sale con
+// 0 aunque encuentre cosas, así que aquí el código no distingue nada que los
+// canales no digan mejor.
+func runToolSeparado(ctx context.Context, dir, bin string, args ...string) (stdout, stderr string, err error) {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
+	salida, err := proc.Correr(ctx, cmd, topeSalida)
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, proc.ErrRecortada) {
+		return "", "", err // no arrancó (binario ausente, permisos...) o venció el plazo
+	}
+	return string(salida.Stdout), string(salida.Stderr), nil
 }
 
 // (runToolStdin vivió aquí para preguntarle a gofmt por stdin; se fue cuando

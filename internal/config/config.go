@@ -201,6 +201,22 @@ type Config struct {
 
 const RelPath = ".codeguard/config.yaml"
 
+// maxDiffTokensPorDefecto es el presupuesto de diff que se manda al modelo.
+// Está en una constante para que el valor inicial y el saneamiento de Load no
+// puedan separarse: si se pisan con números distintos, "volver al default"
+// dejaría de significar lo mismo según por dónde se llegue.
+const maxDiffTokensPorDefecto = 12000
+
+// timeoutMsPorDefecto: misma disciplina y por el mismo fallo en primo. Un
+// `timeout_ms: 0` escrito a mano crea un context que NACE vencido —
+// time.Duration(0) en un WithTimeout es un plazo ya agotado— y la explicación
+// del panel (cmd/daemon/explain.go) falla al instante. La sombra estaba a
+// salvo por el suelo de un minuto de plazoSombra y la UI porque trata el 0
+// como este mismo default, pero eso era suerte de cada llamador: el
+// saneamiento pertenece a Load, donde nace el cfg, no repartido por los
+// consumidores.
+const timeoutMsPorDefecto = 20000
+
 // Load lee la config del repo. Si el archivo no existe, el repo no está
 // enrolado (etapa 0) y se devuelve (nil, nil).
 func Load(repoRoot string) (*Config, error) {
@@ -225,7 +241,7 @@ func Load(repoRoot string) (*Config, error) {
 		Risk:         Risk{Threshold: 35},
 		UI:           UI{MaxVisibleFindings: 7, AutoOpenPanel: "on_block"},
 		//nolint:gosec // G101: es el NOMBRE de la variable de entorno, no una clave — precisamente el diseño que evita guardar credenciales
-		LLM: LLM{TimeoutMs: 20000, MaxDiffTokens: 12000, APIKeyEnv: "FOUNDRY_API_KEY"},
+		LLM: LLM{TimeoutMs: timeoutMsPorDefecto, MaxDiffTokens: maxDiffTokensPorDefecto, APIKeyEnv: "FOUNDRY_API_KEY"},
 	}
 	if err := k.Unmarshal("", cfg); err != nil {
 		return nil, fmt.Errorf("config.yaml no coincide con el esquema: %w", err)
@@ -240,14 +256,66 @@ func Load(repoRoot string) (*Config, error) {
 	// de modelo no altera qué bloquea —el modelo nunca bloquea (P2)—, así que
 	// no puede romper esa paridad.
 	aplicarLLMLocal(cfg)
+	// Un max_diff_tokens de 0 (o negativo) NO significa "sin límite": significa
+	// que no viaja NADA. El truncado de la sombra multiplica este número por 4 y
+	// corta el diff a esa longitud, así que con 0 lo que se le manda al modelo es
+	// un diff vacío — y el modelo, obediente, no encuentra nada. Lo caro viene
+	// después: ese "sin hallazgos" se guarda en la caché bajo el sha del diff
+	// COMPLETO, o sea que el commit queda con un análisis vacío archivado como si
+	// fuera bueno, y no se vuelve a intentar.
+	//
+	// El default de arriba sólo sobrevive si el YAML OMITE el campo; un `0`
+	// escrito a mano lo pisaba. Y la invitación a escribirlo estaba servida: la
+	// plantilla de `codeguard init` ponía un "# 0 = sin límite" —que es de
+	// monthly_budget_usd— dos líneas debajo de este campo (ya corregido en
+	// cmd/codeguard/initcmd.go).
+	//
+	// Va DESPUÉS de aplicarLLMLocal a propósito: la anulación personal reescribe
+	// el bloque llm entero, así que un 0 en llm-local.yaml se colaría por detrás
+	// de una comprobación puesta más arriba.
+	if cfg.LLM.MaxDiffTokens <= 0 {
+		cfg.LLM.MaxDiffTokens = maxDiffTokensPorDefecto
+	}
+	if cfg.LLM.TimeoutMs <= 0 {
+		cfg.LLM.TimeoutMs = timeoutMsPorDefecto
+	}
 	return cfg, nil
 }
 
 // RutaLLMLocal es donde vive la elección de modelo de ESTE desarrollador.
 // Fuera del repo a propósito: es suya, no del equipo, y no debe viajar en un
 // commit ni cambiar el hash de la configuración.
+//
+// Devuelve "" si no puede resolver una ruta ABSOLUTA, y entonces no hay
+// anulación personal. Ese "fuera del repo" del párrafo anterior no es una
+// aclaración: es la garantía de que quien elige el modelo es el desarrollador y
+// no el repositorio que acaba de clonar, y hay que imponerla aquí porque no la
+// impone nadie más.
+//
+// filepath.Join no falla cuando LOCALAPPDATA viene vacía: devuelve
+// `codeguard\llm-local.yaml`, que es RELATIVA al directorio de trabajo — y el
+// directorio de trabajo, durante un commit, es el repo que se está analizando.
+// Un repo ajeno con ese archivo dentro se configuraba a sí mismo el bloque llm:
+// bastaba con apuntar el endpoint a un servidor propio para llevarse los diffs
+// que se le mandan al modelo, sin que nada lo dijera, porque la anulación se
+// aplica DESPUÉS del hash de paridad y no produce diagnóstico.
+//
+// Y LOCALAPPDATA puede faltar en Windows por causas de todos los días: cuenta
+// de servicio, proceso lanzado con un bloque de entorno acotado — este mismo
+// repo filtra por lista blanca el entorno con el que corre los motores.
 func RutaLLMLocal() string {
-	return filepath.Join(os.Getenv("LOCALAPPDATA"), "codeguard", "llm-local.yaml")
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		return ""
+	}
+	ruta := filepath.Join(base, "codeguard", "llm-local.yaml")
+	// La comprobación no sobra aunque la variable tenga valor: LOCALAPPDATA
+	// puede traer algo que no sea una ruta absoluta (un valor puesto a mano, o
+	// en blanco). Lo que no puede salir de aquí es una ruta relativa.
+	if !filepath.IsAbs(ruta) {
+		return ""
+	}
+	return ruta
 }
 
 // aplicarLLMLocal sustituye el bloque llm por el del archivo local, si existe.
@@ -255,7 +323,15 @@ func RutaLLMLocal() string {
 // nunca es requisito, y dejar sin commitear a alguien por un YAML mal escrito
 // sería exactamente lo contrario de lo que hace este agente.
 func aplicarLLMLocal(cfg *Config) {
-	raw, err := os.ReadFile(RutaLLMLocal())
+	ruta := RutaLLMLocal()
+	if ruta == "" {
+		// Sin ruta personal resoluble no se lee NADA. Es explícito y no un
+		// descuido aprovechado: es verdad que os.ReadFile("") también fallaría,
+		// pero dejar que el arreglo dependa de eso es volver a confiar en un
+		// accidente, que es justo lo que puso aquí el agujero.
+		return
+	}
+	raw, err := os.ReadFile(ruta)
 	if err != nil {
 		return
 	}

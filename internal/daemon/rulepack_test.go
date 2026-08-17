@@ -6,17 +6,24 @@ import (
 	"testing"
 )
 
-// El rulepack se resuelve en cuatro sitios y el orden importa: lo vendoreado
-// en el repo manda sobre lo instalado (un repo puede fijar SUS reglas), y la
-// instalación estándar del usuario es el último recurso.
+// El rulepack se resuelve en cuatro sitios y el orden importa. Lo vendoreado en
+// el repo es el RESPALDO, no la preferencia: se usa cuando esa versión no está
+// instalada, y pierde contra ella cuando lo está.
 //
-// Los dos sitios de en medio son la lección: el binario instalado vive en
-// CodeGuard\bin, pero cualquier otro binario —una compilación de desarrollo,
-// una copia portable— no tiene rulepacks al lado, y entonces todo repo que no
-// los vendoree perdía las 119 reglas de la casa EN SILENCIO (semgrep "corría"
-// en 0 ms con 0 hallazgos). Se reprodujo en un repo de prueba antes de existir
-// este test.
-func TestRulepackDirPrefiereLoVendoreado(t *testing.T) {
+// Este test decía lo contrario, y el contrario era explotable: mientras el repo
+// analizado ganaba, bastaba traer un `rulepacks/<la versión que pinnea>/` con
+// reglas de relleno para que las de la casa no llegaran a mirar el código.
+// Medido con el mismo archivo y una inyección SQL de manual: BLOQUEADO con el
+// rulepack instalado, "formato/lint/tipos/reglas/migraciones ✓  listo — commit
+// permitido" con el del repo. Sin carrera y sin atacante sofisticado: basta
+// clonar el repositorio.
+//
+// Lo que el respaldo sigue resolviendo, y por eso no desaparece: el binario
+// instalado vive en CodeGuard\bin, pero cualquier otro —una compilación de
+// desarrollo, una copia portable— no tiene rulepacks al lado, y sin esta cadena
+// todo repo perdía las 119 reglas de la casa EN SILENCIO (semgrep "corría" en
+// 0 ms con 0 hallazgos).
+func TestRulepackDirPrefiereLoInstaladoSobreLoVendoreado(t *testing.T) {
 	repo := t.TempDir()
 	instalacion := t.TempDir()
 	t.Setenv("LOCALAPPDATA", instalacion)
@@ -31,15 +38,33 @@ func TestRulepackDirPrefiereLoVendoreado(t *testing.T) {
 	}
 
 	// Sólo la instalación estándar lo tiene: ahí debe encontrarlo.
-	esperado := crear(filepath.Join(instalacion, "CodeGuard"), "2026.08.2")
-	if got := RulepackDir(repo, "2026.08.2"); got != esperado {
-		t.Errorf("con el pack sólo en la instalación estándar:\n  got  %s\n  want %s", got, esperado)
+	instalado := crear(filepath.Join(instalacion, "CodeGuard"), "2026.08.2")
+	if got := RulepackDir(repo, "2026.08.2"); got != instalado {
+		t.Errorf("con el pack sólo en la instalación estándar:\n  got  %s\n  want %s", got, instalado)
 	}
 
-	// Vendoreado en el repo: gana sobre todo lo demás.
+	// Y ahora el repo trae el SUYO con el mismo número. El mismo número
+	// nombrando dos artefactos distintos es una colisión, y en una colisión gana
+	// el de la organización: la versión es una promesa de paridad con el CI, y
+	// quien analiza no puede dejar que el analizado elija con qué se le mide.
 	vendoreado := crear(repo, "2026.08.2")
-	if got := RulepackDir(repo, "2026.08.2"); got != vendoreado {
-		t.Errorf("lo vendoreado en el repo debe ganar:\n  got  %s\n  want %s", got, vendoreado)
+	if got := RulepackDir(repo, "2026.08.2"); got != instalado {
+		t.Errorf("el repo analizado NO puede imponer sus reglas sobre las instaladas:\n"+
+			"  got  %s\n  want %s", got, instalado)
+	}
+	// Con una versión que sólo está vendoreada, el respaldo entra: es el caso
+	// que justificó la cadena y no puede romperse.
+	soloEnElRepo := crear(repo, "2026.09.9")
+	if got := RulepackDir(repo, "2026.09.9"); got != soloEnElRepo {
+		t.Errorf("una versión que sólo está vendoreada tiene que usarse igual:\n  got  %s\n  want %s", got, soloEnElRepo)
+	}
+	// …y se puede DECIR, que es la otra mitad: el hook avisaba a gritos cuando
+	// el rulepack falta y callaba cuando lo sustituyen.
+	if !RulepackEsDelRepo(repo, "2026.09.9") {
+		t.Error("una versión que sale del repo tiene que poder anunciarse como tal")
+	}
+	if RulepackEsDelRepo(repo, "2026.08.2") {
+		t.Errorf("se anunció como vendoreado un pack que salió de la instalación: %s", vendoreado)
 	}
 
 	// Una versión que no está en ningún sitio devuelve la ruta del repo, para

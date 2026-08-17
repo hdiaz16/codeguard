@@ -70,6 +70,75 @@ function LimpiarTemporales([string]$nombre) {
     }
 }
 
+
+# ComprobarQueArranca ejecuta el motor recien instalado para ver si CORRE, no
+# solo si su hash coincide.
+#
+# El hash responde "es el artefacto que publico su autor". No responde "esta
+# maquina puede ejecutarlo", y son preguntas distintas: google-java-format
+# 1.36.1 esta compilado para Java 21 (version de clase 65) y en una maquina con
+# JDK 17 (61) muere con UnsupportedClassVersionError. La instalacion lo daba por
+# bueno, `codeguard engines` lo listaba como "coincide con el binario publicado"
+# —cierto y a la vez enganoso— y el formateo de Java quedaba degradado de forma
+# PERMANENTE, sin que nada dijera por que ni que no se iba a arreglar solo.
+#
+# No aborta la instalacion: un motor que no arranca es un problema real pero no
+# invalida los demas, y el pipeline ya sabe degradar una capa ausente. Lo que
+# hace es DECIRLO, con la causa, en el momento en que se puede actuar.
+function ComprobarQueArranca([string]$name, [string]$ruta, [switch]$EsBat) {
+    $jdk = Get-Command java -ErrorAction SilentlyContinue
+    if (-not $jdk) {
+        Write-Host "    $name : no hay java en el PATH, no se pudo comprobar que arranque" -ForegroundColor Yellow
+        return
+    }
+    # $ErrorActionPreference="Stop" esta activo arriba, y con el un exe que
+    # escribe en stderr se convierte en un NativeCommandError ruidoso de
+    # PowerShell: la traza tapaba justo el mensaje que esta funcion existe para
+    # dar. Se baja a "Continue" solo aqui, y stderr se une a stdout.
+    $antes = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    # -Width 4096 no es adorno: Out-String recorta a las COLUMNAS DEL HOST, y la
+    # consola oculta que lanza el asistente tiene 80. El mensaje del JVM ocupa
+    # ~220 caracteres, asi que se cortaba justo antes de la parte que dice la
+    # version de clase — medido: con 80/100/120 el diagnostico no salia y el
+    # usuario solo leia "LinkageError occurred", que no dice que hacer.
+    # Se ensucia $LASTEXITCODE a proposito ANTES de lanzar: si el lanzamiento
+    # falla y entra el catch, PowerShell CONSERVA el codigo del ultimo comando
+    # nativo anterior — y lo que precede aqui es curl/go/pip, que dejan 0 al ir
+    # bien. Sin esto, un motor que nunca llego a correr se anunciaba como
+    # "arranca": el falso OK que esta funcion existe para evitar.
+    $global:LASTEXITCODE = -1
+    try {
+        if ($EsBat) { $salida = (& $ruta --version 2>&1 | Out-String -Width 4096) }
+        else        { $salida = (& java -jar $ruta --version 2>&1 | Out-String -Width 4096) }
+    }
+    catch { $salida = "$($_.Exception.Message)" }
+    finally { $ErrorActionPreference = $antes }
+    if ($LASTEXITCODE -eq 0) {
+        Ok "${name}: arranca con el java de esta maquina"
+        return
+    }
+    Write-Host "    $name : el artefacto es el publicado, pero NO ARRANCA en esta maquina" -ForegroundColor Yellow
+    # Los dos numeros se buscan POR SEPARADO: con un solo patron y `.*?` en
+    # medio no casaba, porque el punto no cruza saltos de linea y la traza de
+    # Java los reparte en lineas distintas segun quien la formatee.
+    $necesitaClase = if ($salida -match 'class file version (\d+)\.') { [int]$Matches[1] } else { 0 }
+    $tieneClase    = if ($salida -match 'up to (\d+)\.')              { [int]$Matches[1] } else { 0 }
+    # -ge 45 y no -gt 0: 45 es Java 1.1, la primera version de clase que existe.
+    # Con -gt 0 una cifra basura del mensaje podia imprimir un "JDK -12".
+    if ($necesitaClase -ge 45 -and $tieneClase -ge 45) {
+        # La tabla de versiones de clase de Java: 61 = 17, 65 = 21.
+        # Version de clase -> version de JDK: 45 = Java 1.1, asi que la resta es
+        # 44 (61 -> 17, 65 -> 21). Comprobado contra las dos que se ven aqui.
+        $necesita = $necesitaClase - 44
+        $tiene    = $tieneClase - 44
+        Write-Host "      necesita JDK $necesita y esta maquina tiene JDK $tiene" -ForegroundColor Yellow
+        Write-Host "      instala un JDK $necesita o mas nuevo; hasta entonces esta capa quedara degradada" -ForegroundColor Yellow
+    } else {
+        Write-Host "      $(($salida -split "`n")[0])" -ForegroundColor Yellow
+    }
+}
+
 New-Item -ItemType Directory -Force $EnginesDir | Out-Null
 $catalogo = (Get-Content $MotoresJson -Raw | ConvertFrom-Json).motores
 
@@ -308,7 +377,11 @@ function Correr([string]$exe, [string[]]$argumentos) {
     $previo = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $salida = & $exe @argumentos 2>&1 | Out-String
+        # -Width 4096: Out-String recorta a las columnas del HOST, y la consola
+        # oculta que lanza el setup trae 80. Sin esto, el mensaje de error de un
+        # motor —que es justo lo que se guarda para explicarle al usuario qué
+        # pasó— llega mutilado a mitad de una ruta.
+        $salida = & $exe @argumentos 2>&1 | Out-String -Width 4096
         return [pscustomobject]@{ Codigo = $LASTEXITCODE; Salida = $salida }
     } finally { $ErrorActionPreference = $previo }
 }
@@ -447,7 +520,9 @@ function Install-Jar($name) {
     $destino = Join-Path $EnginesDir $v.instalado
     if (Test-Path $destino) {
         if ((Sha256Archivo $destino) -eq $v.sha256_exe) {
-            Ok "$name $($v.version) ya presente y verificado"; return
+            Ok "$name $($v.version) ya presente y verificado"
+            ComprobarQueArranca $name $destino
+            return
         }
         Write-Host "    $name presente pero NO coincide con el artefacto publicado" -ForegroundColor Yellow
         Write-Host "    se reemplazara por la version verificada" -ForegroundColor Yellow
@@ -456,7 +531,7 @@ function Install-Jar($name) {
     if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
     try {
         Step "Descargando $name $($v.version)"
-        Descargar $v.url $tmp
+        DescargarConReanudacion $v.url $tmp
         $h = Sha256Archivo $tmp
         if ($h -ne $v.sha256_zip) {
             throw @"
@@ -476,6 +551,7 @@ aclararlo.
             throw "${name}: la descarga era correcta pero el jar copiado no coincide ($h2)"
         }
         Ok "$name $((Get-Item $destino).Length / 1MB -as [int]) MB - verificado"
+        ComprobarQueArranca $name $destino
     }
     finally {
         if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
@@ -494,7 +570,9 @@ function Install-Arbol($name) {
     $destino = Join-Path $EnginesDir $v.instalado
     if (Test-Path $destino) {
         if ((HuellaArbol $destino) -eq $v.sha256_exe) {
-            Ok "$name $($v.version) ya presente y verificado"; return
+            Ok "$name $($v.version) ya presente y verificado"
+            ComprobarQueArranca $name (Join-Path $destino "bin\pmd.bat") -EsBat
+            return
         }
         Write-Host "    $name presente pero su arbol NO coincide con el publicado" -ForegroundColor Yellow
         Write-Host "    se reemplazara por la version verificada" -ForegroundColor Yellow
@@ -504,7 +582,7 @@ function Install-Arbol($name) {
     $dir = Join-Path $env:TEMP "cg-$name"
     try {
         Step "Descargando $name $($v.version) (~70 MB: son 104 jars entre reglas y parsers)"
-        Descargar $v.url $tmp
+        DescargarConReanudacion $v.url $tmp
         $zh = Sha256Archivo $tmp
         if ($zh -ne $v.sha256_zip) {
             throw @"
@@ -527,6 +605,7 @@ La descarga se descarto sin abrir. No se instala nada hasta aclararlo.
         if (Test-Path $destino) { Remove-Item -LiteralPath $destino -Recurse -Force }
         Move-Item -LiteralPath $raiz -Destination $destino -Force
         Ok "$name $($v.version) - arbol completo verificado"
+        ComprobarQueArranca $name (Join-Path $destino "bin\pmd.bat") -EsBat
     }
     finally { LimpiarTemporales $name }
 }
