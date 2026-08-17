@@ -124,6 +124,18 @@ type escritorio struct {
 	// sin una aplicación viva — así que la lógica de CUÁNDO abrir no se podía
 	// probar sin arrancar Wails entero. En producción se queda en nil.
 	abrirPanel func()
+
+	// apagar termina la aplicación POR EL CAMINO BUENO — el mismo que el botón
+	// «Salir de CodeGuard» del menú. Mismo patrón inyectable que los de arriba.
+	//
+	// Existe porque el desinstalador no tenía forma de pedirlo: mataba el
+	// proceso con Stop-Process -Force, y un proceso fusilado no llega a quitar
+	// su icono de la bandeja. Windows deja el icono pintado —el famoso orbe
+	// fantasma— hasta que algo refresca el área de notificación, y en la
+	// bandeja nueva de Windows 11 no hay forma programática decente de
+	// refrescarla sin reiniciar Explorer. La única salida limpia es no matar:
+	// pedir. app.Quit() desmonta la bandeja antes de morir.
+	apagar func()
 }
 
 // nuevoEscritorio deja el estado listo ANTES de que exista la aplicación: el
@@ -1154,6 +1166,18 @@ func (e *escritorio) alComandoDeLaCLI(cmd string, req *ipc.Request) {
 	}
 	root := req.RepoRoot
 	switch cmd {
+	// El desinstalador (y sólo él, en la práctica) pide el apagado por IPC en
+	// vez de matar el proceso: un daemon fusilado deja su orbe pintado en la
+	// bandeja como fantasma. La frontera de confianza no cambia: el pipe es
+	// por-usuario, y quien puede hablarle al pipe ya podía hacer taskkill.
+	case "apagar":
+		if e.apagar != nil {
+			e.apagar()
+			return
+		}
+		// Vía el hilo de la UI, como toda operación que toca ventanas. El ack
+		// del IPC ya salió: quien pidió el apagado no se queda esperando.
+		application.InvokeAsync(func() { e.app.Quit() })
 	case "open-graph":
 		e.abrirGrafo(filepath.ToSlash(root))
 	case "open-config":

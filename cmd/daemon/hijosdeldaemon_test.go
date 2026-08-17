@@ -34,15 +34,35 @@ import (
 // arma un exec.Command a mano a propósito, como control.
 func TestNingunHijoDelDaemonSeArmaAMano(t *testing.T) {
 	fset := token.NewFileSet()
-	paquetes, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	// ReadDir + ParseFile y no parser.ParseDir, que quedó deprecado en Go 1.25
+	// y lo delata staticcheck en cada commit que toque este paquete. Aquí no
+	// hacía falta agrupar por paquete: se vigila cada .go que no sea de test,
+	// uno a uno. Es el mismo cambio que ya se hizo en el guarda hermano de la
+	// CLI (entornohijos_test.go), y la misma red: fallar si no se parseó ni un
+	// archivo, para que un filtro mal escrito no deje el guarda en verde
+	// perpetuo por no tener nada que mirar.
+	entradas, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
+	archivos := map[string]*ast.File{}
+	for _, en := range entradas {
+		nombre := en.Name()
+		if en.IsDir() || !strings.HasSuffix(nombre, ".go") || strings.HasSuffix(nombre, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, nombre, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		archivos[nombre] = f
+	}
+	if len(archivos) == 0 {
+		t.Fatal("no se parseó ningún archivo: el guarda no estaría vigilando nada")
+	}
 	visto := false
-	for _, pkg := range paquetes {
-		for _, archivo := range pkg.Files {
+	{
+		for _, archivo := range archivos {
 			ast.Inspect(archivo, func(n ast.Node) bool {
 				fn, ok := n.(*ast.FuncDecl)
 				if !ok {
