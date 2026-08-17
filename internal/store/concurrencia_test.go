@@ -129,14 +129,12 @@ func TestUnaSolaConexionNoSeAutobloquea(t *testing.T) {
 	if err := s.UpsertRepo(repoID, "", "autobloqueo"); err != nil {
 		t.Fatal(err)
 	}
-	var ids []string
 	for i := 0; i < 30; i++ {
 		f := finding.Finding{
 			ID: NewULID(), Engine: "semgrep", RuleKey: "r", Pillar: finding.Quality,
 			Severity: finding.Warning, Source: finding.Deterministic,
 			File: "a.go", Line: i, Message: "m", Fingerprint: NewULID(),
 		}
-		ids = append(ids, f.ID)
 		guardarRun(t, s, NewULID(), repoID, "block", []finding.Finding{f})
 		if err := s.SaveFeedback(f.ID, "false_positive", ""); err != nil {
 			t.Fatal(err)

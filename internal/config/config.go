@@ -201,6 +201,12 @@ type Config struct {
 
 const RelPath = ".codeguard/config.yaml"
 
+// maxDiffTokensPorDefecto es el presupuesto de diff que se manda al modelo.
+// Está en una constante para que el valor inicial y el saneamiento de Load no
+// puedan separarse: si se pisan con números distintos, "volver al default"
+// dejaría de significar lo mismo según por dónde se llegue.
+const maxDiffTokensPorDefecto = 12000
+
 // Load lee la config del repo. Si el archivo no existe, el repo no está
 // enrolado (etapa 0) y se devuelve (nil, nil).
 func Load(repoRoot string) (*Config, error) {
@@ -225,7 +231,7 @@ func Load(repoRoot string) (*Config, error) {
 		Risk:         Risk{Threshold: 35},
 		UI:           UI{MaxVisibleFindings: 7, AutoOpenPanel: "on_block"},
 		//nolint:gosec // G101: es el NOMBRE de la variable de entorno, no una clave — precisamente el diseño que evita guardar credenciales
-		LLM: LLM{TimeoutMs: 20000, MaxDiffTokens: 12000, APIKeyEnv: "FOUNDRY_API_KEY"},
+		LLM: LLM{TimeoutMs: 20000, MaxDiffTokens: maxDiffTokensPorDefecto, APIKeyEnv: "FOUNDRY_API_KEY"},
 	}
 	if err := k.Unmarshal("", cfg); err != nil {
 		return nil, fmt.Errorf("config.yaml no coincide con el esquema: %w", err)
@@ -240,6 +246,26 @@ func Load(repoRoot string) (*Config, error) {
 	// de modelo no altera qué bloquea —el modelo nunca bloquea (P2)—, así que
 	// no puede romper esa paridad.
 	aplicarLLMLocal(cfg)
+	// Un max_diff_tokens de 0 (o negativo) NO significa "sin límite": significa
+	// que no viaja NADA. El truncado de la sombra multiplica este número por 4 y
+	// corta el diff a esa longitud, así que con 0 lo que se le manda al modelo es
+	// un diff vacío — y el modelo, obediente, no encuentra nada. Lo caro viene
+	// después: ese "sin hallazgos" se guarda en la caché bajo el sha del diff
+	// COMPLETO, o sea que el commit queda con un análisis vacío archivado como si
+	// fuera bueno, y no se vuelve a intentar.
+	//
+	// El default de arriba sólo sobrevive si el YAML OMITE el campo; un `0`
+	// escrito a mano lo pisaba. Y la invitación a escribirlo estaba servida: la
+	// plantilla de `codeguard init` ponía un "# 0 = sin límite" —que es de
+	// monthly_budget_usd— dos líneas debajo de este campo (ya corregido en
+	// cmd/codeguard/initcmd.go).
+	//
+	// Va DESPUÉS de aplicarLLMLocal a propósito: la anulación personal reescribe
+	// el bloque llm entero, así que un 0 en llm-local.yaml se colaría por detrás
+	// de una comprobación puesta más arriba.
+	if cfg.LLM.MaxDiffTokens <= 0 {
+		cfg.LLM.MaxDiffTokens = maxDiffTokensPorDefecto
+	}
 	return cfg, nil
 }
 

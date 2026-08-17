@@ -311,9 +311,13 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		if cfg, err := config.Load(req.RepoRoot); err == nil && cfg != nil {
 			//nolint:gosec // G118: la sombra sobrevive al request a propósito (ver context.Background abajo)
 			go func() {
-				// El hook persiste el run justo después de recibir la respuesta;
-				// esta espera evita actualizar un run que aún no existe.
-				time.Sleep(2 * time.Second)
+				// El hook persiste el run al recibir esta misma respuesta, en
+				// SU proceso. La sombra no puede empezar antes de que esa fila
+				// exista: todo lo que escribe cuelga de ella.
+				if s.Shadow.Store != nil &&
+					!esperarRunPersistido(ctx, s.Shadow.Store, req.RunID, esperaMaximaDelRun) {
+					return // esperarRunPersistido ya dejó dicho el porqué
+				}
 				// context.Background a propósito (no el de la petición): la
 				// sombra corre DESPUÉS de responder al hook y sobrevive al
 				// cierre de la conexión. Atarla al contexto de la petición la
@@ -327,6 +331,71 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	// abrir una conexión por commit. Best-effort puro: jamás toca el commit.
 	if s.Shadow != nil && s.Shadow.Store != nil {
 		go syncOportunista(s.Shadow.Store)
+	}
+}
+
+// esperaMaximaDelRun es lo que la sombra aguanta a que el hook escriba la fila
+// del run. Treinta segundos es holgadísimo para un INSERT —lo normal se mide en
+// milisegundos— y aun así termina: una espera sin tope dejaría goroutines vivas
+// para siempre si el hook muere entre responder y persistir, que es justo lo que
+// pasa cuando el desarrollador aborta el commit con Ctrl-C.
+const esperaMaximaDelRun = 30 * time.Second
+
+// esperarRunPersistido espera a que la fila del run EXISTA antes de dejar
+// correr la sombra. Devuelve false si se agotó el tope o si el daemon se apaga.
+//
+// Aquí había un `time.Sleep(2 * time.Second)` con el comentario «el hook
+// persiste el run justo después de recibir la respuesta». Dos segundos no son
+// una espera, son una apuesta: quien escribe esa fila es OTRO PROCESO (el del
+// hook, ver persistRun en cmd/codeguard) sobre el mismo archivo SQLite, y su
+// escritura compite con el antivirus, con el disco y con el empuje oportunista
+// que este mismo handle() lanza en paralelo contra la misma base. Cuando el hook
+// pasaba de dos segundos, la sombra actualizaba un run que aún no existía: un
+// UPDATE de cero filas, que en database/sql no es error, y el risk_score se
+// perdía para siempre sin una línea de log.
+//
+// Sondear la fila convierte la apuesta en un hecho: se espera lo que haga falta
+// —no un número fijo elegido de memoria— y si el tope se agota se DICE. Al
+// agotarse, la sombra no corre: sus hallazgos y su telemetría cuelgan del run
+// por clave foránea, así que sin la fila no habría dónde guardarlos y lo único
+// que se conseguiría es quemar tokens en un análisis que nadie podrá leer.
+//
+// El backoff arranca en 50 ms y se dobla hasta un segundo: el caso normal —la
+// fila ya está o llega enseguida— se resuelve en un sondeo o dos, y el caso raro
+// no martillea la base justo cuando está contendida, que es lo que lo hacía
+// raro.
+func esperarRunPersistido(ctx context.Context, st *store.Store, runID string, tope time.Duration) bool {
+	inicio := time.Now()
+	espera := 50 * time.Millisecond
+	var ultimoErr error
+	for {
+		existe, err := st.RunExiste(runID)
+		if existe {
+			return true
+		}
+		if err != nil {
+			// Preguntar puede fallar por contención (SQLITE_BUSY) y el
+			// siguiente sondeo suele acertar; se guarda el último error para
+			// poder decir POR QUÉ si al final se agota el tope.
+			ultimoErr = err
+		}
+		if time.Since(inicio) >= tope {
+			log.Printf("sombra: el run %s no apareció en la base tras %s (último error: %v) — "+
+				"la sombra no corre porque sus hallazgos no tendrían dónde colgarse",
+				runID, tope, ultimoErr)
+			return false
+		}
+		t := time.NewTimer(espera)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			log.Printf("sombra: el daemon se apaga mientras esperaba al run %s — se abandona", runID)
+			return false
+		case <-t.C:
+		}
+		if espera < time.Second {
+			espera *= 2
+		}
 	}
 }
 

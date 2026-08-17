@@ -300,9 +300,11 @@ const defaultLLMBlock = `llm:
   model: "FW-Kimi-K3"
   model_fast: "gpt-5.6-sol"
   timeout_ms: 20000
+  # Cuánto diff se le manda al modelo. Un 0 aquí no abre el grifo: lo cierra
+  # —el modelo recibiría un diff vacío—, así que se ignora y vuelve a 12000.
   max_diff_tokens: 12000
-  # 0 = sin límite. Con un tope, hacen falta las tarifas de abajo para poder
-  # convertir tokens en dinero; sin ellas el tope no se puede aplicar.
+  # monthly_budget_usd: 0 = sin límite. Con un tope, hacen falta las tarifas de
+  # abajo para poder convertir tokens en dinero; sin ellas no se puede aplicar.
   monthly_budget_usd: 0
   price_in_per_mtok: 0
   price_out_per_mtok: 0`

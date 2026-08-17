@@ -31,8 +31,11 @@ import (
 const EnvTelemetriaDSN = "CODEGUARD_TELEMETRY_DSN"
 
 // Resumen dice cuántas filas viajaron al central en un empuje, por tabla.
-// Los conteos son de filas que DE VERDAD entraron (RowsAffected): un
-// reintento que choca contra ON CONFLICT cuenta cero, que es la verdad.
+// Los conteos son de filas que DE VERDAD se escribieron (RowsAffected): un
+// reintento que choca contra ON CONFLICT DO NOTHING cuenta cero, que es la
+// verdad. Runs es la excepción y también por decir la verdad: su ON CONFLICT
+// es DO UPDATE (ver tablasIncrementales), así que un run re-empujado sí escribe
+// —corrige risk_score y llm_used— y sí cuenta.
 type Resumen struct {
 	Repos, Runs, Findings, Feedback, LLMCalls int
 }
@@ -57,6 +60,26 @@ type tablaSync struct {
 // viaja antes; si aun así un feedback apuntara a un finding que no viajó (no
 // debería: el orden lo impide), el INSERT falla con la FK y el error se oye —
 // mejor un sync ruidoso que un central con huérfanos silenciosos.
+// runs es la ÚNICA tabla que muta después de crearse, y por eso es la única
+// cuyo INSERT lleva DO UPDATE en vez de DO NOTHING.
+//
+// La frontera está en quién escribe cada campo y cuándo. Todo el run —branch,
+// veredicto, archivos, tiempos— lo escribe SaveRun de una vez y no vuelve a
+// cambiar; risk_score y llm_used, en cambio, nacen en su DEFAULT 0 y los rellena
+// la sombra hasta un minuto después, ya respondido el hook. Con DO NOTHING, un
+// empuje oportunista que se colara en esa ventana dejaba el run en el central
+// con riesgo 0 y ningún reintento lo corregía: el único consumidor de
+// risk_score es justo el central, así que ese 0 era la versión oficial para
+// siempre.
+//
+// El DO UPDATE toca SÓLO esos dos campos a propósito. Lo demás es inmutable: si
+// llegara distinto sería un id repetido o una fila corrompida, y machacar el
+// original con ella empeoraría las cosas en vez de arreglarlas. Las otras tres
+// tablas se quedan en DO NOTHING porque nada de lo suyo cambia nunca — y el
+// contrato queda fijado en TestSoloRunsSeCorrigeAlReempujar.
+//
+// Que la fila vuelva a pasar por aquí lo garantiza reencolarRunParaCentral
+// (store.go), que retrocede la marca de agua cuando la sombra anota el riesgo.
 var tablasIncrementales = []tablaSync{
 	{
 		nombre: "runs",
@@ -68,7 +91,9 @@ var tablasIncrementales = []tablaSync{
 		             files_changed, lines_changed, ai_generated, llm_used, bypassed, ci_parity,
 		             degraded_layers, rulepack_ver, config_hash, elapsed_ms, environment)
 		      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		      ON CONFLICT (id) DO NOTHING`,
+		      ON CONFLICT (id) DO UPDATE SET
+		            risk_score = excluded.risk_score,
+		            llm_used   = excluded.llm_used`,
 	},
 	{
 		nombre: "findings",
@@ -256,7 +281,9 @@ func (s *Store) empujarRepos(ctx context.Context, central *sql.DB, rb func(strin
 // SELECT de cada tabla). El ciclo: leer lo que sigue a la marca, empujar el
 // lote en una transacción del central, y SOLO entonces avanzar la marca
 // local. Morir a media faena deja la marca atrás; el reintento re-empuja lo
-// mismo y el ON CONFLICT (id) DO NOTHING lo deja pasar sin duplicar.
+// mismo y el ON CONFLICT (id) lo deja pasar sin duplicar (DO NOTHING en las
+// tablas inmutables; en runs, DO UPDATE de los dos campos que la sombra escribe
+// tarde).
 func (s *Store) empujarIncremental(ctx context.Context, central *sql.DB, rb func(string) string, t tablaSync) (int, error) {
 	marca, err := s.leerMarca(t.nombre)
 	if err != nil {

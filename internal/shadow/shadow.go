@@ -138,6 +138,24 @@ type Runner struct {
 }
 
 // Run ejecuta la sombra completa para una petición ya respondida al hook.
+// anotarRiesgo escribe risk_score y llm_used en el run, y si no se pudo, LO
+// DICE.
+//
+// Los cinco sitios que llaman aquí hacían `_ = r.Store.UpdateRunLLM(...)`,
+// tirando incluso el nil. Y debajo de ese descarte había un fallo real: el run
+// lo persiste el proceso del hook, y si la sombra llegaba antes, el UPDATE no
+// tocaba ninguna fila —que en database/sql no es error— y el riesgo se perdía
+// sin dejar rastro. Ahora el store distingue ese caso con ErrRunNoExiste y aquí
+// se registra con el runID por delante: risk_score no se lee en ninguna
+// pantalla, su único consumidor es la telemetría central, así que un log es
+// literalmente la única forma de enterarse de que faltó.
+func (r *Runner) anotarRiesgo(runID string, risk int, llmUsed bool) {
+	if err := r.Store.UpdateRunLLM(runID, risk, llmUsed); err != nil {
+		log.Printf("sombra: no se pudo anotar el riesgo del run %s (risk=%d llm=%v): %v",
+			runID, risk, llmUsed, err)
+	}
+}
+
 func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, deterministic []finding.Finding) {
 	client := llm.New(cfg.LLM)
 	risk := RiskScore(cfg, req)
@@ -146,11 +164,11 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 	switch {
 	case client == nil:
 		log.Println("sombra: sin endpoint/API key — capa LLM apagada")
-		_ = r.Store.UpdateRunLLM(req.RunID, risk, false)
+		r.anotarRiesgo(req.RunID, risk, false)
 		return
 	case risk < cfg.Risk.Threshold:
 		log.Printf("sombra: riesgo %d < umbral %d — sin LLM", risk, cfg.Risk.Threshold)
-		_ = r.Store.UpdateRunLLM(req.RunID, risk, false)
+		r.anotarRiesgo(req.RunID, risk, false)
 		return
 	}
 
@@ -166,7 +184,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 			log.Printf("sombra: presupuesto del mes agotado (%.2f de %.2f USD) — capa LLM apagada hasta el día 1",
 				gastado, cfg.LLM.MonthlyBudgetUSD)
 			_ = r.Store.SaveLLMCall(store.LLMCall{RunID: req.RunID, Pillar: "todos", Status: "skipped"})
-			_ = r.Store.UpdateRunLLM(req.RunID, risk, false)
+			r.anotarRiesgo(req.RunID, risk, false)
 			return
 		}
 		if _, hayTarifas := cfg.LLM.CostoMicros(config.ConsumoTokens{PromptTokens: 1, CompletionTokens: 1}); !hayTarifas {
@@ -177,10 +195,10 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 	diffSHA := sha256hex(req.DiffUnified)
 	if _, hit := r.Store.DiffCacheGet(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model); hit {
 		log.Println("sombra: diff en caché — sin llamadas")
-		_ = r.Store.UpdateRunLLM(req.RunID, risk, false)
+		r.anotarRiesgo(req.RunID, risk, false)
 		return
 	}
-	_ = r.Store.UpdateRunLLM(req.RunID, risk, true)
+	r.anotarRiesgo(req.RunID, risk, true)
 
 	// Contexto común: diff REDACTADO (P5 — nada que parezca credencial sale
 	// a la red) y truncado por presupuesto, + lo ya encontrado.

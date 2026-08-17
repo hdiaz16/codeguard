@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -322,11 +323,97 @@ func (s *Store) SaveLLMFindings(runID string, fs []finding.Finding) error {
 	return tx.Commit()
 }
 
-// UpdateRunLLM anota el puntaje de riesgo y si se usó el modelo.
+// ErrRunNoExiste dice que el UPDATE no encontró la fila del run.
+//
+// Existe porque database/sql NO considera error un UPDATE que no toca ninguna
+// fila: err llega nil y las cero filas se pierden sin dejar rastro. Aquí ese
+// silencio costaba datos. La sombra corre en el proceso del DAEMON, pero quien
+// escribe la fila del run es el proceso del HOOK (persistRun, en cmd/codeguard)
+// justo después de recibir la respuesta. Cuando el hook tardaba —antivirus,
+// disco, contención sobre el mismo SQLite—, la sombra actualizaba un run que
+// todavía no existía: cero filas, err nil, y el risk_score y el llm_used se
+// perdían para siempre y en silencio.
+//
+// Que sea un error con nombre es lo que permite al llamador distinguir las tres
+// cosas que antes eran indistinguibles: se escribió, todavía no está, o la base
+// falló.
+var ErrRunNoExiste = errors.New("el run todavía no está en la base")
+
+// UpdateRunLLM anota el puntaje de riesgo y si se usó el modelo. Devuelve
+// ErrRunNoExiste envuelto si el UPDATE no tocó ninguna fila.
+//
+// De paso reencola el run para el central: risk_score y llm_used son los ÚNICOS
+// campos del run que se escriben después de crearlo, así que este método es el
+// único sitio donde puede saberse que una fila ya empujada cambió.
 func (s *Store) UpdateRunLLM(runID string, riskScore int, llmUsed bool) error {
-	_, err := s.db.Exec(`UPDATE runs SET risk_score = ?, llm_used = ? WHERE id = ?`,
+	res, err := s.db.Exec(`UPDATE runs SET risk_score = ?, llm_used = ? WHERE id = ?`,
 		riskScore, b2i(llmUsed), runID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		// Un driver que no sabe cuántas filas tocó no puede afirmar que tocó
+		// alguna: se dice, no se supone.
+		return fmt.Errorf("no se pudo saber si el run %s se actualizó: %w", runID, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("anotando riesgo del run %s: %w", runID, ErrRunNoExiste)
+	}
+	if err := s.reencolarRunParaCentral(runID); err != nil {
+		// El riesgo YA quedó anotado en local; lo que falló es el aviso al
+		// sync. El mensaje lo dice para que nadie lo lea como una pérdida.
+		return fmt.Errorf("riesgo anotado, pero el run %s no se pudo reencolar para el central: %w", runID, err)
+	}
+	return nil
+}
+
+// reencolarRunParaCentral retrocede la marca de agua del sync para que un run
+// que YA viajó vuelva a viajar.
+//
+// La marca de sync_marcas es un `id > ultima`: una fila que ya se empujó no se
+// vuelve a mirar nunca. Eso es correcto para todo lo que es inmutable —
+// findings, feedback y llm_calls se escriben una vez y no cambian—, pero el run
+// NO lo es: SaveRun lo inserta con risk_score y llm_used en su DEFAULT 0 y la
+// sombra los rellena después, hasta un minuto más tarde (plazoSombra). Como el
+// empuje oportunista del daemon dispara sin coordinarse con la sombra, si se
+// cuela en esa ventana el central se queda con risk_score=0.
+//
+// El ON CONFLICT (id) DO UPDATE del INSERT de runs (ver sync.go) sabe corregir
+// esa fila, pero sólo puede hacerlo si la fila vuelve a pasar por ahí — y por
+// la marca no volvía. Sin esto, aquel 0 era definitivo: risk_score no se lee en
+// ningún otro sitio del producto, el central es su único consumidor.
+//
+// Retroceder al id inmediatamente anterior re-empuja este run y los posteriores;
+// el ON CONFLICT los absorbe sin duplicar y son los de los últimos minutos, así
+// que el coste es de unas pocas filas. La condición `ultima >= ?` evita tocar la
+// marca cuando el run todavía no había viajado, que es el caso normal.
+//
+// Best-effort, como toda la telemetría: si un empuje está corriendo AHORA MISMO
+// y termina después de este retroceso, guardará su marca adelantada y se lo
+// llevará por delante. Eso deja las cosas exactamente como estaban antes de
+// existir esta función, nunca peor.
+func (s *Store) reencolarRunParaCentral(runID string) error {
+	var anterior sql.NullString // NULL si es el primer run: marca vacía = desde el principio
+	if err := s.db.QueryRow(`SELECT MAX(id) FROM runs WHERE id < ?`, runID).Scan(&anterior); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE sync_marcas SET ultima = ?, actualizada_at = ?
+		WHERE tabla = 'runs' AND ultima >= ?`, anterior.String, nowISO(), runID)
 	return err
+}
+
+// RunExiste dice si la fila del run ya está escrita. Es la señal con la que el
+// daemon espera al proceso del hook en vez de dormir una cantidad fija de
+// segundos (ver esperarRunPersistido). El error se devuelve en vez de doblarse
+// en un false: "no está" y "no se pudo preguntar" no son lo mismo.
+func (s *Store) RunExiste(runID string) (bool, error) {
+	var uno int
+	err := s.db.QueryRow(`SELECT 1 FROM runs WHERE id = ?`, runID).Scan(&uno)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // DiffCacheGet / DiffCachePut: caché de resultados LLM por diff (§9).
