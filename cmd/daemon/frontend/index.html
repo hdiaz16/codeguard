@@ -79,6 +79,7 @@
     border-radius: 22px;
     box-shadow: var(--float);
     overflow: hidden;
+    position: relative; /* ancla del ::before del semáforo de estado */
     transform-origin: 92% 105%;
     opacity: 0;
     /* solo transform+opacity: el compositor los anima sin lag (el blur
@@ -170,11 +171,38 @@
   header .verdict {
     font-size: var(--fs-hero); font-weight: 700; margin-top: 12px;
     letter-spacing: -.01em; line-height: 1.25;
+    display: flex; align-items: flex-start; gap: 10px;
   }
+  /* El glifo del veredicto: estado legible ANTES de leer una palabra. Dibujado
+     (no emoji, por la regla de siempre) y alineado con la primera línea del
+     texto aunque el veredicto envuelva a dos. El de "revisando" gira. */
+  header .verdict .vicon {
+    width: 26px; height: 26px; flex: none; margin-top: 2px;
+    fill: none; stroke: currentColor; stroke-width: 2;
+    stroke-linecap: round; stroke-linejoin: round;
+  }
+  .vicon.girando { animation: girar 1.1s linear infinite; }
+  @keyframes girar { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .vicon.girando { animation: none; } }
   header .meta { color: var(--ink-3); font-size: var(--fs-small); margin-top: 5px; }
   .verdict.block   { color: var(--block); }
   .verdict.pass    { color: var(--ok); }
   .verdict.working { color: var(--warn); }
+
+  /* LA TARJETA ENTERA anuncia el estado: una línea de acento en el borde
+     superior, con su brillo cayendo hacia adentro. Es el semáforo del panel —
+     se lee desde la otra punta del cuarto, antes que cualquier texto. Sombra y
+     luz, cero bordes: sigue siendo MONTAÑA. */
+  .shell::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: var(--estado, transparent);
+    box-shadow: 0 6px 24px -2px var(--estado, transparent);
+    z-index: 3; pointer-events: none;
+    transition: background .4s, box-shadow .4s;
+  }
+  .shell.v-pass    { --estado: var(--ok); }
+  .shell.v-block   { --estado: var(--block); }
+  .shell.v-working { --estado: var(--warn); }
 
   /* hilo de pensamiento: efímero */
   #thinking {
@@ -774,18 +802,41 @@
     return m ? `${m[3]}/${m[2]} ${m[4]}` : String(iso).slice(0, 16);
   }
 
+  // El icono del veredicto: un glifo dibujado (nunca emoji — cambian de forma
+  // según la fuente) que hace el estado legible ANTES de leer una palabra.
+  // Escudo con palomita (pasó), octágono con cruz (bloqueó), circulito
+  // girando (revisando). Va inline en el propio veredicto.
+  const ICONO = {
+    pass: `<svg class="vicon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/>
+      <path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></svg>`,
+    block: `<svg class="vicon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 3h8l5 5v8l-5 5H8l-5-5V8z"/>
+      <path d="M9 9l6 6M15 9l-6 6"/></svg>`,
+    working: `<svg class="vicon girando" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3a9 9 0 1 0 9 9"/></svg>`,
+  };
+
+  // ponVeredicto pinta el veredicto Y hace que la TARJETA ENTERA lo anuncie:
+  // la clase v-<estado> del shell enciende la línea de acento del borde
+  // superior con su brillo — el panel se lee desde la otra punta del cuarto.
+  function ponVeredicto(estado, texto) {
+    const v = $("verdict");
+    v.innerHTML = (ICONO[estado] || "") + `<span>${esc(texto)}</span>`;
+    v.className = "verdict " + estado;
+    $("card").classList.remove("v-pass", "v-block", "v-working");
+    $("card").classList.add("v-" + estado);
+  }
+
   function render(p) {
     ultimo = p;
     rootActual = p.repo_root || null;
-    const v = $("verdict");
     if (p.verdict === "block") {
-      v.textContent = `Bloqueado: ${p.blocking} problema${p.blocking === 1 ? "" : "s"} que el CI también rechazaría`;
-      v.className = "verdict block";
+      ponVeredicto("block", `Bloqueado: ${p.blocking} problema${p.blocking === 1 ? "" : "s"} que el CI también rechazaría`);
     } else {
-      v.textContent = p.advisory > 0
+      ponVeredicto("pass", p.advisory > 0
         ? `Commit realizado. ${p.advisory} sugerencia${p.advisory === 1 ? "" : "s"} opcional${p.advisory === 1 ? "" : "es"}.`
-        : "Commit realizado. Sin observaciones.";
-      v.className = "verdict pass";
+        : "Commit realizado. Sin observaciones.");
     }
     const extras = [];
     if (p.ai_generated) extras.push("✦ código generado por IA");
@@ -984,9 +1035,7 @@
 
   Events.On("working", (e) => {
     const d = Array.isArray(e.data) ? e.data[0] : e.data;
-    const v = $("verdict");
-    v.textContent = `Analizando ${d?.repo ?? ""} @ ${d?.branch ?? ""}…`;
-    v.className = "verdict working";
+    ponVeredicto("working", `Analizando ${d?.repo ?? ""} @ ${d?.branch ?? ""}…`);
   });
 
   const card = $("card");

@@ -1,35 +1,36 @@
 /* ══════════════════════════════════════════════════════════════════════════
-   El descenso por los climas.
+   El descenso por los climas — v2, con las técnicas de los que ganan premios.
 
-   El sitio entero tiene atmósfera en volumen detrás del contenido, y el
-   scroll la CONDUCE: arriba, la «niebla serena» del estado idle — motas
-   escasas cayendo despacio; al bajar por el recorrido se levanta la
-   «ventisca» — el viento gira a diagonal, las motas se multiplican y
-   aceleran—; y hacia el cierre amaina: «montaña dormida». No son nombres
-   inventados para el sitio: son los climas del propio orbe (ESTADOS en
-   datos.js). El scroll no decora — narra.
+   La v1 se veía «regular» y el porqué es de manual: todas las motas eran
+   puntos del mismo tamaño — confeti plano. Lo que separa un fondo premiado de
+   uno corriente (mirado en los ganadores de Awwwards de 2026) son cuatro
+   cosas, y las cuatro están aquí:
 
-   Dos capas, dos papeles:
-   - la NIEBLA: un fbm de pantalla completa con tope duro de 0.055 de alfa —
-     exactamente el nivel de las luces que body::before ya se permitía. Es el
-     lecho de profundidad; en quieto casi no está.
-   - las MOTAS: cientos de partículas por gl.POINTS, cada una con su
-     PROFUNDIDAD — las cercanas más grandes, más rápidas y con más parallax
-     que las lejanas, que es lo que hace que el campo se lea en 3D y no como
-     confeti pegado al cristal. Son puntos de 2-5 px: brillan individualmente
-     sin poder velar el texto jamás. Y sin estado: la posición de cada mota
-     es función pura de (semilla, t, scroll) — no hay simulación que integrar
-     ni deriva numérica que corregir.
+   1. PROFUNDIDAD POR ESCALA, no por cantidad: tres bandas de partículas —
+      polvo lejano (diminuto, lento, tenue), copos medios, y BOKEH cercano:
+      pocos discos GRANDES fuera de foco, de borde suavísimo, rápidos y con
+      mucho parallax. El bokeh es lo que convierte una pantalla en una LENTE:
+      de pronto hay un espacio delante y detrás del contenido.
+   2. GRADACIÓN DE COLOR ATADA A LA NARRATIVA: cada clima tiene su paleta y el
+      scroll las funde — serena en menta suave, la ventisca enfría a
+      azul-blanco, y la montaña dormida apaga a pizarra cálida y tenue.
+   3. ESTELAS EN EL VIENTO: con la ventisca arriba, los copos cercanos se
+      alargan en la dirección del viento (anisotropía en el fragment, sin
+      geometría extra) — velocidad que SE VE, no que se supone.
+   4. FÍSICA CON INERCIA: la ráfaga del scroll empuja y decae sola (ya estaba).
 
-   La lección cara de las dos versiones anteriores sigue mandando: la
-   atmósfera está SUBORDINADA al contenido, por construcción. Alfa
-   premultiplicado (inmune al driver que compone mal), topes duros en el
-   shader, y el contenido en z-1 sobre esta capa fija en z-0.
+   Y la regla que no cambia desde el incendio blanco: la atmósfera está
+   SUBORDINADA al contenido — topes duros de alfa en el shader, todo
+   premultiplicado (el quemado es imposible por driver), capa fija z-0 con el
+   contenido en z-1. El bokeh es grande pero casi transparente: presencia, no
+   velo.
 
-   Sin three.js: se midió que la escena equivalente pesaba 189 KB gzip; esto
-   son ~5 KB dentro del bundle. Si algo falla —sin WebGL, shader que no
-   compila, contexto perdido— se devuelve null y queda body::before: el mismo
-   cielo, en quieto.
+   Mando de afinación: añadir `?clima=0.7` a la URL fija ese punto del guion
+   (0 = serena, 0.5 = ventisca plena, 1 = dormida) sin scrollear — para tunear
+   los mandos y para capturas. En producción nadie lo pisa por accidente.
+
+   Sin three.js (189 KB gzip medidos por una escena equivalente); esto son
+   ~6 KB dentro del bundle. Si algo falla, null y queda body::before.
    ══════════════════════════════════════════════════════════════════════════ */
 
 const VERT_NIEBLA = `
@@ -48,7 +49,7 @@ uniform vec2  u_res;
 uniform float u_t;
 uniform float u_scroll;
 uniform float u_vel;
-uniform vec3  u_tintA;
+uniform vec3  u_tintA;   /* graduado por clima desde JS */
 uniform vec3  u_tintB;
 
 float hash(vec2 p) {
@@ -76,79 +77,93 @@ void main() {
   float f = fbm(p1) * 0.62 + fbm(p2) * 0.38;
 
   /* Tope duro calibrado contra el propio sitio: body::before nunca pasa de
-     0.055, y una niebla que hable otro idioma es una mancha, no atmósfera. */
+     0.055 — la niebla habla el idioma del sitio o es una mancha. */
   float niebla = smoothstep(0.50, 0.90, f) * 0.055;
   vec3 tinte = mix(u_tintB, u_tintA, fbm(uv * 0.8 + t * 0.006));
 
-  /* Premultiplicado: inmune al driver que compone el buffer como si ya
-     viniera multiplicado — el quemado blanco es imposible por construcción. */
-  gl_FragColor = vec4(tinte * niebla, niebla);
+  gl_FragColor = vec4(tinte * niebla, niebla); /* premultiplicado */
 }`;
 
-/* ── las motas: la ventisca que el scroll conduce ─────────────────────────
-   Cada mota nace de una SEMILLA y nada más. De ella salen, por hashes, su
-   punto de partida, su profundidad, su tamaño y su fase de parpadeo. La
-   posición es fract(origen + viento·t + parallax·scroll): función pura del
-   tiempo, y el wrap de fract() recicla cada mota por el borde contrario. */
+/* ── las motas: tres bandas de profundidad y estelas en el viento ────────── */
 const VERT_MOTAS = `
 precision mediump float;
 attribute float semilla;
 
 uniform float u_t;
 uniform float u_scroll;
+uniform float u_clima;    /* el guion ya evaluado: 0 calma .. 1 ventisca */
 uniform float u_vel;
 uniform float u_dpr;
+uniform float u_maxPunto; /* tope de gl_PointSize del driver */
 
 varying float vAlfa;
 varying float vMezcla;
+varying float vEstira;    /* 1 = disco; >1 = estela a lo largo del viento */
+varying vec2  vViento;    /* cos/sin de la dirección del viento, para girar el punto */
 
 float h(float s, float k) { return fract(sin(s * k) * 43758.5453123); }
 
 void main() {
-  float h1 = h(semilla, 12.9898);   /* x de origen */
-  float h2 = h(semilla, 78.2330);   /* y de origen */
-  float h3 = h(semilla, 43.7585);   /* profundidad */
-  float h4 = h(semilla, 91.2228);   /* densidad: quién existe en cada clima */
-  float h5 = h(semilla, 26.6519);   /* fase de parpadeo y tinte */
+  float h1 = h(semilla, 12.9898);
+  float h2 = h(semilla, 78.2330);
+  float h3 = h(semilla, 43.7585);   /* banda de profundidad */
+  float h4 = h(semilla, 91.2228);   /* densidad por clima */
+  float h5 = h(semilla, 26.6519);   /* parpadeo y tinte */
 
-  /* LA CURVA DEL DESCENSO — el guion de los climas sobre el scroll (0..1):
-     niebla serena arriba, la ventisca se levanta entre el 8% y el 38% del
-     recorrido, sopla plena por el centro, y amaina desde el 62% hasta la
-     montaña dormida del cierre. */
-  float vent = smoothstep(0.08, 0.38, u_scroll)
-             * (1.0 - 0.80 * smoothstep(0.62, 0.92, u_scroll));
+  float vent = u_clima;
 
-  /* En calma vive un tercio de las motas; la ventisca las despierta a todas.
-     Las que no tocan, este cuadro no existen. */
+  /* Las TRES BANDAS salen de h3: 55% polvo lejano, 39% copos medios, 6%
+     bokeh cercano. d es la profundidad continua dentro de su banda. */
+  float lejos = step(h3, 0.55);
+  float medio = step(0.55, h3) * step(h3, 0.94);
+  float cerca = step(0.94, h3);
+  float d = lejos * mix(0.20, 0.45, h3 / 0.55)
+          + medio * mix(0.45, 0.85, (h3 - 0.55) / 0.39)
+          + cerca * mix(0.85, 1.00, (h3 - 0.94) / 0.06);
+
+  /* En calma vive un tercio; la ventisca las despierta a todas. El bokeh
+     cercano vive SIEMPRE: es el que sostiene la sensación de lente. */
   float dens = 0.32 + 0.68 * vent;
-  float vive = step(h4, dens);
+  float vive = max(cerca, step(h4, dens));
 
-  float d = mix(0.35, 1.0, h3);     /* profundidad: lejos..cerca */
-
-  /* El viento: en calma cae mansa (x casi nada); con la ventisca el empuje
-     lateral crece un orden de magnitud y la caída se sesga a diagonal. Todo
-     escala con la profundidad: lo cercano corre más — eso es el 3D. */
+  /* El viento: manso y casi vertical en calma; con la ventisca el empuje
+     lateral crece un orden de magnitud. Escala con la profundidad. */
   vec2 viento = vec2(
-    -(0.010 + 0.140 * vent) * d,
-    -(0.016 + 0.075 * vent) * d
+    -(0.010 + 0.150 * vent) * d,
+    -(0.016 + 0.070 * vent) * d
   );
-  /* La ráfaga del scroll empuja en X al instante y decae fuera; el parallax
-     desliza el campo entero al bajar — el mundo pasando, más deprisa cuanto
-     más cerca. */
   vec2 p = fract(vec2(h1, h2)
                  + viento * u_t
                  + vec2(u_vel * 0.055 * d, u_scroll * 0.45 * d));
 
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 
-  /* Tamaño por profundidad y clima, en píxeles físicos (por eso el dpr). */
-  gl_PointSize = (1.3 + 2.9 * d + 1.1 * vent * d) * u_dpr;
+  /* Tamaño por banda, en píxeles físicos:
+     polvo 1.2-2.4 · copos 2.5-6 · BOKEH 18-44 (px CSS; ×dpr físicos).
+     El bokeh respira un poco con el clima. El tope del driver manda. */
+  float px = lejos * (1.2 + 1.2 * (d / 0.45))
+           + medio * (2.5 + 3.5 * ((d - 0.45) / 0.40))
+           + cerca * (18.0 + 26.0 * ((d - 0.85) / 0.15) + 6.0 * vent);
 
-  /* Brillo: las cercanas más vivas, con parpadeo lento propio; la ventisca
-     las aviva. El tope queda lejos del blanco: son chispas de un par de
-     píxeles, no luces. */
-  float parpadeo = 0.75 + 0.25 * sin(u_t * (0.6 + h5 * 1.4) + h5 * 6.2831);
-  vAlfa = vive * mix(0.14, 0.44, d) * parpadeo * (0.70 + 0.50 * vent);
+  /* LA ESTELA: con la ventisca, copos y bokeh se alargan en la dirección del
+     viento — hasta 3.5× los cercanos. El punto crece para contenerla y el
+     fragment la dibuja anisótropa. El polvo lejano no se estira: a esa
+     distancia el ojo no resuelve estelas, sólo brillo. */
+  vEstira = 1.0 + vent * (medio * 1.6 + cerca * 2.5) * (0.5 + 0.5 * d);
+  float lado = min(px * vEstira * u_dpr, u_maxPunto);
+  gl_PointSize = lado;
+
+  float ang = atan(viento.y, viento.x - u_vel * 0.03);
+  vViento = vec2(cos(ang), sin(ang));
+
+  /* Brillo por banda: el bokeh es GRANDE, así que va casi transparente —
+     presencia sin velo (0.05-0.09). Los copos brillan más con la ventisca;
+     el polvo apenas existe y parpadea lento. */
+  float parpadeo = 0.72 + 0.28 * sin(u_t * (0.5 + h5 * 1.3) + h5 * 6.2831);
+  float alfaBanda = lejos * 0.16
+                  + medio * (0.26 + 0.22 * vent)
+                  + cerca * (0.055 + 0.030 * vent);
+  vAlfa = vive * alfaBanda * parpadeo;
   vMezcla = h5;
 }`;
 
@@ -158,13 +173,23 @@ uniform vec3 u_tintA;
 uniform vec3 u_tintB;
 varying float vAlfa;
 varying float vMezcla;
+varying float vEstira;
+varying vec2  vViento;
 
 void main() {
-  /* Un disco suave dentro del punto: sin esto cada mota es un cuadrado. */
-  float r = length(gl_PointCoord - 0.5);
-  float a = smoothstep(0.5, 0.14, r) * vAlfa;
+  /* El punto se gira a la dirección del viento y se COMPRIME el eje del
+     viento en el espacio de la distancia: eso alarga el disco en pantalla —
+     la estela — sin un solo vértice extra. */
+  vec2 q = gl_PointCoord - 0.5;
+  vec2 r = vec2(q.x * vViento.x + q.y * vViento.y,
+               -q.x * vViento.y + q.y * vViento.x);
+  r.x /= vEstira;
+  float dist = length(r) * (1.0 + (vEstira - 1.0) * 0.25);
+
+  /* Borde suavísimo: el bokeh vive o muere por este falloff. */
+  float a = smoothstep(0.5, 0.10, dist) * vAlfa;
   vec3 tinte = mix(u_tintB, u_tintA, vMezcla);
-  gl_FragColor = vec4(tinte * a, a); /* premultiplicado, como la niebla */
+  gl_FragColor = vec4(tinte * a, a); /* premultiplicado */
 }`;
 
 function compilar(gl, tipo, fuente) {
@@ -199,12 +224,36 @@ function hexARgb(hex) {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+/* mezcla lineal de dos colores rgb ya normalizados */
+function lerp3(a, b, t) {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+}
+
 const MOTAS = 1400;
 
+/* LA GRADACIÓN: cada clima tiene su paleta y el scroll las funde.
+   serena  — la menta y el azul de body::before, suaves;
+   ventisca— enfría y aclara: azul-blanco de nieve al viento;
+   dormida — apaga a pizarra cálida: la montaña respirando bajito. */
+const PALETA = {
+  serenaA: hexARgb("#b8f7e4"), serenaB: hexARgb("#9fd0ea"),
+  ventA:   hexARgb("#e8f2fb"), ventB:   hexARgb("#a9c6e8"),
+  duermeA: hexARgb("#9aa3b2"), duermeB: hexARgb("#7d8696"),
+};
+
+/* El guion del descenso, compartido por color y partículas: la ventisca se
+   levanta del 8% al 38%, sopla plena por el centro, amaina del 62% al 92%. */
+function guion(scroll) {
+  const sube = Math.min(1, Math.max(0, (scroll - 0.08) / 0.30));
+  const baja = Math.min(1, Math.max(0, (scroll - 0.62) / 0.30));
+  const s = sube * sube * (3 - 2 * sube);
+  const b = baja * baja * (3 - 2 * baja);
+  return { vent: s * (1 - 0.8 * b), duerme: b };
+}
+
 /**
- * Monta la atmósfera detrás del sitio entero: la niebla y la ventisca que el
- * scroll conduce. Devuelve el lienzo, o `null` si el navegador no puede — y
- * entonces queda body::before, el mismo cielo en quieto.
+ * Monta la atmósfera detrás del sitio entero. Devuelve el lienzo, o `null` si
+ * el navegador no puede — y entonces queda body::before, el cielo en quieto.
  */
 export function montarAmbiente({ reducido = false } = {}) {
   let gl = null;
@@ -220,14 +269,13 @@ export function montarAmbiente({ reducido = false } = {}) {
   const pMotas = programa(gl, VERT_MOTAS, FRAG_MOTAS);
   if (!pNiebla || !pMotas) return null;
 
-  /* geometría: el triángulo de la niebla y las semillas de las motas */
   const bufQuad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, bufQuad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   const locPos = gl.getAttribLocation(pNiebla, "pos");
 
   const semillas = new Float32Array(MOTAS);
-  for (let i = 0; i < MOTAS; i++) semillas[i] = (i + 1) * 0.61803398875; /* áurea: reparte sin patrones */
+  for (let i = 0; i < MOTAS; i++) semillas[i] = (i + 1) * 0.61803398875;
   const bufSemillas = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, bufSemillas);
   gl.bufferData(gl.ARRAY_BUFFER, semillas, gl.STATIC_DRAW);
@@ -244,24 +292,24 @@ export function montarAmbiente({ reducido = false } = {}) {
   const uM = {
     t: gl.getUniformLocation(pMotas, "u_t"),
     scroll: gl.getUniformLocation(pMotas, "u_scroll"),
+    clima: gl.getUniformLocation(pMotas, "u_clima"),
     vel: gl.getUniformLocation(pMotas, "u_vel"),
     dpr: gl.getUniformLocation(pMotas, "u_dpr"),
+    maxPunto: gl.getUniformLocation(pMotas, "u_maxPunto"),
     tintA: gl.getUniformLocation(pMotas, "u_tintA"),
     tintB: gl.getUniformLocation(pMotas, "u_tintB"),
   };
 
-  const tintA = hexARgb("#b8f7e4");
-  const tintB = hexARgb("#9fd0ea");
   gl.clearColor(0, 0, 0, 0);
-  /* Las dos pasadas escriben premultiplicado; su mezcla es
-     (ONE, ONE_MINUS_SRC_ALPHA): las motas se posan SOBRE la niebla sin
-     sumarse hacia el blanco. */
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-  /* Las motas son puntos de un par de píxeles: a media resolución serían
-     borrones. El lienzo va a resolución física con tope de DPR 1.5 — la
-     niebla paga más píxeles, pero son tres octavas de fbm: barato. */
+  /* El bokeh pide puntos de hasta ~66 px físicos; hay GPUs (móviles sobre
+     todo) que capan gl_PointSize en 64. Se pregunta el tope real y el shader
+     lo respeta: en una GPU capada el bokeh sale algo menor, nunca roto. */
+  const rango = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
+  const maxPunto = Math.min(rango ? rango[1] : 64, 160);
+
   const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
   function medir() {
     const w = Math.max(1, Math.round(window.innerWidth * dpr));
@@ -278,6 +326,15 @@ export function montarAmbiente({ reducido = false } = {}) {
   lienzo.setAttribute("aria-hidden", "true");
   document.body.insertBefore(lienzo, document.body.firstChild);
 
+  /* ?clima=0.6 fija el punto del guion para tunear y capturar. */
+  let climaFijo = null;
+  try {
+    const q = new URLSearchParams(location.search).get("clima");
+    if (q !== null && q !== "" && !isNaN(+q)) climaFijo = Math.min(1, Math.max(0, +q));
+  } catch {
+    climaFijo = null; // sin URLSearchParams no hay mando de afinación — y no pasa nada
+  }
+
   const inicio = performance.now();
   let scrollPrevio = window.scrollY;
   let rafaga = 0;
@@ -287,6 +344,14 @@ export function montarAmbiente({ reducido = false } = {}) {
 
   function pintar(t, scroll, vel) {
     medir();
+    const g = guion(scroll);
+
+    /* la paleta del momento: serena -> ventisca -> dormida */
+    let tA = lerp3(PALETA.serenaA, PALETA.ventA, g.vent);
+    let tB = lerp3(PALETA.serenaB, PALETA.ventB, g.vent);
+    tA = lerp3(tA, PALETA.duermeA, g.duerme);
+    tB = lerp3(tB, PALETA.duermeB, g.duerme);
+
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.useProgram(pNiebla);
@@ -297,8 +362,8 @@ export function montarAmbiente({ reducido = false } = {}) {
     gl.uniform1f(uN.t, t);
     gl.uniform1f(uN.scroll, scroll);
     gl.uniform1f(uN.vel, vel);
-    gl.uniform3fv(uN.tintA, tintA);
-    gl.uniform3fv(uN.tintB, tintB);
+    gl.uniform3fv(uN.tintA, tA);
+    gl.uniform3fv(uN.tintB, tB);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     gl.useProgram(pMotas);
@@ -307,10 +372,12 @@ export function montarAmbiente({ reducido = false } = {}) {
     gl.vertexAttribPointer(locSemilla, 1, gl.FLOAT, false, 0, 0);
     gl.uniform1f(uM.t, t);
     gl.uniform1f(uM.scroll, scroll);
+    gl.uniform1f(uM.clima, g.vent);
     gl.uniform1f(uM.vel, vel);
     gl.uniform1f(uM.dpr, dpr);
-    gl.uniform3fv(uM.tintA, tintA);
-    gl.uniform3fv(uM.tintB, tintB);
+    gl.uniform1f(uM.maxPunto, maxPunto);
+    gl.uniform3fv(uM.tintA, tA);
+    gl.uniform3fv(uM.tintB, tB);
     gl.drawArrays(gl.POINTS, 0, MOTAS);
   }
 
@@ -323,7 +390,8 @@ export function montarAmbiente({ reducido = false } = {}) {
     rafaga += ((y - scrollPrevio) / window.innerHeight - rafaga) * 0.10;
     scrollPrevio = y;
 
-    pintar((ahora - inicio) / 1000, y / alto, Math.max(-1.5, Math.min(1.5, rafaga)));
+    const scroll = climaFijo != null ? climaFijo : y / alto;
+    pintar((ahora - inicio) / 1000, scroll, Math.max(-1.5, Math.min(1.5, rafaga)));
     idFrame = requestAnimationFrame(cuadro);
   }
 
@@ -334,8 +402,7 @@ export function montarAmbiente({ reducido = false } = {}) {
   });
 
   if (reducido) {
-    /* Un solo cuadro quieto del clima sereno: el paisaje, sin la película. */
-    pintar(0, 0, 0);
+    pintar(0, climaFijo != null ? climaFijo : 0, 0);
     return lienzo;
   }
 
