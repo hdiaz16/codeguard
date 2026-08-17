@@ -10,7 +10,7 @@
 ; =============================================================================
 
 #define MyAppName "CodeGuard"
-#define MyAppVersion "1.12.0"
+#define MyAppVersion "1.13.0"
 ; reglas.iss lo genera build-dist.ps1 contando el rulepack: el numero que se le
 ; promete al usuario no se escribe a mano (llego a decir 112 con 119 instaladas)
 #include "reglas.iss"
