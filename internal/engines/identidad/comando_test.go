@@ -29,51 +29,67 @@ import (
 // que ocurre de verdad.
 func TestNingunHijoDeIdentidadSeArmaAMano(t *testing.T) {
 	fset := token.NewFileSet()
-	paquetes, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	// ReadDir + ParseFile y no parser.ParseDir, que quedó deprecado en Go 1.25
+	// y lo delata staticcheck en cada commit que toque este paquete. Mismo
+	// cambio y misma red que en los guardas hermanos (hijosdeldaemon_test.go,
+	// entornohijos_test.go): fallar si no se parseó ni un archivo, para que un
+	// filtro mal escrito no deje el guarda en verde perpetuo.
+	entradas, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var archivos []*ast.File
+	for _, en := range entradas {
+		nombre := en.Name()
+		if en.IsDir() || !strings.HasSuffix(nombre, ".go") || strings.HasSuffix(nombre, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, nombre, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		archivos = append(archivos, f)
+	}
+	if len(archivos) == 0 {
+		t.Fatal("no se parseó ningún archivo: el guarda no estaría vigilando nada")
+	}
 	visto := false
-	for _, pkg := range paquetes {
-		for _, archivo := range pkg.Files {
-			ast.Inspect(archivo, func(n ast.Node) bool {
-				fn, ok := n.(*ast.FuncDecl)
+	for _, archivo := range archivos {
+		ast.Inspect(archivo, func(n ast.Node) bool {
+			fn, ok := n.(*ast.FuncDecl)
+			if !ok {
+				return true
+			}
+			if fn.Name.Name == "comandoIdentidad" {
+				visto = true
+				return false
+			}
+			ast.Inspect(fn.Body, func(m ast.Node) bool {
+				llamada, ok := m.(*ast.CallExpr)
 				if !ok {
 					return true
 				}
-				if fn.Name.Name == "comandoIdentidad" {
-					visto = true
-					return false
-				}
-				ast.Inspect(fn.Body, func(m ast.Node) bool {
-					llamada, ok := m.(*ast.CallExpr)
-					if !ok {
-						return true
-					}
-					sel, ok := llamada.Fun.(*ast.SelectorExpr)
-					if !ok {
-						return true
-					}
-					id, ok := sel.X.(*ast.Ident)
-					if !ok || id.Name != "exec" {
-						return true
-					}
-					// LookPath no lanza nada: sólo mira el PATH. Prohibirlo aquí
-					// obligaría a rodear el guardián por una razón falsa.
-					if sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext" {
-						return true
-					}
-					t.Errorf("%s: %s arma un hijo a mano en vez de usar comandoIdentidad: "+
-						"cuando el daemon importe este paquete, Windows le abrirá al hijo "+
-						"una ventana negra y le pasará el entorno entero, con la clave del "+
-						"modelo dentro", fset.Position(llamada.Pos()), fn.Name.Name)
+				sel, ok := llamada.Fun.(*ast.SelectorExpr)
+				if !ok {
 					return true
-				})
-				return false
+				}
+				id, ok := sel.X.(*ast.Ident)
+				if !ok || id.Name != "exec" {
+					return true
+				}
+				// LookPath no lanza nada: sólo mira el PATH. Prohibirlo aquí
+				// obligaría a rodear el guardián por una razón falsa.
+				if sel.Sel.Name != "Command" && sel.Sel.Name != "CommandContext" {
+					return true
+				}
+				t.Errorf("%s: %s arma un hijo a mano en vez de usar comandoIdentidad: "+
+					"cuando el daemon importe este paquete, Windows le abrirá al hijo "+
+					"una ventana negra y le pasará el entorno entero, con la clave del "+
+					"modelo dentro", fset.Position(llamada.Pos()), fn.Name.Name)
+				return true
 			})
-		}
+			return false
+		})
 	}
 	if !visto {
 		t.Fatal("no se encontró comandoIdentidad: o se renombró el constructor o esta prueba " +
