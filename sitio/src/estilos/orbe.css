@@ -59,6 +59,11 @@
   filter: url(#goo-orbe);
 }
 
+/* El lienzo del orbe en volumen (orbe3d.js). Mismo tamaño que el cuerpo del
+   orbe plano, sin el filtro gooey: el volumen ya lo hace el propio shader,
+   no un filtro SVG. */
+.orbe-3d-lienzo { display: block; width: 100%; height: 100%; }
+
 .orbe-capa {
   position: absolute;
   mix-blend-mode: screen;

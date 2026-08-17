@@ -97,6 +97,46 @@ function vigilar(orbe) {
 }
 
 /**
+ * La burbuja del susurro: un texto que aparece un momento y se desvanece, o
+ * se queda fijo con `permanente`. Vive como pieza aparte —y no atada a
+ * `crearOrbe`— porque el orbe 3D (orbe3d.js) también la necesita: es la
+ * MISMA cápsula, calcada del escritorio, y no depende de cómo se dibuje el
+ * cuerpo del orbe por debajo. Sus estilos (.orbe-burbuja en orbe.css) sólo
+ * piden las variables --plasma-hot-a y --plasma-glow del elemento que la
+ * contenga; no piden que ese elemento sea el div del orbe plano.
+ *
+ * @param {boolean|"lateral"} lateral  cápsula por el costado en vez de por debajo
+ */
+export function crearBurbuja(lateral) {
+  const capsula = document.createElement("div");
+  capsula.className = "orbe-burbuja" + (lateral === "lateral" ? " lateral" : "");
+  capsula.setAttribute("role", "status");
+  capsula.setAttribute("aria-live", "polite");
+  const punto = document.createElement("span");
+  punto.className = "punto";
+  const texto = document.createElement("span");
+  texto.className = "texto";
+  capsula.append(punto, texto);
+
+  let temporizador = null;
+  return {
+    el: capsula,
+    susurrar(mensaje, { permanente = false, ms = 3400 } = {}) {
+      clearTimeout(temporizador);
+      texto.textContent = mensaje;
+      capsula.classList.add("visible");
+      if (!permanente) {
+        temporizador = setTimeout(() => capsula.classList.remove("visible"), ms);
+      }
+    },
+    callar() {
+      clearTimeout(temporizador);
+      capsula.classList.remove("visible");
+    },
+  };
+}
+
+/**
  * Crea un orbe.
  *
  * @param {object} opciones
@@ -133,22 +173,12 @@ export function crearOrbe({ tam = 84, estado = "idle", aura = true, burbuja = fa
   cuerpo.append(nucleo, destello);
   raiz.appendChild(cuerpo);
 
-  let capsula = null;
-  let texto = null;
+  let burbujaObj = null;
   if (burbuja) {
-    capsula = document.createElement("div");
-    capsula.className = "orbe-burbuja" + (burbuja === "lateral" ? " lateral" : "");
-    capsula.setAttribute("role", "status");
-    capsula.setAttribute("aria-live", "polite");
-    const punto = document.createElement("span");
-    punto.className = "punto";
-    texto = document.createElement("span");
-    texto.className = "texto";
-    capsula.append(punto, texto);
-    raiz.appendChild(capsula);
+    burbujaObj = crearBurbuja(burbuja);
+    raiz.appendChild(burbujaObj.el);
   }
 
-  let temporizador = null;
   vigilar(raiz);
 
   return {
@@ -170,20 +200,12 @@ export function crearOrbe({ tam = 84, estado = "idle", aura = true, burbuja = fa
      * que la caducidad del susurro efímero, y quedarse mudo a media revisión
      * es justo lo que el susurro viene a evitar.
      */
-    susurrar(mensaje, { permanente = false, ms = 3400 } = {}) {
-      if (!capsula) return;
-      clearTimeout(temporizador);
-      texto.textContent = mensaje;
-      capsula.classList.add("visible");
-      if (!permanente) {
-        temporizador = setTimeout(() => capsula.classList.remove("visible"), ms);
-      }
+    susurrar(mensaje, opciones) {
+      burbujaObj?.susurrar(mensaje, opciones);
     },
 
     callar() {
-      if (!capsula) return;
-      clearTimeout(temporizador);
-      capsula.classList.remove("visible");
+      burbujaObj?.callar();
     },
   };
 }

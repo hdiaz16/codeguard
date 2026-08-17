@@ -26,6 +26,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
 
 import { crearOrbe } from "./orbe.js";
+import { montarOrbe3D } from "./orbe3d.js";
 import { montarRecorrido } from "./recorrido.js";
 import { montarDemo } from "./demo.js";
 import { montarMontanas } from "./montanas.js";
@@ -119,13 +120,14 @@ function montarPortada() {
   const ancho = window.innerWidth;
   const tam = ancho < 520 ? 138 : ancho < 900 ? 162 : 176;
 
-  const orbe = crearOrbe({
-    tam,
-    estado: "idle",
-    aura: true,
-    burbuja: "lateral",
-    etiqueta: "El orbe de CodeGuard, de guardia",
-  });
+  // El héroe se intenta primero EN VOLUMEN — WebGL de mano, sin librería
+  // (ver orbe3d.js). Es el mismo orbe, con la misma identidad idle, sólo que
+  // respira y gira en 3D en vez de sobre un plano. Si el navegador no puede
+  // —WebGL apagado, un shader que no compiló en ese driver— la función
+  // devuelve null y se cae al orbe plano de siempre: nunca un hueco vacío.
+  const etiqueta = "El orbe de CodeGuard, de guardia";
+  const orbe = (!reducido && montarOrbe3D({ tam, etiqueta })) ||
+    crearOrbe({ tam, estado: "idle", aura: true, burbuja: "lateral", etiqueta });
   caja.appendChild(orbe.el);
 
   if (reducido) return;
@@ -184,31 +186,39 @@ function pintarCapasDelNodo() {
 }
 
 function pintarMotores() {
-  const rejilla = document.getElementById("motores-rejilla");
+  const acordeon = document.getElementById("motores-acordeon");
   const filtro = document.getElementById("motores-filtro");
-  if (!rejilla) return;
+  if (!acordeon) return;
 
   const todos = [SECRETOS, ...MOTORES];
 
-  const tarjeta = (m) => `
-    <article class="motor${m.destacado ? " destacado" : ""}" data-pilar="${esc(m.pilar)}">
-      <div class="motor-cabeza">
+  // Diecisiete tarjetas abiertas a la vez eran una pared. Esto es la misma
+  // información —nada se quita, nada se resume de más— en un acordeón:
+  // colapsada, la fila pesa una línea; abierta, trae exactamente lo que
+  // traía la tarjeta. <details> nativo porque el teclado y el lector de
+  // pantalla ya saben qué hacer con él sin una sola línea de ARIA a mano.
+  const fila = (m) => `
+    <details class="motor" data-pilar="${esc(m.pilar)}"${m.destacado ? " open" : ""}>
+      <summary class="motor-resumen">
         <span class="motor-nombre">${esc(m.nombre)}</span>
+        <span class="motor-lenguajes">${m.lenguajes.map((l) => `<span>${esc(l)}</span>`).join("")}</span>
         <span class="pilar ${esc(m.pilar)}">${esc(m.pilar)}</span>
+        <svg class="motor-flecha" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
+      </summary>
+      <div class="motor-detalle">
+        <dl>
+          <div><dt>Qué mira</dt><dd>${esc(m.mira)}</dd></div>
+          <div><dt>Cuándo bloquea</dt><dd class="bloqueo-si">${esc(m.bloquea)}</dd></div>
+        </dl>
+        <p class="motor-porque">${esc(m.porque)}</p>
+        <p class="motor-pie">
+          <span class="origen">${esc(m.origen)}</span>
+          <span>caché: ${esc(m.cache)}</span>
+        </p>
       </div>
-      <div class="motor-lenguajes">${m.lenguajes.map((l) => `<span>${esc(l)}</span>`).join("")}</div>
-      <dl>
-        <div><dt>Qué mira</dt><dd>${esc(m.mira)}</dd></div>
-        <div><dt>Cuándo bloquea</dt><dd class="bloqueo-si">${esc(m.bloquea)}</dd></div>
-      </dl>
-      <p class="motor-porque">${esc(m.porque)}</p>
-      <p class="motor-pie">
-        <span class="origen">${esc(m.origen)}</span>
-        <span>caché: ${esc(m.cache)}</span>
-      </p>
-    </article>`;
+    </details>`;
 
-  rejilla.innerHTML = todos.map(tarjeta).join("");
+  acordeon.innerHTML = todos.map(fila).join("");
 
   // El filtro por pilar. Son tres categorías reales del producto, no una
   // taxonomía inventada para el sitio.
@@ -223,17 +233,20 @@ function pintarMotores() {
     const elegido = boton.dataset.pilar;
     filtro.querySelectorAll("button").forEach((b) =>
       b.setAttribute("aria-pressed", String(b.dataset.pilar === elegido)));
-    rejilla.querySelectorAll(".motor").forEach((t) => {
+    acordeon.querySelectorAll(".motor").forEach((t) => {
       t.hidden = elegido !== "todos" && t.dataset.pilar !== elegido;
     });
     ScrollTrigger.refresh();
   });
 
   if (!reducido) {
-    gsap.from(rejilla.querySelectorAll(".motor"), {
-      y: 22, opacity: 0, duration: 0.55, stagger: 0.035, ease: "power2.out",
-      scrollTrigger: { trigger: rejilla, start: "top 84%", once: true },
+    gsap.from(acordeon.querySelectorAll(".motor"), {
+      y: 16, opacity: 0, duration: 0.45, stagger: 0.025, ease: "power2.out",
+      scrollTrigger: { trigger: acordeon, start: "top 84%", once: true },
     });
+    // Un <details> que cambia de alto en pleno scrub de ScrollTrigger deja el
+    // resto de la página temblando: hay que decirle que vuelva a medir.
+    acordeon.addEventListener("toggle", () => ScrollTrigger.refresh(), true);
   }
 }
 
