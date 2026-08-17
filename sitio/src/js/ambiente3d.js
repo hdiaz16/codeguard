@@ -94,7 +94,14 @@ void main() {
   float mota = smoothstep(0.965, 0.995, m) * (0.10 + min(abs(u_vel) * 4.0, 0.20));
 
   float alfa = min(niebla + mota, 0.30);
-  gl_FragColor = vec4(tinte, alfa);
+  /* Salida PREMULTIPLICADA (color por alfa) y no alfa recto: hay drivers que
+     ignoran el premultipliedAlpha=false que se pide al crear el contexto y
+     componen el buffer como si ya viniera multiplicado — y entonces un color
+     claro con alfa bajo se pinta A TODO BRILLO y la niebla se convierte en un
+     incendio blanco sobre el titular. Con la premultiplicacion hecha aqui,
+     ambas interpretaciones componen lo mismo: el quemado es imposible por
+     construccion, no por suerte de driver. */
+  gl_FragColor = vec4(tinte * alfa, alfa);
 }`;
 
 function compilar(gl, tipo, fuente) {
@@ -127,7 +134,7 @@ export function montarAmbiente({ reducido = false } = {}) {
   let gl = null;
   const lienzo = document.createElement("canvas");
   try {
-    gl = lienzo.getContext("webgl", { alpha: true, antialias: false, premultipliedAlpha: false });
+    gl = lienzo.getContext("webgl", { alpha: true, antialias: false, premultipliedAlpha: true });
   } catch {
     gl = null;
   }
