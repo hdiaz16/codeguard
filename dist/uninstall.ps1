@@ -144,3 +144,8 @@ foreach ($r in $Repos) {
 
 Write-Host ""
 Write-Host "CodeGuard desinstalado." -ForegroundColor Green
+# Explicito: sin esto, el script devolvia el exit code del ULTIMO comando
+# nativo que corrio — p.ej. el daemon-stop fallido contra un daemon viejo — y
+# cualquier automatizacion que llame al desinstalador leia "fallo" sobre una
+# desinstalacion que termino entera y bien (medido: exit 2 con salida perfecta).
+exit 0
