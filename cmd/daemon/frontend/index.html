@@ -760,18 +760,18 @@
   // cual sea N, así el panel no gana ancho por tener más o menos historial.
   function sparklineHTML(corridas) {
     const runs = corridas.slice().reverse();
-    const max = Math.max(1, ...runs.map(r => r.bloqueantes || 0));
+    const max = Math.max(1, ...runs.map(run => run.bloqueantes || 0));
     const W = 10, GAP = 3, H = 32, BASE = 3;
     const w = runs.length * (W + GAP) - GAP;
-    const bars = runs.map((r, i) => {
+    const bars = runs.map((run, i) => {
       const x = i * (W + GAP);
-      const skip = r.verdict === "skipped";
-      const n = r.bloqueantes || 0;
+      const skip = run.verdict === "skipped";
+      const n = run.bloqueantes || 0;
       const alto = skip ? BASE : Math.max(BASE, Math.round((H - BASE) * n / max));
       const clase = skip ? "sk" : (n > 0 ? "blk" : "ok");
       const detalle = skip
-        ? `${cuandoCorto(r.cuando)} · omitido`
-        : `${cuandoCorto(r.cuando)} · ${n} bloqueante${n === 1 ? "" : "s"}`;
+        ? `${cuandoCorto(run.cuando)} · omitido`
+        : `${cuandoCorto(run.cuando)} · ${n} bloqueante${n === 1 ? "" : "s"}`;
       return `<rect class="${clase}" x="${x}" y="${H - alto}" width="${W}" height="${alto}" rx="1.5">` +
              `<title>${esc(detalle)}</title></rect>`;
     }).join("");
