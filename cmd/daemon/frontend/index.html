@@ -189,21 +189,10 @@
   .verdict.pass    { color: var(--ok); }
   .verdict.working { color: var(--warn); }
 
-  /* LA TARJETA ENTERA anuncia el estado — pero sin dibujar nada: un brillo
-     INTERIOR que baja desde el borde superior, en el color semántico, muy
-     desenfocado. La primera versión era una línea de 3px y Héctor la vio como
-     lo que era: un borde pegado, ajeno al sistema. MONTAÑA separa con luz, no
-     con trazos — esto es luz. */
-  .shell::before {
-    content: ""; position: absolute; inset: 0;
-    box-shadow: inset 0 34px 72px -52px var(--estado, transparent);
-    border-radius: 22px;
-    z-index: 3; pointer-events: none;
-    transition: box-shadow .5s;
-  }
-  .shell.v-pass    { --estado: var(--ok); }
-  .shell.v-block   { --estado: var(--block); }
-  .shell.v-working { --estado: var(--warn); }
+  /* El estado NO tiñe la tarjeta. Se intentó dos veces —una línea de acento
+     y luego un brillo interior— y Héctor rechazó las dos, con razón: la
+     tarjeta es el escenario, no el actor. El estado lo dicen el glifo y el
+     color del veredicto, que para eso son el héroe. */
 
   /* hilo de pensamiento: efímero */
   #thinking {
@@ -818,15 +807,10 @@
       <path d="M12 3a9 9 0 1 0 9 9"/></svg>`,
   };
 
-  // ponVeredicto pinta el veredicto Y hace que la TARJETA ENTERA lo anuncie:
-  // la clase v-<estado> del shell enciende la línea de acento del borde
-  // superior con su brillo — el panel se lee desde la otra punta del cuarto.
   function ponVeredicto(estado, texto) {
     const v = $("verdict");
     v.innerHTML = (ICONO[estado] || "") + `<span>${esc(texto)}</span>`;
     v.className = "verdict " + estado;
-    $("card").classList.remove("v-pass", "v-block", "v-working");
-    $("card").classList.add("v-" + estado);
   }
 
   function render(p) {
