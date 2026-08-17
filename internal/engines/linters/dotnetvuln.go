@@ -52,11 +52,18 @@ type DotnetVuln struct {
 
 func (DotnetVuln) Name() string { return "dotnet-vuln" }
 
-func (e DotnetVuln) Applies(in engines.Input) bool { return len(e.proyectos(in)) > 0 }
+// Applies responde "sí" también cuando el listado de proyectos falló: la
+// interfaz no deja salir el error por aquí, y responder "no aplica" lo
+// convertiría en una capa que no revisa nada sin dejar rastro. Se difiere a
+// Run, que sí puede degradar el motor con el motivo.
+func (e DotnetVuln) Applies(in engines.Input) bool {
+	ps, err := e.proyectos(in)
+	return err != nil || len(ps) > 0
+}
 
 // proyectos devuelve los .csproj cuyas dependencias hay que revisar por este
 // cambio (rutas relativas a la raíz, separador /), ordenados.
-func (e DotnetVuln) proyectos(in engines.Input) []string {
+func (e DotnetVuln) proyectos(in engines.Input) ([]string, error) {
 	set := map[string]bool{}
 	for _, f := range in.Files {
 		if f.Status == "D" || dnbGenerado(f.Path) {
@@ -84,7 +91,11 @@ func (e DotnetVuln) proyectos(in engines.Input) []string {
 			// propiedades agotaría el plazo y degradaría la capa — que es otra
 			// forma de no mirar. Sí entra en la clave de caché, para que el
 			// resultado no sobreviva a un cambio que sí afecte.
-			for _, p := range dnvCsprojBajo(in.RepoRoot, path.Dir(f.Path)) {
+			bajo, err := dnvCsprojBajo(in.RepoRoot, path.Dir(f.Path))
+			if err != nil {
+				return nil, err
+			}
+			for _, p := range bajo {
 				set[p] = true
 			}
 		case !e.SoloManifiestos && strings.HasSuffix(base, ".cs"):
@@ -98,15 +109,18 @@ func (e DotnetVuln) proyectos(in engines.Input) []string {
 		out = append(out, p)
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // dnvCsprojBajo lista los .csproj RASTREADOS que cuelgan del directorio dado
 // ("." = todo el repo).
-func dnvCsprojBajo(repoRoot, dir string) []string {
+func dnvCsprojBajo(repoRoot, dir string) ([]string, error) {
 	rutas, err := gitdiff.Rastreados(repoRoot)
 	if err != nil {
-		return nil
+		// El nil silencioso aquí era fail-open: un fallo de git dejaba la capa
+		// "limpia" sin mirar un solo proyecto, indistinguible de un repo sin
+		// .csproj. "0 objetivos" y "no pude listar" tienen que separarse.
+		return nil, err
 	}
 	prefijo := ""
 	if dir != "." && dir != "" {
@@ -122,7 +136,7 @@ func dnvCsprojBajo(repoRoot, dir string) []string {
 		}
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // ── la salida --format json ──────────────────────────────────────────────────
@@ -174,7 +188,10 @@ type dnvAviso struct {
 }
 
 func (e DotnetVuln) Run(ctx context.Context, in engines.Input) ([]finding.Finding, error) {
-	proys := e.proyectos(in)
+	proys, err := e.proyectos(in)
+	if err != nil {
+		return nil, fmt.Errorf("no pude listar los .csproj rastreados: %w", err)
+	}
 	if len(proys) == 0 {
 		return nil, nil
 	}

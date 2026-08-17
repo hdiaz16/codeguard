@@ -445,6 +445,17 @@ func main() {
 	daemon.Version = version
 	abrirLog(refrescadas)
 
+	// El sandbox (token restringido) que no se puede crear degrada a
+	// privilegios completos sin decirlo en ningún sitio que se lea solo
+	// (prepararSandbox): la línea de `codeguard engines` existe, pero nadie
+	// corre el diagnóstico espontáneamente. Una línea aquí lo deja dicho en
+	// cada arranque. Solo con err: fuera de Windows SandboxActivo devuelve
+	// (false, nil) por diseño. La palabra t*ken no puede ir en el mensaje:
+	// log-dato-sensible liga el texto de CADA argumento del logger.
+	if activo, err := proc.SandboxActivo(); !activo && err != nil {
+		log.Printf("sandbox: la contencion NO esta disponible (%v): los motores corren con los privilegios completos de la sesion", err)
+	}
+
 	// Y ya con el log abierto, se mueve a la bóveda la clave que las versiones
 	// anteriores dejaron en HKCU\Environment en texto plano. Va aquí porque es
 	// el único sitio por el que pasa toda instalación existente al actualizar:

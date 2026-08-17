@@ -39,7 +39,10 @@ func graphCmd() *cobra.Command {
 			// explorador del daemon: mirar manifiestos en la raíz dejaba fuera
 			// a los monorepos (backend/go.mod + frontend/package.json), que
 			// son el layout corporativo más común.
-			dirsGo, hayTS := stacksDe(repoRoot)
+			dirsGo, hayTS, err := stacksDe(repoRoot)
+			if err != nil {
+				return err
+			}
 
 			// ── modo profundo: función→función, función→consulta, WebGL ──
 			if deep {
@@ -160,10 +163,12 @@ func graphCmd() *cobra.Command {
 // stacksDe detecta los stacks del repo por sus ARCHIVOS RASTREADOS, no por
 // manifiestos en la raíz. Devuelve los directorios que contienen un go.mod
 // (relativos a la raíz; "." si es la propia raíz) y si hay código TS/JS.
-func stacksDe(repoRoot string) (dirsGo []string, hayTS bool) {
+func stacksDe(repoRoot string) (dirsGo []string, hayTS bool, err error) {
 	rutas, err := gitdiff.Rastreados(repoRoot)
 	if err != nil {
-		return nil, false
+		// Devolver "sin stacks" aquí generaba un grafo vacío con mensaje de
+		// éxito; es un comando de documentación, pero mentir cuesta lo mismo.
+		return nil, false, fmt.Errorf("no pude listar los archivos rastreados: %w", err)
 	}
 	for _, r := range rutas {
 		switch {
@@ -177,7 +182,7 @@ func stacksDe(repoRoot string) (dirsGo []string, hayTS bool) {
 		}
 	}
 	sort.Strings(dirsGo)
-	return dirsGo, hayTS
+	return dirsGo, hayTS, nil
 }
 
 // ── Go: la verdad del compilador ────────────────────────────────────────────

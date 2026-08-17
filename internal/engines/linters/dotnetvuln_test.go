@@ -333,26 +333,26 @@ func TestSoloManifiestosIgnoraLosCambiosDeCodigo(t *testing.T) {
 	soloCodigo := engines.Input{RepoRoot: root, Files: []gitdiff.ChangedFile{
 		{Path: "backend/Api/Servicio.cs", Status: "M"},
 	}}
-	if got := (DotnetVuln{SoloManifiestos: true}).proyectos(soloCodigo); len(got) != 0 {
-		t.Errorf("en el hook, un .cs no debe disparar el escaneo de dependencias: %v", got)
+	if got, err := (DotnetVuln{SoloManifiestos: true}).proyectos(soloCodigo); err != nil || len(got) != 0 {
+		t.Errorf("en el hook, un .cs no debe disparar el escaneo de dependencias: %v (err: %v)", got, err)
 	}
 	// El CI sí: corre con cualquier .cs tocado.
-	if got := (DotnetVuln{}).proyectos(soloCodigo); len(got) != 1 || got[0] != "backend/Api/Api.csproj" {
-		t.Errorf("en CI un .cs sí dispara el escaneo: %v", got)
+	if got, err := (DotnetVuln{}).proyectos(soloCodigo); err != nil || len(got) != 1 || got[0] != "backend/Api/Api.csproj" {
+		t.Errorf("en CI un .cs sí dispara el escaneo: %v (err: %v)", got, err)
 	}
 	// El lockfile vive junto al .csproj: se sube hasta él.
 	lock := engines.Input{RepoRoot: root, Files: []gitdiff.ChangedFile{
 		{Path: "backend/Api/packages.lock.json", Status: "M"},
 	}}
-	if got := (DotnetVuln{SoloManifiestos: true}).proyectos(lock); len(got) != 1 || got[0] != "backend/Api/Api.csproj" {
-		t.Errorf("packages.lock.json debe resolver a su .csproj: %v", got)
+	if got, err := (DotnetVuln{SoloManifiestos: true}).proyectos(lock); err != nil || len(got) != 1 || got[0] != "backend/Api/Api.csproj" {
+		t.Errorf("packages.lock.json debe resolver a su .csproj: %v (err: %v)", got, err)
 	}
 	// El propio manifiesto.
 	manifiesto := engines.Input{RepoRoot: root, Files: []gitdiff.ChangedFile{
 		{Path: "backend/Api/Api.csproj", Status: "M"},
 	}}
-	if got := (DotnetVuln{SoloManifiestos: true}).proyectos(manifiesto); len(got) != 1 || got[0] != "backend/Api/Api.csproj" {
-		t.Errorf("un .csproj tocado es el propio proyecto: %v", got)
+	if got, err := (DotnetVuln{SoloManifiestos: true}).proyectos(manifiesto); err != nil || len(got) != 1 || got[0] != "backend/Api/Api.csproj" {
+		t.Errorf("un .csproj tocado es el propio proyecto: %v (err: %v)", got, err)
 	}
 	if !(DotnetVuln{SoloManifiestos: true}).Applies(manifiesto) {
 		t.Error("Applies debe ser verdadero con un .csproj tocado")

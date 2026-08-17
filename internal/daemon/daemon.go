@@ -541,6 +541,12 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		Progreso:     progreso,
 	})
 	if err != nil {
+		// La respuesta nació optimista ("pass", arriba) y este camino la
+		// devolvía tal cual: cualquier consumidor que mire Verdict sin mirar
+		// Degraded heredaba un visto bueno de un análisis que no corrió. El
+		// mismo trato que la config ilegible: no analicé, no doy veredicto.
+		resp.Verdict = "skipped"
+		resp.Reason = "el análisis no corrió: " + err.Error()
 		resp.Degraded = append(resp.Degraded, fmt.Sprintf("pipeline:%v", err))
 		return resp
 	}
