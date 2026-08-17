@@ -23,12 +23,19 @@
      composición manda: el contenido no pelea con el cielo.
    - GRANO DE PELÍCULA y VIÑETA: lo que separa «render» de «fotografía».
 
-   El scroll DESCIENDE por el manto: cada estrato se desplaza a su velocidad
-   (parallax), y el guion de los climas sigue mandando — serena (nubes altas,
-   finas, lentas), la ventisca (el manto se cierra, el viento arrastra jirones
-   y nieva DENTRO del viento), y la montaña dormida (el manto queda arriba y
-   el aire se despeja). La nieve de puntos ya no es el espectáculo: es un
-   detalle que sólo existe dentro de la ventisca.
+   El scroll es un TRAVELLING DE ACERCAMIENTO: además del parallax de los
+   estratos, el campo entero se acerca despacio (dolly) conforme bajas — la
+   sensación de ENTRAR en el manto, no de verlo pasar. Y el guion de los
+   climas manda en calma: serena (nubes altas y finas), el manto denso del
+   centro (se cierra y enfría, sin dramatismo), y la montaña dormida (el
+   manto queda arriba, aire despejado).
+
+   LA NIEVE DE PUNTOS SE FUE Y NO VUELVE: Héctor la vio como lo que era — los
+   copos estirados se recortaban contra el sprite cuadrado de gl.POINTS y se
+   veían RECTÁNGULOS. La lección: una estela con puntos estirados exige
+   geometría de verdad (quads orientados); si no se puede pagar, mejor no
+   fingirla. La belleza de esta capa está en las masas lentas, no en el
+   confeti — tranquilidad, que fue la palabra exacta del encargo.
 
    Las reglas de siempre, intactas: todo premultiplicado (el quemado por
    driver es imposible), luminancia de nube ACOTADA (esto es un cielo de
@@ -92,6 +99,14 @@ void main() {
   float t = u_t;
   float vent = u_clima;
 
+  /* EL TRAVELLING: el campo entero se ACERCA despacio conforme se baja —
+     dividir uv alrededor del pivote agranda las nubes: dolly de entrada al
+     manto. Sutil (hasta 1.45x al final del guion) y monótono: la página es
+     un solo movimiento de cámara, no un zoom nervioso. */
+  float dolly = 1.0 + u_scroll * 0.45;
+  vec2 pivote = vec2(0.5 * u_res.x / min(u_res.x, u_res.y), 0.55);
+  uv = pivote + (uv - pivote) / dolly;
+
   /* La luna vive arriba-centro — donde el orbe del héroe. Es la luz. */
   vec2 luna = vec2(0.5 * u_res.x / min(u_res.x, u_res.y), 0.98);
   vec2 haciaLuna = normalize(luna - uv);
@@ -105,7 +120,9 @@ void main() {
               - (1.0 - smoothstep(0.30 - 0.05 * vent, 0.72, length(c))) * 0.75;
 
   /* viento y descenso */
-  float viento = 0.6 + 2.6 * vent;
+  /* La calma manda: el viento de la ventisca original doblaba esto y Héctor
+     pidió lo contrario — nubes que LLEGAN LENTO y van pasando. */
+  float viento = 0.5 + 1.0 * vent;
   float rafaga = u_vel * 0.10;
 
   vec3 color = vec3(0.0);
@@ -186,67 +203,6 @@ void main() {
   gl_FragColor = vec4(color, alfa); /* ya premultiplicado por construcción */
 }`;
 
-/* ── la nieve: SOLO dentro de la ventisca, como detalle del viento ──────── */
-const VERT_NIEVE = `
-precision mediump float;
-attribute float semilla;
-
-uniform float u_t;
-uniform float u_scroll;
-uniform float u_clima;
-uniform float u_vel;
-uniform float u_dpr;
-uniform float u_maxPunto;
-
-varying float vAlfa;
-varying float vEstira;
-varying vec2  vViento;
-
-float h(float s, float k) { return fract(sin(s * k) * 43758.5453123); }
-
-void main() {
-  float h1 = h(semilla, 12.9898);
-  float h2 = h(semilla, 78.2330);
-  float h3 = h(semilla, 43.7585);
-  float h4 = h(semilla, 91.2228);
-
-  float vent = u_clima;
-  float d = mix(0.35, 1.0, h3);
-
-  /* la nieve existe SOLO con ventisca: aparece gradualmente con ella */
-  float vive = step(h4, vent * vent);
-
-  vec2 viento = vec2(-(0.05 + 0.22 * vent) * d, -(0.05 + 0.09 * vent) * d);
-  vec2 p = fract(vec2(h1, h2)
-                 + viento * u_t
-                 + vec2(u_vel * 0.06 * d, u_scroll * 0.5 * d));
-
-  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
-
-  float px = 1.4 + 2.8 * d;
-  vEstira = 1.0 + vent * 2.6 * d;
-  gl_PointSize = min(px * vEstira * u_dpr, u_maxPunto);
-
-  float ang = atan(viento.y, viento.x - u_vel * 0.04);
-  vViento = vec2(cos(ang), sin(ang));
-
-  vAlfa = vive * mix(0.10, 0.34, d) * (0.6 + 0.4 * vent);
-}`;
-
-const FRAG_NIEVE = `
-precision mediump float;
-varying float vAlfa;
-varying float vEstira;
-varying vec2  vViento;
-
-void main() {
-  vec2 q = gl_PointCoord - 0.5;
-  vec2 r = vec2(q.x * vViento.x + q.y * vViento.y,
-               -q.x * vViento.y + q.y * vViento.x);
-  r.x /= vEstira;
-  float a = smoothstep(0.5, 0.12, length(r)) * vAlfa;
-  gl_FragColor = vec4(vec3(0.72, 0.78, 0.85) * a, a); /* premultiplicado */
-}`;
 
 function compilar(gl, tipo, fuente) {
   const s = gl.createShader(tipo);
@@ -275,8 +231,6 @@ function programa(gl, vertSrc, fragSrc) {
   return p;
 }
 
-const COPOS = 700;
-
 /* El guion del descenso: la ventisca sube del 8% al 38%, plena por el centro,
    amaina del 62% al 92% hacia la montaña dormida. */
 function guion(scroll) {
@@ -302,34 +256,22 @@ export function montarAmbiente({ reducido = false } = {}) {
   if (!gl) return null;
 
   const pNubes = programa(gl, VERT_QUAD, FRAG_NUBES);
-  const pNieve = programa(gl, VERT_NIEVE, FRAG_NIEVE);
-  if (!pNubes || !pNieve) return null;
+  if (!pNubes) return null;
 
   const bufQuad = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, bufQuad);
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   const locPos = gl.getAttribLocation(pNubes, "pos");
 
-  const semillas = new Float32Array(COPOS);
-  for (let i = 0; i < COPOS; i++) semillas[i] = (i + 1) * 0.61803398875;
-  const bufSemillas = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, bufSemillas);
-  gl.bufferData(gl.ARRAY_BUFFER, semillas, gl.STATIC_DRAW);
-  const locSemilla = gl.getAttribLocation(pNieve, "semilla");
 
   const uC = {};
   for (const n of ["u_res", "u_t", "u_scroll", "u_clima", "u_duerme", "u_vel"])
     uC[n] = gl.getUniformLocation(pNubes, n);
-  const uN = {};
-  for (const n of ["u_t", "u_scroll", "u_clima", "u_vel", "u_dpr", "u_maxPunto"])
-    uN[n] = gl.getUniformLocation(pNieve, n);
 
   gl.clearColor(0, 0, 0, 0);
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
-  const rango = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
-  const maxPunto = Math.min(rango ? rango[1] : 64, 96);
 
   /* Las nubes son masas suaves: se pintan a ~0.62 de la resolución física y
      el CSS estira — cinco octavas con warp por píxel no son gratis, y a esta
@@ -385,19 +327,6 @@ export function montarAmbiente({ reducido = false } = {}) {
     gl.uniform1f(uC.u_vel, vel);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-    if (g.vent > 0.02) {
-      gl.useProgram(pNieve);
-      gl.bindBuffer(gl.ARRAY_BUFFER, bufSemillas);
-      gl.enableVertexAttribArray(locSemilla);
-      gl.vertexAttribPointer(locSemilla, 1, gl.FLOAT, false, 0, 0);
-      gl.uniform1f(uN.u_t, t);
-      gl.uniform1f(uN.u_scroll, scroll);
-      gl.uniform1f(uN.u_clima, g.vent);
-      gl.uniform1f(uN.u_vel, vel);
-      gl.uniform1f(uN.u_dpr, escala);
-      gl.uniform1f(uN.u_maxPunto, maxPunto);
-      gl.drawArrays(gl.POINTS, 0, COPOS);
-    }
   }
 
   function cuadro(ahora) {
