@@ -40,12 +40,25 @@
     --raise: 0 1px 2px rgba(0,0,0,.45), 0 4px 12px rgba(0,0,0,.22);
     --carve: inset 0 2px 6px rgba(0,0,0,.45);
     --float: 0 3px 10px rgba(0,0,0,.3);
+
+    /* escala tipográfica — 5 tamaños, no ~8 sueltos por regla.
+       Antes había valores como 9.5/10.5/11.5/12.5px repartidos sin criterio,
+       y con el escalado 125% de Windows todo lo que vivía bajo 11px era
+       lupa. El piso real de lectura es 11px (--fs-small); los rótulos en
+       MAYÚSCULAS (kickers, badges, chips) son la única excepción y bajan
+       hasta 10px porque son un color de acento, no un párrafo. El veredicto
+       vive fuera de esta escala a propósito: es el único héroe del panel. */
+    --fs-label:  10px;  /* rótulos uppercase: kickers, pill, chips — mínimo absoluto */
+    --fs-small:  11px;  /* piso real de lectura: meta, notas, timestamps, conteos */
+    --fs-medium: 12px;  /* interfaz estándar: pestañas, rutas y código monoespaciado */
+    --fs-base:   13px;  /* cuerpo: mensajes de hallazgo, porqués, explicaciones */
+    --fs-hero:   24px;  /* el veredicto — lo único que se viene a ver */
   }
   * { box-sizing: border-box; }
   html, body { background: transparent; }
   body {
     margin: 0; color: var(--ink);
-    font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px;
+    font-family: "Segoe UI", system-ui, sans-serif; font-size: var(--fs-base);
     line-height: 1.45; user-select: none; overflow: hidden;
     height: 100vh; padding: 10px;
     /* La tarjeta crece hacia arriba desde el orbe, que es de donde sale.
@@ -111,7 +124,7 @@
     box-shadow: 0 10px 14px -12px rgba(0,0,0,.6);
     -webkit-app-region: drag;
   }
-  header .brand { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  header .brand { font-size: var(--fs-label); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
   /* Dos familias, no cinco botones iguales: a la izquierda lo que ABRE cosas
      (guía, mapa, modelo), a la derecha lo que gobierna esta ventana (contraer,
      cerrar). Antes compartían un gap uniforme y el ojo no distinguía "voy a
@@ -146,15 +159,26 @@
   .winbtns button:hover { background: var(--d3); color: var(--ink); transform: translateY(-1px); }
   .winbtns button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
   .winbtns button.close:hover { background: var(--block); color: #fff; }
-  header .verdict { font-size: 15.5px; font-weight: 650; margin-top: 6px; letter-spacing: -.01em; }
-  header .meta { color: var(--ink-3); font-size: 11px; margin-top: 3px; }
+  /* El veredicto es el héroe: es lo único que el usuario viene a ver, y hasta
+     ahora pesaba como un metadato más (15.5px, 650). Sube a --fs-hero con su
+     color semántico a plena fuerza (ver .verdict.block/.pass/.working) y el
+     peso que merece. margin-top:12px no es capricho: los winbtns terminan en
+     y=40 desde el borde de la cabecera (top:12 + 28 alto) y con el margen
+     viejo (6px) la primera línea del veredicto grande arrancaba DENTRO de esa
+     franja — un botón posicionado siempre pinta encima del texto en flujo, así
+     que la palabra quedaba mordida por detrás del botón. 12px la saca limpia. */
+  header .verdict {
+    font-size: var(--fs-hero); font-weight: 700; margin-top: 12px;
+    letter-spacing: -.01em; line-height: 1.25;
+  }
+  header .meta { color: var(--ink-3); font-size: var(--fs-small); margin-top: 5px; }
   .verdict.block   { color: var(--block); }
   .verdict.pass    { color: var(--ok); }
   .verdict.working { color: var(--warn); }
 
   /* hilo de pensamiento: efímero */
   #thinking {
-    color: var(--ink-3); font-size: 11px; font-style: italic; margin-top: 5px;
+    color: var(--ink-3); font-size: var(--fs-small); font-style: italic; margin-top: 5px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     opacity: 0; transition: opacity .5s;
   }
@@ -168,7 +192,7 @@
 
   .parity {
     background: rgba(229,181,74,.12); color: var(--warn);
-    padding: 9px 18px; font-size: 12px; font-weight: 500;
+    padding: 9px 18px; font-size: var(--fs-medium); font-weight: 500;
   }
   /* Proyectos vigilados. Antes era una fila de nombres sueltos: quien llegaba
      nuevo veía "repo" y no tenía forma de saber qué era esa lista. Ahora lleva
@@ -186,7 +210,7 @@
     overflow-y: auto;
   }
   .proyectos .titulo {
-    color: var(--ink-3); font-size: 9.5px; font-weight: 600;
+    color: var(--ink-3); font-size: var(--fs-label); font-weight: 600;
     letter-spacing: .09em; text-transform: uppercase;
     padding: 15px 12px 8px; flex: none;
   }
@@ -202,14 +226,14 @@
   .proyectos .fila.ok   .punto { background: var(--ok); }
   .proyectos .fila.none .punto { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
   .proyectos .fila .nombre {
-    font-size: 11.5px; color: var(--ink-2); flex: 1; min-width: 0;
+    font-size: var(--fs-medium); color: var(--ink-2); flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .proyectos .fila.activo { background: rgba(255,255,255,.07); }
   .proyectos .fila.activo .nombre { color: var(--ink); font-weight: 600; }
   /* El conteo es lo que distingue un repo con un bloqueante de otro con
      nueve. Sin él, la lista sólo sabía decir "hay algo". */
-  .proyectos .fila .cuenta { font-size: 10.5px; font-weight: 600; flex: none; }
+  .proyectos .fila .cuenta { font-size: var(--fs-small); font-weight: 600; flex: none; }
   .proyectos .fila.blk  .cuenta { color: var(--block); }
   .proyectos .fila.warn .cuenta { color: var(--warn); }
   .proyectos .fila.none .cuenta { color: var(--ink-3); font-weight: 400; }
@@ -222,7 +246,7 @@
   }
   .tabs button {
     background: none; border: 0; cursor: pointer; color: var(--ink-3);
-    font: inherit; font-size: 11.5px; padding: 8px 12px 7px;
+    font: inherit; font-size: var(--fs-medium); padding: 8px 12px 7px;
     border-bottom: 2px solid transparent; transition: .15s;
   }
   .tabs button:hover { color: var(--ink-2); }
@@ -231,43 +255,45 @@
   /* ── stack y motores en la cabecera ─────────────────────────────────── */
   header .stack { margin-top: 7px; display: flex; gap: 5px; flex-wrap: wrap; }
   header .stack .lang {
-    font-size: 10px; padding: 2px 7px; border-radius: 4px;
+    /* Nombre de lenguaje real (Python, TypeScript…), no mayúsculas de rótulo:
+       no entra en la excepción de --fs-label y sube al piso de --fs-small. */
+    font-size: var(--fs-small); padding: 2px 7px; border-radius: 4px;
     background: var(--d3); color: var(--ink-2); letter-spacing: .02em;
   }
-  header .motores { color: var(--ink-3); font-size: 10.5px; margin-top: 6px; }
+  header .motores { color: var(--ink-3); font-size: var(--fs-small); margin-top: 6px; }
   header .motores b { color: var(--ink-2); font-weight: 600; }
   header .motores .caida { color: var(--warn); }
 
   /* ── pestaña Proyecto ───────────────────────────────────────────────── */
   .ficha { padding: 14px 18px 4px; }
   .ficha h3 {
-    font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+    font-size: var(--fs-label); letter-spacing: .09em; text-transform: uppercase;
     color: var(--ink-3); font-weight: 600; margin: 14px 0 8px;
   }
   .ficha h3:first-child { margin-top: 0; }
-  .ficha .dato { display: flex; gap: 10px; font-size: 11.5px; padding: 3px 0; }
+  .ficha .dato { display: flex; gap: 10px; font-size: var(--fs-medium); padding: 3px 0; }
   .ficha .dato .k { color: var(--ink-3); width: 110px; flex: none; }
   .ficha .dato .v { color: var(--ink-2); min-width: 0; word-break: break-word; }
   .ficha .capa {
-    display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; padding: 4px 0;
+    display: flex; align-items: baseline; gap: 8px; font-size: var(--fs-medium); padding: 4px 0;
   }
   .ficha .capa .n { width: 150px; flex: none; color: var(--ink-2); }
   .ficha .capa .e { flex: 1; color: var(--ink-3); }
   .ficha .capa.corrio  .e { color: var(--ok); }
   .ficha .capa.degradada .e, .ficha .capa.ausente .e { color: var(--warn); }
-  .ficha .capa .ms { color: var(--ink-3); font-size: 10.5px; flex: none; }
+  .ficha .capa .ms { color: var(--ink-3); font-size: var(--fs-small); flex: none; }
   .ficha .nota {
-    color: var(--ink-3); font-size: 10.5px; line-height: 1.45;
+    color: var(--ink-3); font-size: var(--fs-small); line-height: 1.45;
     margin: -2px 0 8px; padding-left: 10px;
     border-left: 2px solid var(--d3);
   }
-  .degraded { color: var(--ink-3); font-size: 11px; padding: 8px 18px 14px; }
-  .traynote { color: var(--ink-3); font-size: 10.5px; text-align: center; padding: 10px 16px 14px; }
+  .degraded { color: var(--ink-3); font-size: var(--fs-small); padding: 8px 18px 14px; }
+  .traynote { color: var(--ink-3); font-size: var(--fs-small); text-align: center; padding: 10px 16px 14px; }
   .empty { color: var(--ink-3); text-align: center; padding: 44px 20px; }
-  .truncated { color: var(--ink-3); font-size: 11px; margin: 2px 18px 10px; }
+  .truncated { color: var(--ink-3); font-size: var(--fs-small); margin: 2px 18px 10px; }
 
   section h2 {
-    font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+    font-size: var(--fs-label); letter-spacing: .12em; text-transform: uppercase;
     color: var(--ink-3); margin: 16px 18px 8px; font-weight: 650;
   }
   section h2 .bd { color: var(--ink-3); font-weight: 400; text-transform: none; letter-spacing: 0; }
@@ -286,14 +312,14 @@
   }
   .card summary:hover { background: var(--d3); }
   .card summary::-webkit-details-marker { display: none; }
-  .rule { font-family: Consolas, monospace; font-size: 11px; color: var(--accent); white-space: nowrap; }
+  .rule { font-family: Consolas, monospace; font-size: var(--fs-medium); color: var(--accent); white-space: nowrap; }
   .card.blocking .rule { color: var(--block); font-weight: 600; }
   .msg { flex: 1; }
   .body { padding: 2px 13px 12px; }
 
   /* pilar: tinte de fondo + texto definido, sin borde */
   .pillbadge {
-    font-size: 9.5px; font-weight: 700; text-transform: uppercase;
+    font-size: var(--fs-label); font-weight: 700; text-transform: uppercase;
     letter-spacing: .07em; padding: 3px 8px; border-radius: 999px;
     white-space: nowrap; align-self: center;
   }
@@ -303,7 +329,7 @@
 
   .chips { display: flex; gap: 6px; margin: 6px 0 4px; flex-wrap: wrap; }
   .chip {
-    font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+    font-size: var(--fs-label); letter-spacing: .06em; text-transform: uppercase;
     padding: 3px 8px; border-radius: 999px;
     color: var(--ink-2); background: var(--d3);
   }
@@ -311,19 +337,21 @@
   .chip.sev-warning { background: rgba(229,181,74,.15); color: var(--warn); font-weight: 650; }
 
   .path {
-    color: var(--ink-3); font-size: 11px; font-family: Consolas, monospace;
+    color: var(--ink-3); font-size: var(--fs-medium); font-family: Consolas, monospace;
     cursor: pointer; word-break: break-all; user-select: text;
     transition: color .15s;
   }
   .path:hover { color: var(--accent); }
-  .path .hint { font-family: "Segoe UI", sans-serif; font-size: 10px; opacity: 0; transition: opacity .15s; }
+  /* No es un rótulo uppercase, así que no entra en la excepción de 10px: es
+     texto que se lee ("copiar"), y el piso real es --fs-small. */
+  .path .hint { font-family: "Segoe UI", sans-serif; font-size: var(--fs-small); opacity: 0; transition: opacity .15s; }
   .path:hover .hint { opacity: 1; }
 
   /* ── nivel d0: el código va EXCAVADO (sombra interior, sin borde) ── */
   .snippet {
     background: var(--d0); border-radius: 8px;
     box-shadow: var(--carve);
-    font-family: Consolas, monospace; font-size: 11.5px; overflow-x: auto;
+    font-family: Consolas, monospace; font-size: var(--fs-medium); overflow-x: auto;
     padding: 7px 0; margin: 6px 0 9px; user-select: text;
   }
   .snippet div { padding: 1px 12px; white-space: pre; }
@@ -338,7 +366,7 @@
   .fb { display: flex; gap: 8px; margin-top: 10px; }
   .fb button {
     background: var(--d3); color: var(--ink-2); border: none;
-    border-radius: 8px; padding: 6px 13px; font-size: 11px; cursor: pointer;
+    border-radius: 8px; padding: 6px 13px; font-size: var(--fs-small); cursor: pointer;
     font-family: inherit; box-shadow: var(--raise);
     transition: background .15s, color .15s, transform .1s, box-shadow .15s;
   }
@@ -348,11 +376,62 @@
   .explain {
     margin: 9px 0 2px; padding: 10px 12px; border-radius: 10px;
     background: rgba(184,247,228,.08);
-    color: var(--ink-2); font-size: 12.5px; line-height: 1.55;
+    color: var(--ink-2); font-size: var(--fs-base); line-height: 1.55;
     animation: rise .4s ease both;
   }
-  .explain b { color: var(--accent); font-weight: 650; font-size: 10px;
+  .explain b { color: var(--accent); font-weight: 650; font-size: var(--fs-label);
     text-transform: uppercase; letter-spacing: .1em; display: block; margin-bottom: 4px; }
+
+  /* ── primer uso: el vacío inicial deja de ser un cartel ───────────────────
+     Antes decía "haz un commit en un repo enrolado…" y nada más — y es la
+     PRIMERA pantalla que ve cualquiera que instala CodeGuard, antes de haber
+     enrolado un solo repo. Ahora toma de la mano: qué escribir, y a dónde ir
+     si hace falta más contexto. Reutiliza piezas que ya existen (.snippet
+     para el cascarón excavado del código, .path para el clic-para-copiar)
+     en vez de inventar un componente nuevo para una pantalla que se ve una
+     sola vez en la vida de cada instalación. El texto queda centrado como
+     el resto de los .empty del panel; el snippet y el botón se alinean a la
+     izquierda porque un comando y una acción no se leen bien centrados. */
+  .onboard p { margin: 0 0 10px; font-size: var(--fs-small); line-height: 1.5; }
+  .onboard .snippet { text-align: left; margin: 4px 0 16px; }
+  .onboard button {
+    background: var(--d3); color: var(--ink); border: none; border-radius: 8px;
+    padding: 8px 18px; font-size: var(--fs-medium); font-weight: 600; cursor: pointer;
+    font-family: inherit; box-shadow: var(--raise);
+    transition: background .15s, transform .1s, box-shadow .15s;
+  }
+  .onboard button:hover { background: var(--d2); transform: translateY(-1px); }
+  .onboard button:active { transform: translateY(0); }
+
+  /* ── sparkline del historial: SVG inline, sin librerías ───────────────────
+     Barra por corrida, altura = cuántos bloqueantes tuvo (bloqueantes es un
+     conteo real por corrida, no una etiqueta — ver internal/store/historial.go);
+     BASE le da 3px mínimos a toda barra para que "cero bloqueantes" siga
+     siendo una barra visible y no un hueco indistinguible de "no corrió".
+     El color es de ESTADO, no de magnitud — reutiliza los mismos tres
+     semánticos del resto del panel (bloquea/bien/sin-mirar), así que una
+     corrida omitida se distingue de una limpia sin inventar un dato que la
+     base no guarda. rx pequeño en vez del "extremo redondeado arriba, recto
+     abajo" de un bar chart grande: a 3–32px de alto la diferencia no se nota
+     y una barra plenamente redondeada calza mejor con el "cero bordes duros"
+     del resto de MONTAÑA. */
+  .chispa { margin: 4px 0 10px; }
+  .chispa svg { display: block; width: 100%; height: 32px; }
+  .chispa rect.blk { fill: var(--block); }
+  .chispa rect.ok  { fill: var(--ok); }
+  .chispa rect.sk  { fill: var(--ink-3); opacity: .5; }
+  .chispa-leyenda { display: flex; gap: 14px; margin-top: 6px; }
+  .chispa-leyenda .k {
+    font-size: var(--fs-label); color: var(--ink-3); text-transform: uppercase;
+    letter-spacing: .06em; position: relative; padding-left: 13px;
+  }
+  .chispa-leyenda .k::before {
+    content: ""; position: absolute; left: 0; top: 50%; margin-top: -3.5px;
+    width: 7px; height: 7px; border-radius: 50%;
+  }
+  .chispa-leyenda .k.blk::before { background: var(--block); }
+  .chispa-leyenda .k.ok::before  { background: var(--ok); }
+  .chispa-leyenda .k.sk::before  { background: var(--ink-3); opacity: .5; }
 </style>
 </head>
 <body>
@@ -430,7 +509,17 @@
     <button data-tab="proyecto">Proyecto</button>
   </nav>
   <main id="main">
-    <div class="empty">Haz un commit en un repo enrolado y aquí aparecerá el resultado.</div>
+    <!-- Primer uso: esto es lo que ve cualquiera antes de enrolar su primer
+         repo. Se pierde en cuanto llega el primer "analysis" (render()
+         reemplaza #main entero), así que sus bindings de clic se conectan
+         UNA vez, a mano, más abajo — el bind genérico de render() no llega a
+         correr a tiempo para conectarlo. -->
+    <div class="empty onboard">
+      <p>Enrola un repo con el comando de abajo y haz tu primer commit.</p>
+      <div class="snippet"><div class="path" data-path="codeguard init" title="clic para copiar el comando">codeguard init <span class="hint">⧉ copiar</span></div></div>
+      <p>Este panel te enseñará el veredicto: bloqueantes y sugerencias, con el porqué de cada hallazgo.</p>
+      <button id="btn-onboard-guide" type="button">Ver la guía</button>
+    </div>
   </main>
   <div class="traynote">✕ solo oculta el panel — CodeGuard sigue vigilando desde el orbe</div>
   </div>
@@ -611,6 +700,10 @@
       }
     }
 
+    // Con menos de dos corridas no hay "mejora o empeora" que enseñar —
+    // un solo punto no es una tendencia, y la lista de abajo ya cuenta esa
+    // corrida completa. No degrades a un sparkline de una barra: se omite.
+    if (corridas.length >= 2) h += sparklineHTML(corridas);
     h += `<h3>Últimos análisis (${corridas.length})</h3>`;
     for (const run of corridas) {
       const clase = run.verdict === "block" ? "degradada" : (run.verdict === "skipped" ? "" : "corrio");
@@ -627,6 +720,50 @@
            `<span class="ms">${esc(run.rama || "")}</span></div>`;
     }
     return h + `</div>`;
+  }
+
+  // Sparkline de bloqueos: SVG inline, sin librerías. bloqueantes es un
+  // conteo REAL por corrida —sale de SUM(f.blocking) en la base, no de una
+  // etiqueta— y viene siempre, no solo cuando la corrida bloqueó (ver
+  // internal/store/historial.go, Store.Historial). Eso es lo que hace
+  // honesta la barra: no hay que inventar nada para dibujarla.
+  //
+  // corridas llega del daemon más-reciente-primero; aquí se invierte para
+  // leerla como el tiempo, de izquierda a derecha. El color es de ESTADO, no
+  // de magnitud, y reutiliza los tres semánticos que ya tiene el resto del
+  // panel: así una corrida "omitida" (merge, revert, o archivos excluidos de
+  // la config — verdict "skipped", donde no hubo análisis que contar) se
+  // distingue de una genuinamente limpia, en vez de mentir con un cero que
+  // significa dos cosas distintas. BASE le da 3px mínimos a toda barra para
+  // que "cero bloqueantes" siga siendo una marca visible.
+  //
+  // El ancho vive solo en el viewBox (sin width/height fijos en px): con
+  // preserveAspectRatio="none" el SVG se estira al 100% del contenedor sea
+  // cual sea N, así el panel no gana ancho por tener más o menos historial.
+  function sparklineHTML(corridas) {
+    const runs = corridas.slice().reverse();
+    const max = Math.max(1, ...runs.map(r => r.bloqueantes || 0));
+    const W = 10, GAP = 3, H = 32, BASE = 3;
+    const w = runs.length * (W + GAP) - GAP;
+    const bars = runs.map((r, i) => {
+      const x = i * (W + GAP);
+      const skip = r.verdict === "skipped";
+      const n = r.bloqueantes || 0;
+      const alto = skip ? BASE : Math.max(BASE, Math.round((H - BASE) * n / max));
+      const clase = skip ? "sk" : (n > 0 ? "blk" : "ok");
+      const detalle = skip
+        ? `${cuandoCorto(r.cuando)} · omitido`
+        : `${cuandoCorto(r.cuando)} · ${n} bloqueante${n === 1 ? "" : "s"}`;
+      return `<rect class="${clase}" x="${x}" y="${H - alto}" width="${W}" height="${alto}" rx="1.5">` +
+             `<title>${esc(detalle)}</title></rect>`;
+    }).join("");
+    return `<div class="chispa">
+      <svg viewBox="0 0 ${w} ${H}" preserveAspectRatio="none" role="img"
+           aria-label="Bloqueos por corrida, de la más antigua a la más reciente">${bars}</svg>
+      <div class="chispa-leyenda">
+        <span class="k blk">bloqueó</span><span class="k ok">pasó</span><span class="k sk">omitido</span>
+      </div>
+    </div>`;
   }
 
   // La marca de tiempo viene en ISO; en una lista lo que se lee es el día y la
@@ -912,16 +1049,34 @@
   $("btn-help").addEventListener("click", () => emit("open-guide", null));
   $("btn-config").addEventListener("click", () => emit("open-config", null));
 
+  // El primer-uso de #main (arriba en el HTML) es estático y desaparece en
+  // cuanto llega el primer "analysis" — el bind genérico de .path que corre
+  // dentro de render() no alcanza a conectarlo antes de ese primer commit,
+  // así que aquí se conecta una sola vez, con el mismo patrón de copiar que
+  // usan las rutas de los hallazgos.
+  document.querySelectorAll("#main .path").forEach(el => {
+    el.addEventListener("click", () => navigator.clipboard?.writeText(el.dataset.path));
+  });
+  $("btn-onboard-guide").addEventListener("click", () => emit("open-guide", null));
+
   $("btn-graph").addEventListener("click", () => {
     emit("open-graph", rootActual ? [rootActual] : null);
+    // El acuse de clic ATENÚA el icono en vez de sustituirlo: antes se hacía
+    // textContent = "…" y luego "🕸", lo que borraba para siempre el SVG
+    // dibujado y dejaba un emoji — exactamente lo que el comentario de los
+    // winbtns prohíbe, porque un emoji cambia de forma según la fuente.
     const b = $("btn-graph");
-    b.textContent = "…";
-    setTimeout(() => { b.textContent = "🕸"; }, 2500);
+    b.style.opacity = ".4";
+    setTimeout(() => { b.style.opacity = ""; }, 2500);
   });
   $("btn-min").addEventListener("click", () => {
     const main = $("main");
     main.hidden = !main.hidden; // contrae a solo el veredicto de la cabecera
-    $("btn-min").textContent = main.hidden ? "+" : "–";
+    // Mismo fallo que el del grafo, con caracteres en vez de emoji: el "+"/"–"
+    // de texto sustituía el SVG al primer uso. Se REDIBUJA el trazo: el guión
+    // gana un palo vertical cuando el panel está contraído (o sea, "expandir").
+    $("btn-min").querySelector("path").setAttribute("d",
+      main.hidden ? "M6 12h12M12 6v12" : "M6 12h12");
   });
 
   // ── La ventana se recorta a la tarjeta ──────────────────────────────────
