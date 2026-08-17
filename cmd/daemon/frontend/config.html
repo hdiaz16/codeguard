@@ -2,9 +2,9 @@
 <title>CodeGuard — configuración del modelo</title>
 <style>
   :root {
-    --d0:#0e1114; --d1:#151a1f; --d2:#1c232a; --d3:#26303a;
-    --ink:#e8edf1; --ink-2:#a8b4be; --ink-3:#6f7b85;
-    --acento:#8fd4ac; --alerta:#e0705a; --aviso:#e5b54a;
+    --d0:#1a1c20; --d1:#25272c; --d2:#2e3138; --d3:#383c44;
+    --ink:#eaf3f0; --ink-2:#a7b3b0; --ink-3:#78847f;
+    --acento:#b8f7e4; --alerta:#e4604b; --aviso:#e5b54a;
   }
   * { box-sizing:border-box; }
   body {
@@ -51,7 +51,7 @@
   }
   button:hover:not(:disabled) { background:var(--d3); }
   button:disabled { opacity:.5; cursor:default; }
-  button.principal { background:var(--acento); border-color:var(--acento); color:#0e1114; font-weight:600; }
+  button.principal { background:var(--acento); border-color:var(--acento); color:#1a1c20; font-weight:600; }
   button.principal:hover:not(:disabled) { background:#a5e0bd; }
   button.texto { background:none; border:none; color:var(--ink-3); padding:10px 4px; }
   button.texto:hover { color:var(--ink-2); background:none; }
@@ -154,7 +154,7 @@ try {
   ESTADO = await r.json();
 } catch (err) {
   document.body.innerHTML = `<div style="padding:40px;font:14px 'Segoe UI';color:#a3aeb7">
-    <b style="color:#e8edf1">No se pudo leer la configuración</b><br><br>${err.message || err}</div>`;
+    <b style="color:#eaf3f0">No se pudo leer la configuración</b><br><br>${err.message || err}</div>`;
   throw err;
 }
 

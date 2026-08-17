@@ -189,16 +189,17 @@
   .verdict.pass    { color: var(--ok); }
   .verdict.working { color: var(--warn); }
 
-  /* LA TARJETA ENTERA anuncia el estado: una línea de acento en el borde
-     superior, con su brillo cayendo hacia adentro. Es el semáforo del panel —
-     se lee desde la otra punta del cuarto, antes que cualquier texto. Sombra y
-     luz, cero bordes: sigue siendo MONTAÑA. */
+  /* LA TARJETA ENTERA anuncia el estado — pero sin dibujar nada: un brillo
+     INTERIOR que baja desde el borde superior, en el color semántico, muy
+     desenfocado. La primera versión era una línea de 3px y Héctor la vio como
+     lo que era: un borde pegado, ajeno al sistema. MONTAÑA separa con luz, no
+     con trazos — esto es luz. */
   .shell::before {
-    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-    background: var(--estado, transparent);
-    box-shadow: 0 6px 24px -2px var(--estado, transparent);
+    content: ""; position: absolute; inset: 0;
+    box-shadow: inset 0 34px 72px -52px var(--estado, transparent);
+    border-radius: 22px;
     z-index: 3; pointer-events: none;
-    transition: background .4s, box-shadow .4s;
+    transition: box-shadow .5s;
   }
   .shell.v-pass    { --estado: var(--ok); }
   .shell.v-block   { --estado: var(--block); }
