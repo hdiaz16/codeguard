@@ -120,8 +120,10 @@ func (s *Store) ResumenSemanal(repoID string) (string, error) {
 	for filas.Next() {
 		var v string
 		var b int
+		// Misma regla que el CSV: una fila ilegible es dato corrupto, no un
+		// resumen que cuenta de menos sin avisar.
 		if err := filas.Scan(&v, &b); err != nil {
-			continue
+			return "", fmt.Errorf("run ilegible en el resumen semanal: %w", err)
 		}
 		total++
 		switch v {
@@ -139,6 +141,11 @@ func (s *Store) ResumenSemanal(repoID string) (string, error) {
 		default: // skipped, degraded, vacío: no cuentan como limpio ni bloqueado
 			sinNada++
 		}
+	}
+	// Un cursor que murió a mitad de camino dejaría un conteo parcial que se
+	// lee igual que uno completo; los otros lectores del store ya lo comprueban.
+	if err := filas.Err(); err != nil {
+		return "", err
 	}
 	if total == 0 {
 		return "sin análisis esta semana", nil

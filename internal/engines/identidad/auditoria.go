@@ -3,8 +3,10 @@ package identidad
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -284,7 +286,11 @@ func escanear(ctx context.Context, binTrivy, objetivo, nombre string) ([]Riesgo,
 	cmd := comandoIdentidad(ctx, binTrivy,
 		"rootfs", "--scanners", "vuln", "--format", "json", "--quiet", "--skip-db-update", objetivo)
 	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
-	if err != nil && len(salida.Stdout) == 0 {
+	// Misma regla que el motor de trivy: sin --exit-code, salir con código
+	// distinto de cero es fallo, no hallazgos, y aceptar el stdout que alcanzó
+	// a escribir daría por completa una auditoría a medias. Solo ErrWaitDelay
+	// (salió con 0, un nieto retuvo los pipes) deja salida completa y confiable.
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
 		return nil, fmt.Errorf("trivy no pudo mirarlo: %w", err)
 	}
 	var res salidaTrivy

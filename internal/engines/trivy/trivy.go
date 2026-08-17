@@ -6,6 +6,7 @@ package trivy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -124,8 +125,15 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	cmd.Env = proc.Entorno()
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	out := salida.Stdout
-	if runErr != nil && len(out) == 0 {
-		return nil, fmt.Errorf("trivy no corrió: %w", runErr)
+	// Sin --exit-code, trivy sale con 0 aunque encuentre vulnerabilidades: un
+	// código distinto de cero es fallo de ejecución, nunca "hay hallazgos".
+	// Tolerar el error cuando hubo stdout convertía un reporte parcial en
+	// veredicto bueno — y abajo se cacheaba con clave diaria, así que el
+	// "limpio" a medias se servía el resto del día. La única excepción es
+	// ErrWaitDelay: el escaneo ya salió con 0 y la salida está completa, solo
+	// quedó un nieto reteniendo los pipes más allá del plazo (ver proc.Correr).
+	if runErr != nil && !errors.Is(runErr, exec.ErrWaitDelay) {
+		return nil, fmt.Errorf("trivy falló: %w", runErr)
 	}
 	if salida.Recortada {
 		return nil, fmt.Errorf("trivy devolvió más de %d MB de salida", proc.MaxSalida>>20)
