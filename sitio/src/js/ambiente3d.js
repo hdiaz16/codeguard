@@ -11,7 +11,8 @@
    atmósfera está SUBORDINADA al contenido. La primera versión de esta idea
    inundó el héroe entero de blanco y el titular se leía a través de una
    nube. Por eso aquí el alfa lleva TOPE DURO en el propio shader (la niebla
-   nunca pasa de 0.16 y las motas de 0.30 en puntos de un par de píxeles):
+   nunca pasa de 0.055 —el nivel de las luces de body::before— y el total de
+   0.12 en puntos de un par de píxeles):
    por construcción, no por buenas intenciones, el texto siempre gana.
 
    Sin three.js, por lo mismo que el orbe del héroe: un campo de niebla es un
@@ -77,10 +78,13 @@ void main() {
   vec2 p2 = uv * 2.60 - vec2(t * 0.009 + u_vel * 0.18, u_scroll * 0.95 - 7.3);
   float f = fbm(p1) * 0.62 + fbm(p2) * 0.38;
 
-  /* El TOPE DURO: smoothstep recorta lo tenue (que quede aire limpio de
-     verdad, no un velo uniforme) y el 0.16 es el máximo absoluto de alfa que
-     la niebla puede alcanzar en su punto más denso. */
-  float niebla = smoothstep(0.48, 0.88, f) * 0.16;
+  /* El TOPE DURO, calibrado contra el propio sitio: body::before nunca pasa
+     de 0.055 de alfa en sus luces de fondo, y la primera version de esto
+     llegaba a 0.16 — el TRIPLE del acento mas fuerte que el sitio se permite,
+     y se veia como un velo blanco-menta sucio sobre el negro. La niebla es
+     del mismo idioma o no es: 0.055 de maximo absoluto. En quieto casi no
+     esta; en movimiento el ojo la encuentra, que es el punto. */
+  float niebla = smoothstep(0.50, 0.90, f) * 0.055;
 
   /* El tinte respira entre las dos luces que body::before ya usa. */
   vec3 tinte = mix(u_tintB, u_tintA, fbm(uv * 0.8 + t * 0.006));
@@ -91,9 +95,9 @@ void main() {
      hace ESCASOS: bajarlo convierte el cielo en estática de televisor. */
   vec2 pm = uv * 24.0 + vec2(t * 0.10 + u_vel * 2.6, -u_scroll * 3.2);
   float m = ruido(pm);
-  float mota = smoothstep(0.965, 0.995, m) * (0.10 + min(abs(u_vel) * 4.0, 0.20));
+  float mota = smoothstep(0.968, 0.995, m) * (0.05 + min(abs(u_vel) * 3.0, 0.10));
 
-  float alfa = min(niebla + mota, 0.30);
+  float alfa = min(niebla + mota, 0.12);
   /* Salida PREMULTIPLICADA (color por alfa) y no alfa recto: hay drivers que
      ignoran el premultipliedAlpha=false que se pide al crear el contexto y
      componen el buffer como si ya viniera multiplicado — y entonces un color
