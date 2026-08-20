@@ -641,6 +641,10 @@ func raizDelRepo(t *testing.T) string {
 // arnés no lo tenía y concluyó que la compuerta de secretos estaba rota.
 func montarRepo(t *testing.T) string {
 	t.Helper()
+	t.Cleanup(func() {
+		moduloResuelto = false
+		dotnetRestaurado = false
+	})
 	repo := repoBase(t)
 	for _, v := range violaciones() {
 		escribir(t, repo, v.archivo, v.contenido)

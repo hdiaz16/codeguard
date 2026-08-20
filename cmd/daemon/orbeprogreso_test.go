@@ -336,10 +336,8 @@ func TestLaMuerteDelAnalisisNuncaSePintaDespuesDelVeredicto(t *testing.T) {
 	var orden []string
 	pintando := make(chan struct{})
 
-	a.empezar("r1", "demo", "master", 20*time.Millisecond, func(repo, rama string) {
+	a.empezar("r1", "demo", "master", 5*time.Millisecond, func(repo, rama string) {
 		close(pintando)
-		// Pintar cuesta: los setters de la bandeja esperan al hilo de la UI.
-		time.Sleep(80 * time.Millisecond)
 		mu.Lock()
 		orden = append(orden, "muerte")
 		mu.Unlock()
