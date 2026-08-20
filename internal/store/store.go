@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -236,7 +237,14 @@ func (s *Store) migrate() error {
 			names = append(names, e.Name())
 		}
 	}
-	sort.Strings(names)
+	sort.SliceStable(names, func(i, j int) bool {
+		numI, errI := extraerNumeroVersion(names[i])
+		numJ, errJ := extraerNumeroVersion(names[j])
+		if errI == nil && errJ == nil && numI != numJ {
+			return numI < numJ
+		}
+		return names[i] < names[j]
+	})
 	for _, name := range names {
 		var exists int
 		if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, name).Scan(&exists); err != nil {
@@ -733,6 +741,21 @@ func (s *Store) SaveFeedback(findingID, verdict, comment string) error {
 	_, err := s.db.Exec(`INSERT INTO feedback (id, finding_id, verdict, comment, created_at)
 		VALUES (?, ?, ?, ?, ?)`, NewULID(), findingID, verdict, comment, nowISO())
 	return err
+}
+
+func extraerNumeroVersion(nombre string) (uint64, error) {
+	base := nombre
+	if i := strings.LastIndexAny(base, `/\`); i >= 0 {
+		base = base[i+1:]
+	}
+	fin := 0
+	for fin < len(base) && base[fin] >= '0' && base[fin] <= '9' {
+		fin++
+	}
+	if fin == 0 {
+		return 0, fmt.Errorf("sin prefijo numérico en %q", nombre)
+	}
+	return strconv.ParseUint(base[:fin], 10, 64)
 }
 
 var _ = finding.Finding{} // referencia explícita al modelo del contrato

@@ -7,6 +7,7 @@ package fsutil
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // EscribirAtomico reemplaza path con data de forma atómica: escribe a un
@@ -66,4 +67,59 @@ func EscribirAtomico(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return nil
+}
+
+// EstaDentroDe informa si ruta se resuelve dentro del directorio base.
+func EstaDentroDe(base, ruta string) bool {
+	if base == "" || ruta == "" {
+		return false
+	}
+	absBase, err := filepath.Abs(base)
+	if err != nil {
+		return false
+	}
+	absRuta, err := filepath.Abs(ruta)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absBase, absRuta)
+	if err != nil {
+		return false // volúmenes distintos (Windows)
+	}
+	if rel == "." {
+		return true
+	}
+	// Cualquier relativa que empiece por ".." escapa del contenedor.
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// SanitizarRutas filtra rutas devolviendo únicamente las que se
+// resuelven dentro de base, limpiadas con filepath.Clean y
+// deduplicadas, preservando el orden de entrada.
+func SanitizarRutas(base string, rutas []string) []string {
+	vistas := make(map[string]struct{}, len(rutas))
+	salida := make([]string, 0, len(rutas))
+	for _, r := range rutas {
+		if r == "" {
+			continue
+		}
+		limpia := filepath.Clean(r)
+		if !EstaDentroDe(base, limpia) {
+			continue
+		}
+		if _, dup := vistas[limpia]; dup {
+			continue
+		}
+		vistas[limpia] = struct{}{}
+		salida = append(salida, limpia)
+	}
+	return salida
+}
+
+// ComoArgumentosCLI prefija el separador "--" a una lista de rutas
+// para pasarlas de forma segura a herramientas CLI.
+func ComoArgumentosCLI(rutas []string) []string {
+	args := make([]string, 0, len(rutas)+1)
+	args = append(args, "--")
+	return append(args, rutas...)
 }

@@ -106,17 +106,20 @@ func fusionarPATH(actual, vigente string) string {
 	agregar := func(lista string) {
 		for _, seg := range filepath.SplitList(lista) {
 			seg = strings.TrimSpace(seg)
-			if seg == "" {
+			if seg == "" || seg == "." {
 				continue
 			}
 			limpio := filepath.Clean(seg)
+			if limpio == "." {
+				continue
+			}
 			clave := limpio
 			if runtime.GOOS == "windows" {
 				clave = strings.ToLower(limpio)
 			}
 			if !vistos[clave] {
 				vistos[clave] = true
-				partes = append(partes, seg)
+				partes = append(partes, limpio)
 			}
 		}
 	}

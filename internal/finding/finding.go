@@ -61,3 +61,30 @@ func (f *Finding) ComputeFingerprint() string {
 	f.Fingerprint = hex.EncodeToString(h[:])
 	return f.Fingerprint
 }
+
+// Normalizar corrige invariantes del Finding in situ:
+//   - Line y EndLine negativas se elevan a 0.
+//   - Si EndLine < Line, EndLine se iguala a Line.
+func (f *Finding) Normalizar() {
+	if f.Line < 0 {
+		f.Line = 0
+	}
+	if f.EndLine < 0 {
+		f.EndLine = 0
+	}
+	if f.EndLine < f.Line {
+		f.EndLine = f.Line
+	}
+}
+
+// HuellaCorta devuelve los primeros n bytes de una huella (hash),
+// con guarda de longitud para evitar panics por slice out-of-bounds.
+func HuellaCorta(h string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(h) <= n {
+		return h
+	}
+	return h[:n]
+}

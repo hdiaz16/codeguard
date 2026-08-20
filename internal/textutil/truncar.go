@@ -37,3 +37,15 @@ func TruncarRunas(s string, maxBytes int) string {
 	}
 	return s[:maxBytes]
 }
+
+// TruncarConElipsis recorta s a un máximo de topeRunas y añade "…" si se superó.
+func TruncarConElipsis(s string, topeRunas int) string {
+	if topeRunas <= 0 {
+		return ""
+	}
+	runas := []rune(s)
+	if len(runas) <= topeRunas {
+		return s
+	}
+	return string(runas[:topeRunas]) + "…"
+}

@@ -39,3 +39,57 @@ func TestFingerprintDistingueReglas(t *testing.T) {
 		t.Error("reglas distintas sobre la misma línea deben tener fingerprints distintos")
 	}
 }
+
+func TestNormalizar(t *testing.T) {
+	casos := []struct {
+		nombre      string
+		in          Finding
+		wantLine    int
+		wantEndLine int
+	}{
+		{"rango válido intacto", Finding{Line: 3, EndLine: 7}, 3, 7},
+		{"endline cero se iguala", Finding{Line: 5, EndLine: 0}, 5, 5},
+		{"rango invertido corregido", Finding{Line: 10, EndLine: 2}, 10, 10},
+		{"puntual intacto", Finding{Line: 4, EndLine: 4}, 4, 4},
+		{"negativos elevados", Finding{Line: -1, EndLine: -5}, 0, 0},
+		{"cero válido", Finding{Line: 0, EndLine: 0}, 0, 0},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			f := c.in
+			f.Normalizar()
+			if f.Line != c.wantLine || f.EndLine != c.wantEndLine {
+				t.Fatalf("Normalizar() = (%d, %d), want (%d, %d)",
+					f.Line, f.EndLine, c.wantLine, c.wantEndLine)
+			}
+			if f.EndLine < f.Line {
+				t.Fatalf("invariante violado: EndLine %d < Line %d", f.EndLine, f.Line)
+			}
+		})
+	}
+}
+
+func TestHuellaCorta(t *testing.T) {
+	const sha = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	casos := []struct {
+		nombre string
+		h      string
+		n      int
+		want   string
+	}{
+		{"corta estándar", sha, 8, "9f86d081"},
+		{"huella vacía", "", 8, ""},
+		{"n cero", sha, 0, ""},
+		{"n negativo", sha, -1, ""},
+		{"n mayor que longitud", "abc", 10, "abc"},
+		{"n igual a longitud", "abc", 3, "abc"},
+		{"huella corta real", "deadbeef", 12, "deadbeef"},
+	}
+	for _, c := range casos {
+		t.Run(c.nombre, func(t *testing.T) {
+			if got := HuellaCorta(c.h, c.n); got != c.want {
+				t.Fatalf("HuellaCorta(%q, %d) = %q, want %q", c.h, c.n, got, c.want)
+			}
+		})
+	}
+}

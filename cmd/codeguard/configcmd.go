@@ -74,7 +74,8 @@ func configCmd() *cobra.Command {
 // procesos mientras dura, y en PowerShell queda además en el historial del
 // usuario. Con un pipe no aparece en ninguno de los dos sitios.
 func guardarClaveDeStdin(variable string) error {
-	crudo, err := io.ReadAll(os.Stdin)
+	const maxStdinKeyBytes = 64 * 1024
+	crudo, err := io.ReadAll(io.LimitReader(os.Stdin, maxStdinKeyBytes))
 	if err != nil {
 		return fmt.Errorf("no se pudo leer la clave de la entrada estándar: %w", err)
 	}
