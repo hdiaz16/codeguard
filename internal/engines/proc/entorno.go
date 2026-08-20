@@ -57,7 +57,7 @@ var permitidas = map[string]bool{
 	// Cadenas de herramientas.
 	"GOPATH": true, "GOROOT": true, "GOCACHE": true, "GOMODCACHE": true,
 	"GOFLAGS": true, "GOPROXY": true, "GONOSUMDB": true, "GONOSUMCHECK": true,
-	"NODE_PATH": true, "NODE_OPTIONS": true, "NPM_CONFIG_CACHE": true,
+	"NODE_PATH": true, "NPM_CONFIG_CACHE": true,
 	"DOTNET_ROOT": true, "DOTNET_CLI_TELEMETRY_OPTOUT": true, "NUGET_PACKAGES": true,
 	"JAVA_HOME":  true,
 	"PYTHONPATH": true, "PYTHONHOME": true, "VIRTUAL_ENV": true,

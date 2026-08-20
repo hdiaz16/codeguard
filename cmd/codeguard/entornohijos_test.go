@@ -298,6 +298,9 @@ func TestTodoGitDeLaCLIPasaPorGitCmd(t *testing.T) {
 				if fn.Name.Name == "gitCmd" {
 					return false // el constructor es el único sitio legítimo
 				}
+				if fn.Body == nil {
+					return true
+				}
 				ast.Inspect(fn.Body, func(m ast.Node) bool {
 					llamada, ok := m.(*ast.CallExpr)
 					if !ok {

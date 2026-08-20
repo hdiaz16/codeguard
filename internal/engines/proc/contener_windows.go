@@ -4,6 +4,7 @@ package proc
 
 import (
 	"fmt"
+	"log"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -101,6 +102,7 @@ func prepararSandbox(c *exec.Cmd) {
 
 	tok, err := tokenRestringido()
 	if err != nil {
+		log.Printf("proc: sandbox restringido no disponible: %v", err)
 		return
 	}
 	c.SysProcAttr.Token = syscall.Token(tok)
