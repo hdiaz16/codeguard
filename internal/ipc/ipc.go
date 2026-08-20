@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/user"
+	"strings"
 	"time"
 
 	"github.com/Microsoft/go-winio"
@@ -174,6 +175,9 @@ func (r *Response) UnmarshalJSON(b []byte) error {
 // misma máquina, y sirve igual para correr una instancia aislada a mano.
 func PipeName() (string, error) {
 	if p := os.Getenv("CODEGUARD_PIPE"); p != "" {
+		if !strings.HasPrefix(p, `\\.\pipe\`) {
+			p = `\\.\pipe\` + p
+		}
 		return p, nil
 	}
 	u, err := user.Current()
