@@ -59,9 +59,20 @@ func EstaDentroDe(base, ruta string) bool {
 	if err != nil {
 		return false
 	}
-	absRuta, err := filepath.Abs(ruta)
-	if err != nil {
-		return false
+	var absRuta string
+	esAbsoluta := filepath.IsAbs(ruta) ||
+		strings.HasPrefix(ruta, "/") ||
+		strings.HasPrefix(ruta, "\\") ||
+		(len(ruta) >= 2 && esLetraUnidad(ruta[0]) && ruta[1] == ':')
+
+	if !esAbsoluta {
+		absRuta = filepath.Join(absBase, ruta)
+	} else {
+		a, err := filepath.Abs(ruta)
+		if err != nil {
+			return false
+		}
+		absRuta = a
 	}
 
 	// Resolver symlinks reales si existen

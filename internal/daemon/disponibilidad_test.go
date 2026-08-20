@@ -69,6 +69,8 @@ func TestLosRequisitosSonLosEjecutablesQueLosMotoresInvocan(t *testing.T) {
 		"dotnet-format":      "dotnet", // dotnetformat.go: LookPath("dotnet")
 		"dotnet-build":       "dotnet", // dotnetbuild.go: LookPath("dotnet")
 		"dotnet-vuln":        "dotnet", // dotnetvuln.go: LookPath("dotnet")
+		"gosec":              "gosec",  // gosec.go: LookPath("gosec")
+		"bandit":             "bandit", // bandit.go: LookPath("bandit")
 		"google-java-format": "java",   // javafmt.go: exec.CommandContext(ctx, "java", …)
 		"pmd":                "java",   // javalint.go: exec.CommandContext(ctx, "java", …)
 	}

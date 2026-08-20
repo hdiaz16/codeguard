@@ -394,8 +394,8 @@ func señuelos(t *testing.T, s sabotaje) string {
 	guion := s.guion
 	for _, bin := range []string{
 		"npx", "node", // tsc y eslint
-		"mypy", "ruff", "semgrep", "squawk", // python
-		"go", "staticcheck", "govulncheck", // go
+		"mypy", "ruff", "bandit", "semgrep", "squawk", // python
+		"go", "staticcheck", "govulncheck", "gosec", // go
 		"trivy", "gitleaks", // seguridad
 		"dotnet",        // los tres de .NET
 		"java", "javac", // google-java-format y pmd

@@ -64,6 +64,8 @@ var requisitos = map[string]string{
 	"dotnet-format":      "dotnet",
 	"dotnet-build":       "dotnet",
 	"dotnet-vuln":        "dotnet",
+	"gosec":              "gosec",
+	"bandit":             "bandit",
 	"google-java-format": "java",
 	"pmd":                "java",
 }
@@ -84,6 +86,8 @@ var comoInstalar = map[string]string{
 	"gitleaks":    "reinstala el agente: lo trae el instalador",
 	"staticcheck": "reinstala el agente: lo trae el instalador",
 	"govulncheck": "reinstala el agente: lo trae el instalador",
+	"gosec":       "reinstala el agente: lo trae el instalador",
+	"bandit":      "reinstala el agente: lo trae el instalador",
 }
 
 // Disponibilidad devuelve, de las capas que se le pasan, las que esta máquina

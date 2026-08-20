@@ -86,7 +86,9 @@ func Engines(cfg *config.Config, inCI bool, cache sgengine.Cache) []engines.Engi
 		&stengine.Engine{Cache: cache},
 		linters.GoFmt{Cache: cache},
 		linters.GoVet{Cache: cache},
+		linters.Gosec{Cache: cache},
 		linters.Ruff{Cache: cache},
+		linters.Bandit{Cache: cache},
 		// Tipos en Python, la última casilla que le faltaba al lenguaje: ruff ve
 		// formato y lint, nadie veía los tipos. Sólo aplica si el repo YA
 		// configuró mypy (mypy.ini, [mypy] en setup.cfg o [tool.mypy] en
