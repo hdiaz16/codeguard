@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -125,9 +126,15 @@ func (e Tsc) Run(ctx context.Context, in engines.Input) ([]finding.Finding, erro
 
 func correrProyecto(ctx context.Context, repoRoot, dir string) ([]finding.Finding, error) {
 	abs := filepath.Join(repoRoot, filepath.FromSlash(dir))
-	bin := "npx"
-	if _, err := os.Stat(filepath.Join(abs, "node_modules", ".bin", "tsc.cmd")); err == nil {
-		bin = filepath.Join(abs, "node_modules", ".bin", "tsc.cmd")
+	sufijo := ""
+	npx := "npx"
+	if runtime.GOOS == "windows" {
+		sufijo = ".cmd"
+		npx = "npx.cmd"
+	}
+	bin := npx
+	if _, err := os.Stat(filepath.Join(abs, "node_modules", ".bin", "tsc"+sufijo)); err == nil {
+		bin = filepath.Join(abs, "node_modules", ".bin", "tsc"+sufijo)
 	}
 	var out string
 	var salioMal bool
@@ -135,8 +142,8 @@ func correrProyecto(ctx context.Context, repoRoot, dir string) ([]finding.Findin
 	// --extendedDiagnostics es lo que convierte el silencio de tsc en una
 	// respuesta, y no cuesta nada. Ver la comprobación del final de esta función.
 	comunes := []string{"--noEmit", "--incremental", "--pretty", "false", "--extendedDiagnostics"}
-	if bin == "npx" {
-		out, salioMal, err = runToolConSalida(ctx, abs, "npx.cmd", append([]string{"--no-install", "tsc"}, comunes...)...)
+	if bin == npx {
+		out, salioMal, err = runToolConSalida(ctx, abs, npx, append([]string{"--no-install", "tsc"}, comunes...)...)
 	} else {
 		out, salioMal, err = runToolConSalida(ctx, abs, bin, comunes...)
 	}

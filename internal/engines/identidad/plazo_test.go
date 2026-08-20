@@ -55,7 +55,7 @@ func TestUnMotorQueTardaNoSeAcusaDeNoArrancar(t *testing.T) {
 	// Si algún día se paraleliza, primero hay que pasar el plazo por parámetro.
 	original := plazoArranque
 	plazoArranque = 120 * time.Millisecond
-	defer func() { plazoArranque = original }()
+	t.Cleanup(func() { plazoArranque = original })
 
 	if motivo := noArranca(pmd); motivo != "" {
 		t.Errorf("se agotó el plazo y se acusó al motor de no arrancar: %q\n"+

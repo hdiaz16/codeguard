@@ -45,7 +45,13 @@ func TestEntornoConservaLoNecesario(t *testing.T) {
 	}
 	// Sin PATH no se encuentra ni el binario del motor; sin SystemRoot
 	// Windows no arranca el proceso.
-	for _, necesaria := range []string{"PATH", "SYSTEMROOT", "TEMP"} {
+	necesarias := []string{"PATH"}
+	if runtime.GOOS == "windows" {
+		necesarias = append(necesarias, "SYSTEMROOT", "TEMP")
+	} else {
+		necesarias = append(necesarias, "HOME")
+	}
+	for _, necesaria := range necesarias {
 		if !claves[necesaria] {
 			t.Errorf("falta %s: los motores no podrían correr", necesaria)
 		}

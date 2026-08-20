@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -163,7 +164,11 @@ func revisarRepo(root string) int {
 
 	// 4. el shim sabe dónde está el binario
 	if out, err := gitCmd("-C", root, "config", "codeguard.binpath").Output(); err == nil {
-		bin := filepath.Join(strings.TrimSpace(string(out)), "codeguard.exe")
+		nombreBin := "codeguard"
+		if runtime.GOOS == "windows" {
+			nombreBin = "codeguard.exe"
+		}
+		bin := filepath.Join(strings.TrimSpace(string(out)), nombreBin)
 		if _, err := os.Stat(bin); err == nil {
 			checks["binpath"] = chequeo{true, filepath.ToSlash(filepath.Dir(bin))}
 		} else {

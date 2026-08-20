@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -397,14 +398,20 @@ func lotesDeRutas(rutas []string, limite int) [][]string {
 // node_modules suele estar hoisted a la raíz del monorepo y no junto al
 // manifiesto: ahí falla el lookup local y entra npx, que sí resuelve subiendo.
 func binarioJS(absProyecto string, tool herramienta) (string, []string) {
-	if st, err := os.Stat(filepath.Join(absProyecto, "node_modules", ".bin", string(tool)+".cmd")); err == nil && !st.IsDir() {
-		return filepath.Join(absProyecto, "node_modules", ".bin", string(tool)+".cmd"), nil
+	sufijo := ""
+	npx := "npx"
+	if runtime.GOOS == "windows" {
+		sufijo = ".cmd"
+		npx = "npx.cmd"
+	}
+	if st, err := os.Stat(filepath.Join(absProyecto, "node_modules", ".bin", string(tool)+sufijo)); err == nil && !st.IsDir() {
+		return filepath.Join(absProyecto, "node_modules", ".bin", string(tool)+sufijo), nil
 	}
 	paquete := "eslint"
 	if tool == hBiome {
 		paquete = "@biomejs/biome" // el paquete no se llama como su binario
 	}
-	return "npx.cmd", []string{"--no-install", paquete}
+	return npx, []string{"--no-install", paquete}
 }
 
 func correrLinterJS(ctx context.Context, repoRoot, dir string, tool herramienta, rutas []string) ([]finding.Finding, error) {

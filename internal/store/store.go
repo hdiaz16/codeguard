@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -119,13 +120,40 @@ const busyTimeoutMS = 5000
 
 func Open(path string) (*Store, error) { return abrir(path, busyTimeoutMS) }
 
+func dsnSQLite(path string, busyMS int) string {
+	if path == ":memory:" || strings.HasPrefix(path, "file::memory:") {
+		return fmt.Sprintf("file::memory:?mode=memory&_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)", busyMS)
+	}
+	v := url.Values{}
+	v.Add("_pragma", "foreign_keys(1)")
+	v.Add("_pragma", "journal_mode(WAL)")
+	v.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyMS))
+
+	base := filepath.ToSlash(path)
+	if strings.ContainsAny(base, "?#") {
+		base = url.PathEscape(base)
+	}
+	return fmt.Sprintf("%s?%s", base, v.Encode())
+}
+
 // abrir concentra la política de conexión en un solo sitio. El busy_timeout va
 // como parámetro porque es una política —cuánto se aguanta a otro proceso—, no
 // una constante del esquema: bajarlo deja al descubierto la contención DENTRO
 // del proceso, que es exactamente lo que el pool de abajo tiene que eliminar.
 func abrir(path string, busyMS int) (*Store, error) {
-	db, err := sql.Open("sqlite", fmt.Sprintf(
-		"%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(%d)", path, busyMS))
+	if path == "" {
+		return nil, errors.New("store: ruta de base de datos vacía")
+	}
+	if path != ":memory:" && !strings.HasPrefix(path, "file::memory:") {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+		if runtime.GOOS != "windows" {
+			_ = os.Chmod(dir, 0o700)
+		}
+	}
+	db, err := sql.Open("sqlite", dsnSQLite(path, busyMS))
 	if err != nil {
 		return nil, err
 	}
@@ -689,7 +717,10 @@ func DefaultPath() string {
 		// datos en el sitio equivocado no se nota hasta que faltan los datos.
 		return ""
 	}
-	_ = os.MkdirAll(dir, 0o755) // best-effort: Open dará el error real si no se puede escribir
+	_ = os.MkdirAll(dir, 0o700) // best-effort: Open dará el error real si no se puede escribir
+	if runtime.GOOS != "windows" {
+		_ = os.Chmod(dir, 0o700)
+	}
 	return filepath.Join(dir, "codeguard.db")
 }
 

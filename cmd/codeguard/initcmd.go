@@ -286,7 +286,7 @@ max_diff_lines: 2000
 				if errDesh != nil {
 					estado = "no pude deshacerlo del todo: " + errDesh.Error()
 				}
-				return fmt.Errorf("falló el baseline: %w\n%s. Resuelve la causa y %s.",
+				return fmt.Errorf("falló el baseline: %w (%s; resuelve la causa y %s)",
 					err, estado, reintento)
 			}
 			// registrar el proyecto: aparece en el panel y el explorador desde
