@@ -81,6 +81,10 @@ func (e GoFmt) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 	}
 
 	nuevos := []finding.Finding{}
+	// verificados son los archivos cuyo contenido se llegó a leer y a pasar por
+	// go/format. Es la lista que alimenta el caché, y no `pendientes`, por el
+	// motivo que explica el comentario de más abajo.
+	verificados := []gitdiff.ChangedFile{}
 	for _, cf := range pendientes {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -107,6 +111,14 @@ func (e GoFmt) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 			return nil, fmt.Errorf("gofmt no pudo leer %s, que sí está en el cambio: %v — "+
 				"el formato de ese archivo NO se revisó", cf.Path, err)
 		}
+		// A partir de aquí el contenido SÍ se conoce, y sólo entonces es
+		// cacheable: la clave del caché es el SHA256 que trae el diff de git, no
+		// uno calculado aquí, así que meter en el caché un archivo que se saltó
+		// por ErrNotExist guardaría «este contenido está bien formateado» sin
+		// haberlo leído nunca. El día que ese mismo contenido reaparezca
+		// —restaurado, o la misma copia en otra ruta— sería acierto de caché y
+		// pasaría sin que nadie le mire el formato.
+		verificados = append(verificados, cf)
 		// Los finales de línea son asunto de git (.gitattributes), no del
 		// formato: en Windows autocrlf deja CRLF en disco y bloquear por eso
 		// convertiría el agente en un obstáculo. Se compara normalizado a LF.
@@ -140,7 +152,7 @@ func (e GoFmt) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 	}
 
 	if e.Cache != nil {
-		e.Cache.Guardar(porArchivoGoFmt(nuevos, pendientes))
+		e.Cache.Guardar(porArchivoGoFmt(nuevos, verificados))
 	}
 	return append(findings, nuevos...), nil
 }

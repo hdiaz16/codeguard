@@ -1,4 +1,4 @@
-﻿# =============================================================================
+# =============================================================================
 # CodeGuard - instalador v1
 # Instala el agente completo para el usuario actual (sin admin - hardening 13):
 #   binarios -> %LOCALAPPDATA%\CodeGuard\bin
@@ -41,24 +41,26 @@ Ok "binarios y rulepack copiados"
 # internal/engines/identidad/motores.json).
 & (Join-Path $Src "engines.ps1") -EnginesDir $Engines -SkipTrivy:$SkipTrivy
 
-# ── 4. PATH de usuario ───────────────────────────────────────────────────────
-Step "Registrando PATH de usuario"
-$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-foreach ($p in @($Bin, $Engines)) {
-    if ($userPath -notlike "*$p*") { $userPath = "$p;$userPath" }
+# ── 4. Integracion de terminal (perfil de PowerShell, sin tocar registro) ────
+Step "Configurando acceso en terminal"
+$perfiles = @($PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost) | Select-Object -Unique
+$bloquePerfil = "`n# >>> CodeGuard >>>`nif (`$env:PATH -notlike `"*$Bin*`") { `$env:PATH = `"$Bin;$Engines;`$env:PATH`" }`n# <<< CodeGuard <<<`n"
+foreach ($p in $perfiles) {
+    if ($p) {
+        $dirP = Split-Path $p
+        if (-not (Test-Path $dirP)) { New-Item -ItemType Directory -Force -Path $dirP | Out-Null }
+        $actual = if (Test-Path $p) { Get-Content $p -Raw } else { "" }
+        if ($actual -notmatch '# >>> CodeGuard >>>') {
+            Add-Content -Path $p -Value $bloquePerfil -Encoding UTF8
+        }
+    }
 }
-[Environment]::SetEnvironmentVariable("PATH", $userPath, "User")
-Ok "PATH actualizado (abre una terminal nueva para heredarlo)"
+$env:PATH = "$Bin;$Engines;$env:PATH"
+Ok "acceso configurado en perfil de PowerShell (cero modificaciones al registro)"
 
 # ── 5. API key del modelo (Administrador de credenciales) ────────────────────
 #
-# La clave va a la boveda del usuario, NO a HKCU\Environment.
-#
-# Escribirla como variable de usuario la dejaba en texto plano en el registro:
-# cualquier programa del usuario la leia con un `Get-ChildItem Env:`, y todo
-# proceso hijo la heredaba. El daemon la migraba a la boveda al arrancar, pero
-# entre la instalacion y ese arranque habia una ventana real — y si el daemon
-# no arrancaba, la copia se quedaba ahi indefinidamente.
+# La clave va a la boveda del usuario, NO al registro.
 #
 # Se pasa por la ENTRADA ESTANDAR y no como argumento: un argumento es visible
 # en la lista de procesos mientras dura, y en PowerShell queda ademas en el
@@ -71,21 +73,33 @@ if ($ApiKey) {
         Write-Host "    No se pudo guardar FOUNDRY_API_KEY en el Administrador de credenciales" -ForegroundColor Yellow
         Write-Host "    Guardala desde la ventana del agente (codeguard config) cuando arranque." -ForegroundColor Yellow
     }
-    # Que no quede rastro de instalaciones anteriores que si la escribieron ahi.
-    if ([Environment]::GetEnvironmentVariable("FOUNDRY_API_KEY", "User")) {
-        [Environment]::SetEnvironmentVariable("FOUNDRY_API_KEY", $null, "User")
-        Ok "Copia antigua de FOUNDRY_API_KEY borrada del registro"
-    }
 } else {
     Write-Host "    (sin -ApiKey: la capa LLM quedara apagada hasta definir FOUNDRY_API_KEY)" -ForegroundColor Yellow
 }
 
-# ── 6. daemon con la sesion de Windows ───────────────────────────────────────
-Step "Arranque automatico del daemon"
-Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
-    -Name "CodeGuard" -Value "`"$Bin\codeguard-daemon.exe`""
+# ── 6. daemon con la sesion de Windows (Startup folder, sin registro) ────────
+Step "Configurando arranque automatico del daemon (carpeta Inicio)"
+# Limpieza preventiva de residuo legacy en registro de versiones previas
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CodeGuard" -ErrorAction SilentlyContinue
+
+$startupDir = [Environment]::GetFolderPath("Startup")
+$lnkPath    = Join-Path $startupDir "CodeGuard.lnk"
+$ws = $null
+try {
+    $ws  = New-Object -ComObject WScript.Shell
+    $lnk = $ws.CreateShortcut($lnkPath)
+    $lnk.TargetPath = "$Bin\codeguard-daemon.exe"
+    $lnk.WorkingDirectory = "$Bin"
+    $lnk.IconLocation = "$Bin\codeguard-daemon.exe,0"
+    $lnk.Save()
+    Ok "acceso directo creado en Inicio ($lnkPath)"
+} catch {
+    Write-Host "    Aviso: no se pudo crear el acceso directo en Inicio: $_" -ForegroundColor Yellow
+} finally {
+    if ($ws) { [Runtime.InteropServices.Marshal]::ReleaseComObject($ws) | Out-Null }
+}
+
 Get-Process codeguard-daemon -ErrorAction SilentlyContinue | Stop-Process -Force -Confirm:$false
-$env:PATH = [Environment]::GetEnvironmentVariable("PATH", "User") + ";" + $env:PATH
 Start-Process "$Bin\codeguard-daemon.exe"
 Ok "daemon corriendo (el orbe vive abajo a la derecha)"
 

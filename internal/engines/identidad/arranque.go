@@ -18,6 +18,15 @@ import (
 // Los dos números se buscan POR SEPARADO y no con un solo patrón: el mensaje
 // viaja en una o en dos líneas según quién lo formatee, y un `.*?` entre ellos
 // no cruza el salto.
+// falloDeCarga recoge las quejas con las que la JVM confiesa que NO pudo cargar
+// el artefacto: jar corrupto, manifiesto sin Main-Class, clase principal
+// inencontrable, o versión de clase incompatible cuando el mensaje no trae los
+// números que buscan claseNecesita/claseTiene. Son las únicas salidas con código
+// de error que PRUEBAN que el artefacto no arranca. El resto —el uso que imprime
+// un jar sano al no reconocer --version, por ejemplo— prueba lo contrario: la
+// JVM arrancó y el main corrió.
+var falloDeCarga = regexp.MustCompile(`Invalid or corrupt jarfile|no main manifest attribute|Could not find or load main class|UnsupportedClassVersionError`)
+
 var (
 	claseNecesita = regexp.MustCompile(`class file version (\d+)\.`)
 	claseTiene    = regexp.MustCompile(`up to (\d+)\.`)
@@ -65,6 +74,30 @@ func noArranca(ruta string) string {
 		return "" // .exe nativo: no aplica
 	}
 
+	// Al vencer el plazo hay que tumbar el ÁRBOL, no sólo el proceso directo:
+	// pmd.bat es un cmd que lanza java, y el Kill por defecto de CommandContext
+	// mata el cmd y deja la JVM huérfana — una fuga de memoria y CPU por cada
+	// comprobación que agote el plazo, en un daemon que vive días. taskkill /T
+	// recorre el árbol y se los lleva juntos.
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		// El taskkill también pasa por comandoIdentidad: es la regla del paquete
+		// —y hay una prueba que la vigila— porque un hijo armado a mano abre
+		// ventana negra y hereda el entorno entero, con la clave del modelo
+		// dentro. Lleva contexto propio: el del comando acaba de vencer, y con
+		// ése el kill se cancelaría antes de empezar.
+		ctxKill, cancelKill := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelKill()
+		return comandoIdentidad(ctxKill, "taskkill",
+			"/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F").Run()
+	}
+	// Y WaitDelay acota la espera de Wait por si un hijo moribundo retiene las
+	// tuberías: sin él, CombinedOutput podía colgarse más allá del plazo que
+	// acababa de agotarse. Mismo recurso que ya usa auditoria.go.
+	cmd.WaitDelay = 5 * time.Second
+
 	salida, err := cmd.CombinedOutput()
 	if err == nil {
 		return ""
@@ -108,7 +141,16 @@ func noArranca(ruta string) string {
 			" y esta máquina tiene JDK " + strconv.Itoa(t-44) +
 			": instala uno más nuevo o esta capa quedará degradada"
 	}
-	// Cualquier otro motivo: se da la primera línea real, sin inventar un
+	// Fuera de la versión de clase, sólo se acusa con PRUEBA de que la JVM no
+	// pudo cargar el artefacto. Un jar o un PMD que arranca perfectamente pero no
+	// reconoce --version imprime su uso y sale con código distinto de cero: eso
+	// no es «no arranca», es «arrancó y no le gustó el flag». Acusarlo sería la
+	// misma mentira contra un artefacto sano que los dos comentarios de arriba
+	// vienen a desterrar — y manda al dev a reinstalar algo que funciona.
+	if !falloDeCarga.MatchString(texto) {
+		return ""
+	}
+	// Fallo de carga probado: se da la primera línea real, sin inventar un
 	// diagnóstico que no se pudo leer.
 	return "no arranca en esta máquina: " + primeraLinea(texto)
 }

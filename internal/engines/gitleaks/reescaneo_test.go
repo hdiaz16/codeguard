@@ -61,7 +61,10 @@ func repoVacio(t *testing.T) string {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Skipf("no pude preparar el repo (%v): %s", err, out)
+			// El binario ya se encontró con LookPath arriba: si init o config
+			// fallan CON git presente, el entorno está roto y la compuerta no se
+			// ejecutó. Un skip aquí dejaba el pipeline verde sin probar nada.
+			t.Fatalf("no pude preparar el repo (%v): %s", err, out)
 		}
 	}
 	return repo
@@ -83,7 +86,12 @@ func gitEn(t *testing.T, repo string, args ...string) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("git %s falló (%v): %s", strings.Join(args, " "), err, out)
+		// Estos comandos SON el montaje del escenario bajo prueba (add, commit,
+		// mv), no una dependencia del entorno —ésa ya se validó con LookPath en
+		// repoVacio—. Si fallan, el test no probó nada: con t.Skipf, los cinco
+		// ataques y los ocho casos normales quedaban «omitidos» y la suite en
+		// verde. Tiene que salir rojo.
+		t.Fatalf("git %s falló (%v): %s", strings.Join(args, " "), err, out)
 	}
 }
 

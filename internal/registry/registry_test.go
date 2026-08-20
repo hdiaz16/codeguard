@@ -82,8 +82,14 @@ func TestRemoveNormalizaLaRuta(t *testing.T) {
 	}
 	Add(repo, "proyecto", "")
 
-	// Misma carpeta, escrita distinto: separadores \, mayúsculas cambiadas,
-	// barra final. Debe encontrarla igual.
+	// Misma carpeta escrita distinto: mayúsculas cambiadas y barra final. Debe
+	// encontrarla igual.
+	//
+	// El comentario anterior prometía también «separadores \», y eso no se
+	// prueba: `repo` sale de filepath.Join, que en Windows ya los pone. Y la
+	// equivalencia de mayúsculas se exige porque el FS de Windows no distingue
+	// caso —es la única plataforma del producto, README línea 5—; en un FS que sí
+	// distinguiera, equipararlas sería el comportamiento incorrecto.
 	variante := strings.ToUpper(repo) + string(filepath.Separator)
 	if !Remove(variante) {
 		t.Errorf("Remove debió encontrar %q pese a la forma distinta", variante)
@@ -106,7 +112,14 @@ func TestElArchivoEsSiempreUnaLista(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) == 0 || raw[0] != '[' {
+	// El caso vacío va aparte —igual que en la línea 42— porque los argumentos
+	// del Errorf se evalúan SIEMPRE: con `raw` vacío, el `raw[:1]` del mensaje
+	// rebana fuera de rango y la prueba muere con un panic de bounds en vez de
+	// reportar el fallo que acababa de detectar.
+	if len(raw) == 0 {
+		t.Fatal("el registro quedó vacío")
+	}
+	if raw[0] != '[' {
 		t.Errorf("el registro debe empezar por '['; empieza por %q", string(raw[:1]))
 	}
 }

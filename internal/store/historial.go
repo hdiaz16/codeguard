@@ -50,13 +50,22 @@ func (s *Store) Historial(repoID string, limite int) (Historial, error) {
 	// run: así el número que se enseña es el que de verdad se guardó, y no una
 	// cifra que pudo quedarse desincronizada.
 	filas, err := s.db.Query(`
-		SELECT r.started_at, r.branch, COALESCE(r.verdict,''), r.bypassed, r.elapsed_ms,
+		-- El COALESCE se aplica también a bypassed y elapsed_ms, no sólo a
+		-- verdict: tienen el mismo riesgo (corridas anteriores a la columna, o
+		-- interrumpidas), y un solo NULL en una fila vieja hacía fallar el Scan
+		-- y dejaba de pintarse el historial ENTERO.
+		SELECT r.started_at, r.branch, COALESCE(r.verdict,''),
+		       COALESCE(r.bypassed, 0), COALESCE(r.elapsed_ms, 0),
 		       COALESCE(SUM(CASE WHEN f.blocking = 1 THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN f.blocking = 0 THEN 1 ELSE 0 END), 0)
 		FROM runs r LEFT JOIN findings f ON f.run_id = r.id
 		WHERE r.repo_id = ?
 		GROUP BY r.id
-		ORDER BY r.started_at DESC
+		-- Mismo desempate por id que la subconsulta de «la corrida más reciente»
+		-- de abajo: sin él, dos corridas del mismo segundo —caso habitual, como
+		-- reconoce el comentario de esa subconsulta— se ordenan al azar y el
+		-- panel puede contradecir a la lógica de cerrados.
+		ORDER BY r.started_at DESC, r.id DESC
 		LIMIT ?`, repoID, limite)
 	if err != nil {
 		return h, fmt.Errorf("no pude leer las corridas: %w", err)

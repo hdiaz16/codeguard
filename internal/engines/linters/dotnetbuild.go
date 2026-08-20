@@ -158,10 +158,27 @@ func (e DotnetBuild) Run(ctx context.Context, in engines.Input) ([]finding.Findi
 		return nil, fmt.Errorf("SDK de .NET no disponible: %w", err)
 	}
 	var out []finding.Finding
+	// La huella de los manifiestos globales es la misma para todos los proyectos
+	// de este Run: se paga UNA vez y se combina en cada clave, en vez de recorrer
+	// el repo entero por cada .csproj para volver a obtener el mismo valor.
+	// Vacía = no cacheable, igual que antes: se compila sin caché, no se calla.
+	//
+	// Y el recorrido del repo se hace una sola vez para TODAS las claves de este
+	// Run: antes cada .csproj tocado pagaba su propio `git ls-files` y volvía a
+	// hashear los archivos que comparte con los demás (un Core.csproj
+	// referenciado por cuatro proyectos se hasheaba cuatro veces).
+	huellaGlobal := ""
+	var huellas *engines.HuellasRepo
+	if e.Cache != nil {
+		huellas = engines.LeerHuellasRepo(in.RepoRoot)
+		huellaGlobal = huellas.Modulo(".", func(rel string) bool {
+			return dnbEsManifiestoGlobal(strings.ToLower(path.Base(rel)))
+		})
+	}
 	for _, proy := range proys {
 		clave := ""
 		if e.Cache != nil {
-			if clave = claveCsproj(in.RepoRoot, proy); clave != "" {
+			if clave = claveCsproj(huellas, in.RepoRoot, proy, huellaGlobal); clave != "" {
 				if fs, ok := e.Cache.Leer([]string{clave})[clave]; ok {
 					out = append(out, fs...)
 					continue
@@ -551,7 +568,19 @@ func dnbRelativizar(archivo string, bases []string) string {
 // Los manifiestos heredados (Directory.Build.props, .editorconfig...) cuentan a
 // cualquier altura: uno en la raíz cambia los analizadores de un proyecto que
 // vive tres niveles más abajo. Vacía = no cacheable.
-func claveCsproj(repoRoot, csproj string) string {
+// dnbEsManifiestoGlobal reconoce los archivos que afectan a CUALQUIER proyecto
+// del repo a cualquier altura: uno en la raíz cambia los analizadores de un
+// proyecto que vive tres niveles más abajo.
+func dnbEsManifiestoGlobal(base string) bool {
+	switch base {
+	case "directory.build.props", "directory.build.targets",
+		"directory.packages.props", "nuget.config", "global.json", ".editorconfig":
+		return true
+	}
+	return false
+}
+
+func claveCsproj(huellas *engines.HuellasRepo, repoRoot, csproj, huellaGlobal string) string {
 	ambito := dnbAmbito(repoRoot, csproj)
 	prefijos := make([]string, 0, len(ambito))
 	for _, p := range ambito {
@@ -561,12 +590,20 @@ func claveCsproj(repoRoot, csproj string) string {
 			prefijos = append(prefijos, d+"/")
 		}
 	}
-	huella := engines.HuellaModulo(repoRoot, ".", func(rel string) bool {
+	// Los manifiestos globales NO se hashean aquí: pesan en huellaGlobal, que se
+	// calcula una sola vez por Run. Antes este predicado los incluía, así que
+	// Directory.Build.props y compañía se re-hasheaban una vez por cada .csproj
+	// tocado.
+	//
+	// El recorrido en sí tampoco se repite: `huellas` es un engines.HuellasRepo
+	// creado UNA vez en Run, que comparte el `git ls-files` y memoriza los shas.
+	// Quitar los manifiestos de aquí ahorró re-hashearlos; compartir el
+	// recorrido ahorró volver a enumerar el repo por cada proyecto. Son dos
+	// cosas distintas y hicieron falta las dos.
+	huella := huellas.Modulo(".", func(rel string) bool {
 		base := strings.ToLower(path.Base(rel))
-		switch base {
-		case "directory.build.props", "directory.build.targets",
-			"directory.packages.props", "nuget.config", "global.json", ".editorconfig":
-			return true
+		if dnbEsManifiestoGlobal(base) {
+			return false
 		}
 		dentro := false
 		for _, p := range prefijos {
@@ -583,10 +620,10 @@ func claveCsproj(repoRoot, csproj string) string {
 			strings.HasSuffix(base, ".props") || strings.HasSuffix(base, ".targets") ||
 			strings.HasSuffix(base, ".resx")
 	})
-	if huella == "" {
+	if huellaGlobal == "" || huella == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(huella + "|" + strings.Join(ambito, ",")))
+	sum := sha256.Sum256([]byte(huellaGlobal + "|" + huella + "|" + strings.Join(ambito, ",")))
 	return "dotnet-build:" + hex.EncodeToString(sum[:])
 }
 
@@ -633,11 +670,22 @@ func dnbRecorte(texto string) string {
 
 // rutaObjPrivado devuelve el directorio intermedio de CodeGuard para un
 // proyecto: fuera del repo, en el temporal, y con un nombre derivado de la ruta
-// del .csproj para que dos proyectos no se pisen.
+// del .csproj Y del proceso. Lo de la ruta evita que dos proyectos se pisen; lo
+// del proceso, que dos CodeGuard a la vez sobre el mismo repo (dos commits, o un
+// IDE que dispara el hook mientras otro corre) compartan el obj/: MSBuild no
+// admite dos builds escribiendo en el mismo directorio intermedio, y un
+// artefacto de la otra instancia podía pasar por prueba de ESTA corrida en
+// dnbCompiloDeVerdad.
+//
+// No se borra al terminar a propósito: el mismo proceso lo reutiliza entre
+// commits —el daemon vive días con el mismo PID— y con él el restore de NuGet,
+// que volver a pagar en cada commit costaría más que el build. Lo que queda
+// huérfano al reiniciar vive en el temporal del usuario, que el sistema limpia.
 //
 // Termina en separador porque MSBuild lo exige en las rutas de salida.
 func rutaObjPrivado(repoRoot, csproj string) string {
 	sum := sha256.Sum256([]byte(strings.ToLower(filepath.Join(repoRoot, filepath.FromSlash(csproj)))))
-	dir := filepath.Join(os.TempDir(), "codeguard-obj", hex.EncodeToString(sum[:8]))
+	dir := filepath.Join(os.TempDir(), "codeguard-obj",
+		hex.EncodeToString(sum[:8])+"-"+strconv.Itoa(os.Getpid()))
 	return dir + string(os.PathSeparator)
 }

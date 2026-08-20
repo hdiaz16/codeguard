@@ -84,7 +84,20 @@ func TestConTypeScriptRealLosErroresDeTiposSiguenSaliendo(t *testing.T) {
 	// proyecto de juguete es de quien lo instaló y tiene que quedar como estaba.
 	rel := "src/control_codeguard.ts"
 	ruta := filepath.Join(raiz, filepath.FromSlash(rel))
-	if err := os.WriteFile(ruta, []byte("export const mal: string = 5;\n"), 0o644); err != nil {
+	// O_EXCL y no WriteFile: esta ruta vive en el proyecto que apunta
+	// CODEGUARD_TOY_TS, que NO es del test. WriteFile trunca si el archivo ya
+	// existe y el Cleanup de abajo lo remata borrándolo: se destruiría un archivo
+	// ajeno sin vuelta atrás. Con la creación exclusiva, si existe se aborta —y
+	// sin ventana TOCTOU entre comprobar y escribir—.
+	f, err := os.OpenFile(ruta, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		t.Fatalf("no se puede crear %s sin pisar nada (¿ya existía?): %v", rel, err)
+	}
+	if _, err := f.WriteString("export const mal: string = 5;\n"); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(ruta) })

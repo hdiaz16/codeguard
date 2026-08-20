@@ -411,7 +411,9 @@ func SHA256De(repoRoot, rel string) string {
 func Rastreados(repoRoot string, patrones ...string) ([]string, error) {
 	// core.quotePath ya lo pone `run` para todos: aquí sólo queda el -z, que
 	// además protege de nombres con espacios o saltos de línea.
-	args := append([]string{"ls-files", "-z"}, patrones...)
+	// El "--" es el separador estándar de pathspecs de git: un patrón que
+	// empiece por "-" se leería como opción de ls-files sin él.
+	args := append([]string{"ls-files", "-z", "--"}, patrones...)
 	out, err := run(repoRoot, args...)
 	if err != nil {
 		return nil, err

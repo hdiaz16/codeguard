@@ -122,15 +122,25 @@ type panelPayload struct {
 	// archivos están excluidos", una conjetura escrita a mano sobre un dato que
 	// ya estaba cruzando el pipe. Y el orbe no podía distinguir la decisión del
 	// equipo de la avería, que es la diferencia entre no alarmar y avisar.
-	Reason    string         `json:"reason,omitempty"`
-	Blocking  int            `json:"blocking"`
-	Advisory  int            `json:"advisory"`
-	CIParity  bool           `json:"ci_parity"`
-	Degraded  []string       `json:"degraded"`
-	Findings  []panelFinding `json:"findings"`
-	MaxShow   int            `json:"max_show"`
-	ElapsedMs int64          `json:"elapsed_ms"`
-	At        string         `json:"at"`
+	Reason   string         `json:"reason,omitempty"`
+	Blocking int            `json:"blocking"`
+	Advisory int            `json:"advisory"`
+	CIParity bool           `json:"ci_parity"`
+	Degraded []string       `json:"degraded"`
+	Findings []panelFinding `json:"findings"`
+	// ChangedFiles son las rutas que tocó el commit, tal como llegan en
+	// ipc.Request.StagedFiles. Sin ellas el overlay del explorador sólo podía
+	// iluminar los archivos CON hallazgos, y un archivo del diff que salió
+	// limpio no marcaba su zona: el dato cruzaba el pipe y se tiraba aquí.
+	//
+	// Viajan SÓLO rutas —ni contenido, ni líneas, ni hashes—: es lo que el
+	// overlay necesita y nada de lo que la regla del canal prohíbe. Va vacío en
+	// el aviso de secreto bloqueado, que no trae staged (hook.go:384); el
+	// overlay lo cubre uniendo los archivos con hallazgos.
+	ChangedFiles []string `json:"changed_files,omitempty"`
+	MaxShow      int      `json:"max_show"`
+	ElapsedMs    int64    `json:"elapsed_ms"`
+	At           string   `json:"at"`
 }
 
 // proyectoEnLista es una fila de la lista de proyectos del panel.
@@ -161,10 +171,30 @@ func snippet(repoRoot, rel string, line int) []snippetLine {
 	// Confinado al repo: una ruta manipulada en la salida de un escáner no
 	// debe poder mostrar archivos de fuera (gosec G304/G703).
 	full := filepath.Clean(filepath.Join(repoRoot, filepath.FromSlash(rel)))
-	if !strings.HasPrefix(full, filepath.Clean(repoRoot)+string(filepath.Separator)) {
+	raiz := filepath.Clean(repoRoot)
+	if !strings.HasPrefix(full, raiz+string(filepath.Separator)) {
 		return nil
 	}
-	f, err := os.Open(full)
+	// El prefijo valida la ruta LÉXICA, no su destino, y lo que se acaba
+	// abriendo es el destino: un symlink o junction dentro del repo que apunte
+	// fuera atraviesa el filtro sin cambiar la ruta, y el fragmento acabaría
+	// pintado en un panel que se comparte por pantalla. Se resuelven los dos
+	// lados y se repite el chequeo sobre las rutas reales —que además
+	// canonicaliza las formas cortas 8.3 de Windows, la misma trampa que ya
+	// costó los hallazgos perdidos de mypy—. Si no se pueden resolver, no se
+	// abre nada.
+	realFull, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return nil
+	}
+	realRaiz, err := filepath.EvalSymlinks(raiz)
+	if err != nil {
+		return nil
+	}
+	if !strings.HasPrefix(realFull, realRaiz+string(filepath.Separator)) {
+		return nil
+	}
+	f, err := os.Open(realFull)
 	if err != nil {
 		return nil
 	}
@@ -389,6 +419,14 @@ func (t *trayState) revertirAIdle(gen uint64, tooltip string) {
 }
 
 // aplicar pinta el estado donde el usuario lo ve.
+//
+// Se auditó por qué corre fuera de mu (dos pintados concurrentes pueden llegar
+// a la bandeja en orden distinto al de su generación) y se dejó COMO ESTÁ: el
+// propio TestTrayCambiosConcurrentesNoSePierdenNiSeMezclan documenta ese orden
+// como no cubierto a propósito —una ventana de microsegundos frente a los 15
+// segundos del fallo que arregló H006— y el invariante que sí exige es que no se
+// pierda ninguna emisión. Serializar aquí y descartar las generaciones
+// superadas se probó: perdía 280 de 1600 emisiones y rompía ese invariante.
 func (t *trayState) aplicar(state, tooltip string) {
 	// Sin bandeja del sistema (pruebas) el estado se observa sólo por emit.
 	if t.tray != nil {

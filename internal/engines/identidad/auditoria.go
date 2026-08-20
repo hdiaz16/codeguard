@@ -53,6 +53,13 @@ type Auditoria struct {
 	// AvisosExcepciones son las excepciones que no sirven: caducadas, sin firma,
 	// o que ya no cubren nada. Se dicen aunque no cambien el veredicto.
 	AvisosExcepciones []string
+	// ahora es el reloj con el que Auditar juzgó las excepciones (op.Ahora, o el
+	// de verdad si venía a cero). Graves() tiene que fallar con el MISMO reloj:
+	// recalcularlo por su cuenta con time.Now() eran dos fuentes de verdad para
+	// un solo veredicto, y una excepción vigente según Ahora podía salir
+	// bloqueante en Graves() —o al revés—, con las pruebas de caducidad midiendo
+	// una cosa y el veredicto diciendo otra.
+	ahora time.Time
 }
 
 // Graves son los que no deberían viajar en un instalador: crítico y alto,
@@ -64,7 +71,14 @@ func (a Auditoria) Graves() []Riesgo {
 			out = append(out, r)
 		}
 	}
-	bloquean, _, _ := aplicarExcepciones(out, time.Now())
+	ahora := a.ahora
+	if ahora.IsZero() {
+		// Sólo una Auditoria construida a mano (sin pasar por Auditar) llega sin
+		// reloj guardado; ahí no queda otra que el de verdad, que es lo que se
+		// usaba siempre antes.
+		ahora = time.Now()
+	}
+	bloquean, _, _ := aplicarExcepciones(out, ahora)
 	return bloquean
 }
 
@@ -115,23 +129,33 @@ func Auditar(ctx context.Context, op Opciones) (Auditoria, error) {
 	var a Auditoria
 	dirMotores, dirPython := op.DirMotores, op.DirPython
 	binTrivy := op.BinTrivy
+	// Sin directorio de motores no se audita NADA, y por el mismo motivo
+	// que en Verificar: filepath.Join("", "trivy.exe") no da una ruta
+	// vacía, deja "trivy.exe" RELATIVO, que se resuelve contra el
+	// directorio de trabajo — el repo analizado. Pero aquí es peor que
+	// allí: Verificar sólo LEE el binario para firmarlo, y esto lo
+	// EJECUTA.
+	//
+	// La guarda va FUERA del `if binTrivy == ""` porque dirMotores no sólo
+	// sirve para encontrar a trivy: más abajo es la base de TODAS las rutas
+	// de los objetivos (filepath.Join(dirMotores, relativa)). Con un BinTrivy
+	// explícito y DirMotores vacío, esas rutas salían relativas y se
+	// resolvían contra el repo analizado: los motores reales se saltaban en
+	// silencio (os.Stat falla y el bucle sigue) y un archivo plantado por el
+	// repo en ./gitleaks.exe se auditaba como si fuera el motor instalado.
+	// La verificación anti supply-chain quedaba anulada justo donde más
+	// importa.
+	//
+	// Hoy el único llamador se guarda antes de llamar, así que no es
+	// alcanzable. Da igual: el invariante es de esta función, no de quien
+	// la llama, y ese es exactamente el argumento con el que se puso la
+	// guarda dentro de Verificar. Dejarla condicionada a cómo llegó trivy
+	// sería sostener el principio sólo donde ya dolía.
+	if dirMotores == "" {
+		return a, fmt.Errorf("sin directorio de motores no hay auditoría posible: " +
+			"no se pudo resolver dónde están instalados")
+	}
 	if binTrivy == "" {
-		// Sin directorio de motores no se audita NADA, y por el mismo motivo
-		// que en Verificar: filepath.Join("", "trivy.exe") no da una ruta
-		// vacía, deja "trivy.exe" RELATIVO, que se resuelve contra el
-		// directorio de trabajo — el repo analizado. Pero aquí es peor que
-		// allí: Verificar sólo LEE el binario para firmarlo, y esto lo
-		// EJECUTA.
-		//
-		// Hoy el único llamador se guarda antes de llamar, así que no es
-		// alcanzable. Da igual: el invariante es de esta función, no de quien
-		// la llama, y ese es exactamente el argumento con el que se puso la
-		// guarda dentro de Verificar. Dejarla fuera aquí sería sostener el
-		// principio sólo donde ya dolía.
-		if dirMotores == "" {
-			return a, fmt.Errorf("sin directorio de motores no hay auditoría posible: " +
-				"no se pudo resolver dónde están instalados")
-		}
 		binTrivy = filepath.Join(dirMotores, "trivy.exe")
 	}
 	if _, err := os.Stat(binTrivy); err != nil {
@@ -172,6 +196,16 @@ func Auditar(ctx context.Context, op Opciones) (Auditoria, error) {
 			vistas[strings.ToLower(ruta)] = true
 			etiqueta := nombre
 			if v.Instalado != "" {
+				etiqueta = nombre + " " + v.Version
+			}
+			// La deduplicación de arriba es por RUTA, pero la clave del mapa es la
+			// ETIQUETA, y la etiqueta corta no distingue dos versiones sin marcar
+			// como instaladas del mismo motor (el caso pmd-bin-7.x): la segunda
+			// pisaba a la primera y esa ruta no se escaneaba NI salía en Omitidos
+			// — un artefacto que viaja en el instalador desaparecía de la
+			// auditoría en silencio, que es justo lo que este archivo no puede
+			// hacer. Si la etiqueta ya está tomada por otra ruta, se versiona.
+			if _, tomada := objetivos[etiqueta]; tomada {
 				etiqueta = nombre + " " + v.Version
 			}
 			objetivos[etiqueta] = ruta
@@ -241,6 +275,7 @@ func Auditar(ctx context.Context, op Opciones) (Auditoria, error) {
 		ahora = time.Now()
 	}
 	_, a.Aceptados, a.AvisosExcepciones = aplicarExcepciones(graves, ahora)
+	a.ahora = ahora // Graves() juzga con este mismo reloj, no con otro
 	return a, nil
 }
 

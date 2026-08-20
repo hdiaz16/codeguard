@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"codeguard/internal/ipc"
 	"codeguard/internal/llm"
 	"codeguard/internal/store"
+	"codeguard/internal/textutil"
 )
 
 // ── Etapa 3: clasificación de riesgo (heurística, sin ML en v1) ──────────
@@ -134,7 +136,13 @@ type Runner struct {
 	Store *store.Store
 	// OnThinking recibe fragmentos del razonamiento del modelo en vivo para
 	// mostrarlos en la UI. pillar=="" y text=="" señala que la sombra terminó.
+	// Las llamadas se serializan con muThinking: quien lo reciba NO necesita
+	// ser seguro para uso concurrente.
 	OnThinking func(pillar, text string)
+	// muThinking serializa OnThinking: los pilares corren en paralelo y sin él
+	// la UI recibiría llamadas simultáneas de las tres goroutines. Va en el
+	// struct y no dentro de Run para cubrir también Runs concurrentes.
+	muThinking sync.Mutex
 }
 
 // Run ejecuta la sombra completa para una petición ya respondida al hook.
@@ -193,10 +201,30 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 		}
 	}
 	diffSHA := sha256hex(req.DiffUnified)
-	if _, hit := r.Store.DiffCacheGet(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model); hit {
-		log.Println("sombra: diff en caché — sin llamadas")
-		r.anotarRiesgo(req.RunID, risk, false)
-		return
+	// La clave del caché lleva los modelos que REALMENTE analizan el diff, no
+	// cfg.LLM.Model: con modelos por pilar, dos repartos distintos colisionaban
+	// en la misma clave y cambiar el modelo de un pilar no invalidaba la
+	// entrada — se servían hallazgos del modelo viejo como si fueran del nuevo.
+	modeloCache := modelosPorPilar(cfg)
+	if cacheado, hit := r.Store.DiffCacheGet(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, modeloCache); hit {
+		var cacheados []finding.Finding
+		if err := json.Unmarshal([]byte(cacheado), &cacheados); err != nil {
+			// Entrada corrupta: NO se sirve un vacío con cara de acierto. Se
+			// cae al análisis real, como si no hubiera caché.
+			log.Printf("sombra: entrada de caché ilegible (%v) — se repite el análisis", err)
+		} else {
+			// El acierto re-registra los hallazgos en ESTE run: son el
+			// resultado del análisis, y la telemetría no debe ver un run vacío.
+			// llm_used va en true porque los hallazgos SON de una llamada al
+			// modelo —hecha antes, pero hecha—; el gasto no se falsea, porque
+			// vive en llm_calls.cost_micros y ahí no se añade ninguna fila.
+			log.Printf("sombra: diff en caché — %d hallazgos re-registrados sin llamadas", len(cacheados))
+			if err := r.Store.SaveLLMFindings(req.RunID, cacheados); err != nil {
+				log.Println("sombra: no se pudieron guardar los hallazgos cacheados:", err)
+			}
+			r.anotarRiesgo(req.RunID, risk, true)
+			return
+		}
 	}
 	r.anotarRiesgo(req.RunID, risk, true)
 
@@ -204,7 +232,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 	// a la red) y truncado por presupuesto, + lo ya encontrado.
 	diff := Redact(req.DiffUnified)
 	if maxChars := cfg.LLM.MaxDiffTokens * 4; len(diff) > maxChars {
-		diff = diff[:maxChars] + "\n[diff truncado por presupuesto]"
+		diff = textutil.TruncarRunas(diff, maxChars) + "\n[diff truncado por presupuesto]"
 	}
 	var detList strings.Builder
 	for _, f := range deterministic {
@@ -232,7 +260,9 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 			if r.OnThinking != nil {
 				onDelta = func(kind, text string) {
 					if kind == "reasoning" {
+						r.muThinking.Lock()
 						r.OnThinking(string(pillar), text)
+						r.muThinking.Unlock()
 					}
 				}
 			}
@@ -273,7 +303,10 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 	}
 	wg.Wait()
 	if r.OnThinking != nil {
+		// Bajo el mismo candado, por si hay Runs concurrentes en este Runner.
+		r.muThinking.Lock()
 		r.OnThinking("", "") // señal de fin: la UI apaga el hilo de pensamiento
+		r.muThinking.Unlock()
 	}
 
 	// Los hallazgos que SÍ se obtuvieron se guardan siempre: son reales aunque
@@ -291,7 +324,7 @@ func (r *Runner) Run(ctx context.Context, cfg *config.Config, req *ipc.Request, 
 	// incompleto con cara de acierto es peor que no tener caché.
 	if completo {
 		if payload, err := json.Marshal(verified); err == nil {
-			_ = r.Store.DiffCachePut(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model, string(payload))
+			_ = r.Store.DiffCachePut(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, modeloCache, string(payload))
 		}
 		log.Printf("sombra: %d hallazgos verificados registrados (shown=0)", len(verified))
 	} else {
@@ -432,6 +465,22 @@ func nonEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// modelosPorPilar resuelve el modelo efectivo de cada pilar y los concatena en
+// orden fijo (el mapa de pilares no garantiza orden de iteración), para que la
+// clave del caché de diffs refleje el reparto real de modelos.
+func modelosPorPilar(cfg *config.Config) string {
+	pilares := make([]string, 0, len(pillarScope))
+	for p := range pillarScope {
+		pilares = append(pilares, string(p))
+	}
+	sort.Strings(pilares)
+	var sb strings.Builder
+	for _, p := range pilares {
+		fmt.Fprintf(&sb, "%s=%s;", p, cfg.LLM.ModelFor(p))
+	}
+	return sb.String()
 }
 
 func sha256hex(s string) string {

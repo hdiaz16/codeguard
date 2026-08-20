@@ -33,7 +33,7 @@ const capturaReal = `{"config":{"protocol_version":"v1.0.0","scanner_name":"govu
 `
 
 func TestSoloElSimboloAlcanzadoEsHallazgo(t *testing.T) {
-	fs, err := interpretar([]byte(capturaReal), ".", false)
+	fs, err := interpretar([]byte(capturaReal), ".", ".", false)
 	if err != nil {
 		t.Fatalf("interpretar: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestSoloElSimboloAlcanzadoEsHallazgo(t *testing.T) {
 }
 
 func TestEnCIBloquea(t *testing.T) {
-	fs, err := interpretar([]byte(capturaReal), ".", true)
+	fs, err := interpretar([]byte(capturaReal), ".", ".", true)
 	if err != nil {
 		t.Fatalf("interpretar: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestEnCIBloquea(t *testing.T) {
 }
 
 func TestMonorepoPrefijaElModulo(t *testing.T) {
-	fs, err := interpretar([]byte(capturaReal), "backend", false)
+	fs, err := interpretar([]byte(capturaReal), ".", "backend", false)
 	if err != nil {
 		t.Fatalf("interpretar: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestStdlibSugiereActualizarGo(t *testing.T) {
 {"osv":{"id":"GO-2026-5856","summary":"Ejemplo stdlib"}}
 {"finding":{"osv":"GO-2026-5856","fixed_version":"v1.26.5","trace":[{"module":"stdlib","version":"v1.26.3","package":"net/http","function":"Serve","position":{"filename":"server.go","line":300}},{"module":"m","package":"m","function":"main","position":{"filename":"cmd/api/main.go","line":12}}]}}
 `
-	fs, err := interpretar([]byte(payload), ".", false)
+	fs, err := interpretar([]byte(payload), ".", ".", false)
 	if err != nil {
 		t.Fatalf("interpretar: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestStdlibSugiereActualizarGo(t *testing.T) {
 }
 
 func TestSalidaIlegible(t *testing.T) {
-	if _, err := interpretar([]byte(`{"finding": {rota`), ".", false); err == nil {
+	if _, err := interpretar([]byte(`{"finding": {rota`), ".", ".", false); err == nil {
 		t.Fatal("una salida ilegible debe degradar el motor, no callar")
 	}
 }
@@ -179,7 +179,7 @@ func TestSoloManifiestosIgnoraCodigoGo(t *testing.T) {
 func TestPresentarseSinEscanearNoEsUnModuloLimpio(t *testing.T) {
 	soloCabecera := `{"config":{"scanner_name":"govulncheck","scanner_version":"v1.6.0"}}` + "\n"
 
-	fs, err := interpretar([]byte(soloCabecera), ".", false)
+	fs, err := interpretar([]byte(soloCabecera), ".", ".", false)
 	if err == nil {
 		t.Fatalf("un flujo con la cabecera y nada más no es un escaneo, y devolvió %d "+
 			"hallazgos sin error: eso llega al panel como capa revisada", len(fs))
@@ -193,7 +193,7 @@ func TestPresentarseSinEscanearNoEsUnModuloLimpio(t *testing.T) {
 		t.Errorf("con cabecera presente, el motivo tiene que decirlo: %v", err)
 	}
 
-	_, err = interpretar(nil, ".", false)
+	_, err = interpretar(nil, ".", ".", false)
 	if err == nil {
 		t.Fatal("stdout vacío tampoco es un módulo limpio")
 	}
@@ -315,7 +315,7 @@ func TestVariasRutasALaMismaVulnerabilidadSonUnHallazgo(t *testing.T) {
 {"finding":{"osv":"GO-2026-0001","fixed_version":"v1.2.3","trace":[{"module":"ejemplo.com/lib","version":"v1.0.0","package":"ejemplo.com/lib","function":"Parse","position":{"filename":"lib/parse.go","line":10}},{"module":"m","package":"m","function":"Segundo","position":{"filename":"internal/b.go","line":50}}]}}
 {"finding":{"osv":"GO-2026-0001","fixed_version":"v1.2.3","trace":[{"module":"ejemplo.com/lib","version":"v1.0.0","package":"ejemplo.com/lib","function":"Parse","position":{"filename":"lib/parse.go","line":10}},{"module":"m","package":"m","function":"Primero","position":{"filename":"cmd/a.go","line":20}}]}}
 `
-	fs, err := interpretar([]byte(payload), ".", false)
+	fs, err := interpretar([]byte(payload), ".", ".", false)
 	if err != nil {
 		t.Fatalf("interpretar: %v", err)
 	}

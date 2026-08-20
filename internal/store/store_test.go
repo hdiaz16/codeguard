@@ -147,7 +147,9 @@ func TestFeedbackRechazaVeredictosInventados(t *testing.T) {
 func TestDiffCache(t *testing.T) {
 	s := bd(t)
 	repoID := CanonicalRepoID("local/cache")
-	s.UpsertRepo(repoID, "", "cache")
+	if err := s.UpsertRepo(repoID, "", "cache"); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, hit := s.DiffCacheGet(repoID, "sha1", "2026.08.2", "cfg1", "modelo"); hit {
 		t.Fatal("caché vacía no puede dar hit")
@@ -170,7 +172,9 @@ func TestDiffCache(t *testing.T) {
 func TestGastoDelMes(t *testing.T) {
 	s := bd(t)
 	repoID := CanonicalRepoID("local/gasto")
-	s.UpsertRepo(repoID, "", "gasto")
+	if err := s.UpsertRepo(repoID, "", "gasto"); err != nil {
+		t.Fatal(err)
+	}
 	guardarRun(t, s, "01RUN", repoID, "pass", nil)
 
 	// 3,500,000 micros = $3.50
@@ -191,7 +195,9 @@ func TestGastoDelMes(t *testing.T) {
 func TestExportarRunsFiltraYEscribeCSV(t *testing.T) {
 	s := bd(t)
 	repoID := CanonicalRepoID("local/export")
-	s.UpsertRepo(repoID, "", "export")
+	if err := s.UpsertRepo(repoID, "", "export"); err != nil {
+		t.Fatal(err)
+	}
 	guardarRun(t, s, "01A", repoID, "block", []finding.Finding{{
 		ID: NewULID(), Engine: "semgrep", RuleKey: "r", Pillar: finding.Security,
 		Severity: finding.Error, Source: finding.Deterministic, Blocking: true,
@@ -237,7 +243,9 @@ func TestExportarRunsFiltraYEscribeCSV(t *testing.T) {
 func TestResumenSemanal(t *testing.T) {
 	s := bd(t)
 	repoID := CanonicalRepoID("local/resumen")
-	s.UpsertRepo(repoID, "", "resumen")
+	if err := s.UpsertRepo(repoID, "", "resumen"); err != nil {
+		t.Fatal(err)
+	}
 
 	if r, err := s.ResumenSemanal(repoID); err != nil || !strings.Contains(r, "sin análisis") {
 		t.Errorf("sin runs: %q (err=%v)", r, err)

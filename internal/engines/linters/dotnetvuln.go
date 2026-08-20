@@ -26,9 +26,9 @@ import (
 // sin que ninguna capa dijera una palabra.
 //
 // La respuesta la da el propio NuGet (`dotnet list package --vulnerable`), que
-// resuelve el grafo real de dependencias y consulta el índice de avisos de
-// nuget.org: eso incluye las TRANSITIVAS, que son la mayoría de los CVEs que se
-// heredan sin saberlo.
+// LEE el grafo de dependencias ya resuelto por un `dotnet restore` anterior y
+// consulta el índice de avisos de nuget.org: eso incluye las TRANSITIVAS, que son
+// la mayoría de los CVEs que se heredan sin saberlo.
 //
 // El SDK de .NET es del desarrollador, no una herramienta que instalemos: si
 // falta, el orquestador etiqueta la capa como "falta:" y no como degradada.
@@ -38,11 +38,12 @@ type DotnetVuln struct {
 	// bloquear un commit por eso, sin que el código haya tocado la dependencia,
 	// enseña a la gente a saltarse el hook.
 	BlockCritical bool
-	// SoloManifiestos: true en el camino del hook. Este comando SÍ restaura y
-	// SÍ va a la red (medido: con un origen NuGet inalcanzable se queda
+	// SoloManifiestos: true en el camino del hook. El comando ya NO restaura
+	// (--no-restore, ver revisarProyecto), pero SIGUE consultando por la red el
+	// índice de avisos de nuget.org (medido: con un origen inalcanzable se queda
 	// colgado minutos), así que en local sólo corre cuando cambian las
-	// dependencias — el único momento en que la respuesta puede cambiar por
-	// algo que hizo el desarrollador. El CI lo corre con cualquier .cs tocado.
+	// dependencias — el único momento en que la respuesta puede cambiar por algo
+	// que hizo el desarrollador. El CI lo corre con cualquier .cs tocado.
 	SoloManifiestos bool
 	// Cache: mismos manifiestos = mismas dependencias. La clave lleva el día
 	// UTC porque la respuesta depende del índice de avisos de ese día: un
@@ -87,7 +88,7 @@ func (e DotnetVuln) proyectos(in engines.Input) ([]string, error) {
 			//
 			// Directory.Build.props queda FUERA a propósito: se toca por mil
 			// razones que no son dependencias, y cada proyecto alcanzado cuesta
-			// un restore contra la red. Barrer el repo entero por un cambio de
+			// una consulta a la red. Barrer el repo entero por un cambio de
 			// propiedades agotaría el plazo y degradaría la capa — que es otra
 			// forma de no mirar. Sí entra en la clave de caché, para que el
 			// resultado no sobreviva a un cambio que sí afecte.
@@ -149,9 +150,16 @@ func dnvCsprojBajo(repoRoot, dir string) ([]string, error) {
 //     versión concreta porque el comando no la dice.
 //  2. Un proyecto LIMPIO se serializa exactamente igual que un proyecto que no
 //     se pudo analizar: {"path": "..."} sin "frameworks". Lo único que los
-//     distingue es el array "problems" — y el comando SALE CON CÓDIGO 0 en los
-//     dos casos. Es la trampa de tipoFatal de semgrep otra vez: cero hallazgos
-//     y "no pude mirar" se serializan igual y hay que separarlos a mano.
+//     distingue es el array "problems". Es la trampa de tipoFatal de semgrep
+//     otra vez: cero hallazgos y "no pude mirar" se serializan igual y hay que
+//     separarlos a mano.
+//
+//     Y el código de salida NO sirve para separarlos, en ninguna de las dos
+//     direcciones: con un origen NuGet caído el comando sale con 0 llevando un
+//     "problems" de nivel error, y con --no-restore sin assets file sale con 1
+//     llevando otro (medido, SDK 10.0.204, stderr vacío en ese segundo caso).
+//     Por eso el filtro de "problems" es la única puerta, y revisarProyecto
+//     pasa por interpretar incluso cuando el proceso salió mal.
 //  3. "transitivePackages" no trae requestedVersion (nadie la pidió: la
 //     arrastra otra dependencia), y ahí es donde aparecen los CVEs heredados.
 type dnvSalida struct {
@@ -253,8 +261,23 @@ func (e DotnetVuln) claveProyecto(repoRoot, csproj string) string {
 
 func (e DotnetVuln) revisarProyecto(ctx context.Context, repoRoot, csproj string) ([]finding.Finding, error) {
 	dirProy := filepath.Join(repoRoot, filepath.FromSlash(path.Dir(csproj)))
+	// --no-restore por la MISMA razón que en dotnetbuild (dotnetbuild.go:207), que
+	// este motor estaba contradiciendo en el mismo camino del commit: sin él,
+	// `dotnet list package` restaura implícitamente. MEDIDO con SDK 10.0.204 sobre
+	// un clon sin obj/: el comando CREA project.assets.json y su propia salida
+	// declara la fuente usada (api.nuget.org). Eso hacía dos cosas malas —
+	// escribir el obj/ REAL del desarrollador, que dotnetbuild evita a conciencia
+	// con un obj/ privado por PID; y competir con dotnet-build, que corre en
+	// paralelo y lee ese mismo assets file: se OBSERVÓ a dotnet-build degradarse
+	// con NETSDK1004 en el mismo segundo en que el restore de este motor creaba el
+	// archivo, así que su veredicto dependía de quién ganara la carrera.
+	//
+	// El precio, dicho claro: en un clon sin `dotnet restore` no hay grafo y este
+	// motor NO PUEDE mirar. Ese caso degrada con remedio (abajo), nunca devuelve
+	// "0 CVE". Y esto no vuelve el motor independiente de la red: el índice de
+	// avisos se sigue consultando por red; lo que se quita es el restore.
 	cmd := exec.CommandContext(ctx, "dotnet", "list", path.Base(csproj), "package",
-		"--vulnerable", "--include-transitive", "--format", "json")
+		"--vulnerable", "--include-transitive", "--no-restore", "--format", "json")
 	cmd.Dir = dirProy
 	cmd.Env = proc.Entorno()
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
@@ -262,6 +285,21 @@ func (e DotnetVuln) revisarProyecto(ctx context.Context, repoRoot, csproj string
 		return nil, fmt.Errorf("dotnet list package devolvió más de %d MB en %s", proc.MaxSalida>>20, csproj)
 	}
 	if runErr != nil {
+		// Con --no-restore, un clon sin restore previo sale con código 1 y el
+		// diagnóstico viaja en el JSON de STDOUT, no en stderr. MEDIDO con SDK
+		// 10.0.204: stderr VACÍO (0 bytes) y stdout con problems[0].level="error"
+		// y el texto "No assets file was found … Please run restore before
+		// running this command".
+		//
+		// Por eso se intenta interpretar antes de dar el "no corrió" genérico: el
+		// filtro de problems ya emite el remedio exacto («Corre `dotnet
+		// restore`…»), y perderlo dejaría al desarrollador con un fallo opaco
+		// teniendo la solución en la mano. Por esta rama no pueden salir
+		// hallazgos, sólo el error, así que una corrida fallida no puede acabar
+		// en "limpio".
+		if _, errJSON := e.interpretar(salida.Stdout, repoRoot, csproj); errJSON != nil {
+			return nil, errJSON
+		}
 		return nil, fmt.Errorf("dotnet list package no corrió en %s: %w%s", csproj, runErr, dnvDetalle(salida.Stderr))
 	}
 	return e.interpretar(salida.Stdout, repoRoot, csproj)
@@ -272,9 +310,11 @@ func (e DotnetVuln) interpretar(raw []byte, repoRoot, csproj string) ([]finding.
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return nil, fmt.Errorf("salida de dotnet list package ilegible en %s: %v", csproj, err)
 	}
-	// Punto 2 del bloque de arriba: sin esto, un origen NuGet inalcanzable o un
-	// restore fallido devolverían "0 CVE" con código de salida 0. Un motor de
+	// Punto 2 del bloque de arriba: sin esto, un origen NuGet inalcanzable, un
+	// assets file ausente o un restore fallido devolverían "0 CVE". Un motor de
 	// seguridad que dice "limpio" cuando no pudo mirar es peor que no tenerlo.
+	// Cubre las dos formas medidas: salida 0 (origen caído) y salida 1
+	// (--no-restore sin assets file), que llega aquí desde revisarProyecto.
 	for _, p := range s.Problems {
 		if strings.EqualFold(p.Level, "error") {
 			return nil, fmt.Errorf("dotnet list package no pudo revisar %s: %s. "+

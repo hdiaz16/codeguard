@@ -117,6 +117,24 @@ func TestElGanchoYElCIVenLoMismo(t *testing.T) {
 		}
 		grietas = append(grietas, "sólo en local: "+m.describe(h))
 	}
+	// Misma huella en las dos rutas pero distinta DECISIÓN: bloquea en una y
+	// sólo avisa en la otra. Hasta aquí sólo se comparaba la PRESENCIA de cada
+	// huella, y la promesa del producto —«si pasa aquí, pasa allá»— es sobre la
+	// decisión, no sobre la lista: un hallazgo que bloqueaba en CI y avisaba en
+	// local pasaba en verde. La excepción del §7 es justo eso hecho a propósito
+	// (avisa en local, bloquea en CI), así que los de permitidosEnCI quedan
+	// fuera, igual que los motores que se degradaron en una de las dos rutas.
+	for huella, l := range local {
+		c, ok := ci[huella]
+		if !ok || l.bloqueante == c.bloqueante {
+			continue
+		}
+		if permitidosEnCI[l.motor] || degradados[l.motor] != "" {
+			continue
+		}
+		grietas = append(grietas, "decisión distinta: local "+l.describe(huella)+
+			" · CI "+c.describe(huella))
+	}
 	sort.Strings(grietas)
 	if len(sinComparar) > 0 {
 		sort.Strings(sinComparar)
@@ -310,6 +328,13 @@ func hallazgosDe(t *testing.T, rutaDB, entorno string) map[string]hallazgo {
 			continue
 		}
 		out[huella] = h
+	}
+	// Sin esto, una lectura que falla a mitad de iteración —base bloqueada,
+	// cursor muerto— devuelve un mapa incompleto que la comparación tomaría por
+	// completo: una grieta inventada o, peor, una paridad falsa. El helper de
+	// abajo ya lo comprueba; aquí faltaba.
+	if err := filas.Err(); err != nil {
+		t.Fatalf("lectura de hallazgos de %s incompleta: %v", entorno, err)
 	}
 	return out
 }

@@ -62,6 +62,16 @@ func (s Salida) Combinada() []byte {
 // El error devuelto es el de exec.Cmd.Wait: un código de salida distinto de
 // cero llega como *exec.ExitError, que varios motores usan como señal legítima
 // (Semgrep sale con 1 cuando encuentra algo). Distinguirlos es del que llama.
+//
+// EL COMANDO TIENE QUE VENIR DE exec.CommandContext, con este mismo ctx. La
+// firma acepta cualquier *exec.Cmd, pero la vigilancia del plazo que se instala
+// abajo sólo existe si `contener` logra crear el job object; cuando falla —y
+// falla en silencio a propósito, porque perder el aislamiento es mejor que no
+// analizar— lo único que mata al proceso al vencer el ctx es el Kill que
+// CommandContext trae de serie. Con un exec.Command pelado, ese caso se queda en
+// Wait hasta que el motor termine por su cuenta y el plazo desaparece sin ruido.
+// Hoy los diez llamadores usan CommandContext (verificado); esto queda escrito
+// para que el siguiente no lo pierda por descuido.
 func Correr(ctx context.Context, c *exec.Cmd, tope int64) (Salida, error) {
 	if tope <= 0 {
 		tope = MaxSalida

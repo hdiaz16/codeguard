@@ -2,6 +2,7 @@ package shadow
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -86,10 +87,12 @@ const hallazgoValido = `{"findings":[{"file":"app.go","line":4,"rule_key":"ad-ho
 // pasajero se vuelve permanente para ese diff.
 func TestUnPilarCaidoNoCacheaElResultado(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cuerpo := make([]byte, 65536)
-		n, _ := r.Body.Read(cuerpo)
+		cuerpo, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("error leyendo body: %v", err)
+		}
 		// El pilar viaja en el prompt del usuario: así se puede tumbar uno solo.
-		if strings.Contains(string(cuerpo[:n]), "PILAR DATOS") {
+		if strings.Contains(string(cuerpo), "PILAR DATOS") {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"error":{"message":"cayo"}}`))
 			return
@@ -103,7 +106,10 @@ func TestUnPilarCaidoNoCacheaElResultado(t *testing.T) {
 	r.Run(context.Background(), cfg, req, nil)
 
 	diffSHA := sha256hex(req.DiffUnified)
-	if _, hit := r.Store.DiffCacheGet(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model); hit {
+	// La clave la compone modelosPorPilar, la MISMA función que usa el motor: si
+	// se rearmara a mano aquí, el día que cambie la clave este test seguiría
+	// «pasando» sin mirar la entrada que le toca.
+	if _, hit := r.Store.DiffCacheGet(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, modelosPorPilar(cfg)); hit {
 		t.Error("con un pilar caído el resultado es parcial y NO puede quedar cacheado: la próxima corrida acertaría y nunca volvería a preguntar")
 	}
 	// Pero lo que sí se obtuvo se guarda: son hallazgos reales.
@@ -129,7 +135,7 @@ func TestConTodosLosPilaresSiSeCachea(t *testing.T) {
 	r.Run(context.Background(), cfg, req, nil)
 
 	diffSHA := sha256hex(req.DiffUnified)
-	if _, hit := r.Store.DiffCacheGet(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, cfg.LLM.Model); !hit {
+	if _, hit := r.Store.DiffCacheGet(req.RepoID, diffSHA, req.RulepackVersion, req.ConfigHash, modelosPorPilar(cfg)); !hit {
 		t.Error("con los tres pilares respondiendo el resultado es completo y debe cachearse")
 	}
 }

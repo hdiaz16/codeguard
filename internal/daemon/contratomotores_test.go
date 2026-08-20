@@ -8,9 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"codeguard/internal/config"
 	"codeguard/internal/engines"
@@ -45,6 +47,22 @@ import (
 // existe la tercera opción. Este test lo impone sobre TODOS los motores a la
 // vez, así que el que se añada mañana nace obligado.
 func TestNingunMotorPuedeDecirLimpioSinHaberMirado(t *testing.T) {
+	// Windows-only de verdad, y se dice: el sabotaje son .cmd por lotes que
+	// exec.LookPath resuelve por PATHEXT. En Unix los señuelos no se
+	// ejecutarían NUNCA —LookPath no mira PATHEXT y un .cmd no es ejecutable—,
+	// así que cada motor encontraría la herramienta real o fallaría por su
+	// cuenta, y la prueba pasaría sin haber ejercitado el contrato: un verde
+	// falso, que es exactamente la enfermedad que este archivo existe para
+	// retirar.
+	//
+	// Es t.Skip y no //go:build windows porque este archivo tiene OTROS dos
+	// guardianes —TestElContratoNoDejaMotoresFuera y
+	// TestCadaMotorDecideSiEstaExento— que son AST y lógica pura, corren bien
+	// en Unix y su cobertura ahí es REAL. Etiquetar el archivo entero los
+	// sacaría de Unix para proteger una mentira que no cometen.
+	if runtime.GOOS != "windows" {
+		t.Skip("los señuelos .cmd y la resolución por PATHEXT sólo existen en Windows")
+	}
 	raiz := fixturePoliglota(t)
 
 	// Con config y no con nil: squawk sólo aplica si el repo declara sus
@@ -95,7 +113,29 @@ func TestNingunMotorPuedeDecirLimpioSinHaberMirado(t *testing.T) {
 					contrato.OlvidarTodo()
 					t.Setenv("PATH", señuelos(t, s)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-					hallazgos, err := motor.Run(context.Background(), in)
+					// Plazo por sabotaje, y hace falta: si el señuelo no cubre la
+					// herramienta que el motor invoca —hoy `git` no está en la
+					// lista de impostores—, se ejecuta la de verdad, y esa puede
+					// tardar minutos o colgarse. Sin plazo el test se entera por
+					// el timeout global de `go test`: diez minutos y un volcado
+					// de pila que no dice qué motor se quedó colgado.
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+					hallazgos, err := motor.Run(ctx, in)
+					// Se lee ANTES de cancel(): cancel deja ctx.Err() en Canceled
+					// y borraría la evidencia del plazo vencido.
+					vencido := ctx.Err() == context.DeadlineExceeded
+					cancel()
+
+					// El plazo vencido es un fallo DEL MOTOR, y con su nombre: o
+					// se colgó hasta que el contexto lo cortó, o se tragó el
+					// DeadlineExceeded y devolvió otra cosa. Las dos dicen lo
+					// mismo: no puede prometer que mira en un tiempo razonable.
+					if vencido {
+						t.Fatalf("%s no terminó en 2 minutos con el sabotaje que %s: "+
+							"o invocó la herramienta real y se colgó, o ignoró la cancelación "+
+							"del contexto. Un motor que no acota su tiempo deja el gancho "+
+							"colgado igual que deja colgado a este test.", nombre, s.describe)
+					}
 
 					if err == nil && len(hallazgos) == 0 {
 						t.Errorf("%s devolvió (nil, nil) con su herramienta sustituida por "+
@@ -195,9 +235,15 @@ func tiposConFormaDeMotor(t *testing.T) []string {
 			switch nombre := info.Name(); {
 			case ruta == raiz:
 				return nil
+			// vendor va en la lista aunque hoy no exista: un `go mod vendor` es
+			// un comando de una línea, y un tipo de terceros con Name+Applies+Run
+			// (nada exótico en librerías de análisis) haría fallar al guardián
+			// señalando código que no es nuestro. El contrato obliga a los
+			// motores que escribe este repo.
 			case strings.HasPrefix(nombre, "."), nombre == "node_modules",
 				nombre == "testdata", nombre == "dist", nombre == "sitio",
-				nombre == "remediacion", nombre == "rulepacks":
+				nombre == "remediacion", nombre == "rulepacks",
+				nombre == "vendor":
 				return filepath.SkipDir
 			}
 			return nil

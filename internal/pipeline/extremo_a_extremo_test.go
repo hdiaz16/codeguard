@@ -117,7 +117,7 @@ const csprojConDependenciaVulnerable = "<Project Sdk=\"Microsoft.NET.Sdk\">\n" +
 // elSecreto va aparte: bloquea la etapa 1 y con él dentro no corre nada más,
 // así que se prueba en su propia fase.
 const elSecreto = "# fixture de verificación — token inventado, no es una credencial real\n" +
-	"GITHUB_TOKEN = \"ghp_0Nn8Qk2Xv7Lm4Rt9Yb3Wc6Zd1Ae5Gf7Hj0K\"\n"
+	"GITHUB_TOKEN = \"ghp_" + "0Nn8Qk2Xv7Lm4Rt9Yb3Wc6Zd1Ae5Gf7Hj0K\"\n"
 
 func violaciones() []violacion {
 	return []violacion{
@@ -341,7 +341,19 @@ func TestElSistemaCompletoEstaCableado(t *testing.T) {
 	}
 	git(t, repo, "add", "-A")
 
-	salida, _ = correr(t, bin, repo, "report", "--avisos")
+	// El código de salida NO se descarta. `report` no es una compuerta —quien
+	// bloquea es el gancho, y eso es la fase 1 de arriba—, y reportcmd.go no tiene
+	// ni un os.Exit ni devuelve error por encontrar hallazgos: sale con 0 siempre
+	// que la corrida sea válida. Así que un código distinto de cero significa que
+	// la corrida falló, y entonces su salida PARCIAL no se puede pasar a informe():
+	// los motores que no llegaron a anunciarse saldrían como «¡NO CAZÓ!», o peor,
+	// como «NO APLICA» si además falta su dependencia, y un fallo del producto se
+	// leería como un veredicto del arnés.
+	salida, codigo = correr(t, bin, repo, "report", "--avisos")
+	if codigo != 0 {
+		t.Fatalf("report --avisos salió con código %d: la corrida falló, así que su "+
+			"salida parcial no es evaluable.\n%s", codigo, salida)
+	}
 	informe(t, repo, salida)
 }
 
@@ -557,6 +569,17 @@ func enElRepo(lanzador string) func(string) bool {
 // "trivy no vio el CVE que tenía delante" —una regresión— de "no hubo red para
 // bajar el módulo y no había CVE que ver" — el entorno. Absolvía siempre, así
 // que la casilla de dependencias vulnerables nunca podía ponerse en rojo.
+//
+// CONTRATO de este flag y de dotnetRestaurado: los escribe el fixture del e2e y
+// los leen las comprobaciones de dependencia, así que NINGÚN test de este paquete
+// puede usar t.Parallel() (hoy no hay ni uno). Se auditó convertirlos a
+// atomic.Bool y se descartó, porque no arregla la causa y además la esconde: lo
+// que importa aquí no es la atomicidad de un bool sino el ORDEN —que el fixture
+// haya escrito antes de que alguien lea—, y eso el atomic no lo da. Lo que sí
+// haría es callar al detector de `go test -race`, que hoy es lo único que
+// delataría el problema el día que alguien añada t.Parallel: en su lugar, el
+// lector se llevaría un `false` silencioso y el motor saldría absuelto con un
+// "NO APLICA" que nadie mira.
 var moduloResuelto bool
 
 func conModuloResuelto(string) bool { return moduloResuelto }

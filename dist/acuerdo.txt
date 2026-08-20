@@ -1,4 +1,4 @@
-CODEGUARD — QUÉ ES Y QUÉ VAS A INSTALAR
+﻿CODEGUARD — QUÉ ES Y QUÉ VAS A INSTALAR
 
 CodeGuard es un agente local de análisis pre-commit. Vive en tu máquina,
 revisa lo que estás a punto de commitear y bloquea únicamente lo que el

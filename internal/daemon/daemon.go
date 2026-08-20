@@ -283,16 +283,19 @@ func (s *Server) Serve(ctx context.Context) error {
 
 func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	req, err := ipc.ReadRequest(conn)
 	if err != nil {
-		log.Println("petición inválida:", err)
+		log.Println("petición inválida o timeout:", err)
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	// Comandos que no son análisis (los manda la CLI para que la UI actúe).
 	if req.Command != "" {
 		if s.OnCommand != nil {
 			s.OnCommand(req.Command, req)
 		}
+		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		_ = ipc.WriteResponse(conn, &ipc.Response{RunID: req.RunID, Verdict: "ok"}) // ack de comando; si el pipe se cerró, no hay nada que hacer
 		return
 	}
@@ -301,6 +304,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 	go RememberRepo(req.RepoRoot) // para precalentar en el próximo arranque
 	resp := s.Analyze(ctx, req)
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := ipc.WriteResponse(conn, resp); err != nil {
 		log.Println("no se pudo responder:", err)
 	}
@@ -518,7 +522,20 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	var demoted map[string]bool
 	var cache sgengine.Cache
 	if s.Shadow != nil && s.Shadow.Store != nil {
-		demoted, _ = s.Shadow.Store.DemotedRules(req.RepoID, 5, 0.20)
+		// Si la consulta falla (SQLITE_BUSY, base cerrada), demoted queda nil y
+		// las reglas que la organización degradó a advisory vuelven a BLOQUEAR en
+		// este run. El lado seguro es ése y se mantiene, pero callarlo es la
+		// pérdida silenciosa de siempre: el dev vería bloqueado un commit que
+		// debía pasar sin una línea que lo explique. Se registra y se declara en
+		// Degraded, que es el canal que el diseño ya usa para «este análisis
+		// corrió con menos de lo prometido».
+		var errDegradadas error
+		demoted, errDegradadas = s.Shadow.Store.DemotedRules(req.RepoID, 5, 0.20)
+		if errDegradadas != nil {
+			log.Printf("no se pudieron leer las reglas degradadas de %s (%v): en este run "+
+				"las degradaciones NO se aplican y esas reglas bloquean", req.RepoID, errDegradadas)
+			resp.Degraded = append(resp.Degraded, "demoted:unavailable")
+		}
 		// El caché por archivo brilla justo aquí: un commit bloqueado se
 		// reintenta con N-1 archivos idénticos, y esos ya no se re-analizan.
 		cache = CachePorArchivo(s.Shadow.Store, req.RepoID, "", filepath.Base(req.RepoRoot), cfg)
@@ -536,7 +553,7 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		Engines:      Engines(cfg, false, cache),
 		Rulepack:     rulepack,
 		Timeout:      deadline,
-		Suppressions: baseline.Load(req.RepoRoot),
+		Suppressions: baseline.LoadOrWarn(req.RepoRoot),
 		DemotedRules: demoted,
 		Progreso:     progreso,
 	})

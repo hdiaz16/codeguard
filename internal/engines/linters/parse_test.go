@@ -73,7 +73,8 @@ func TestRelToNoInventaRutasFueraDeLaRaiz(t *testing.T) {
 	// Mismo disco, otro sitio: Rel devolvería "../../otro/app.go" sin error.
 	fuera := filepath.Join(string(filepath.Separator), "otro", "sitio", "app.go")
 	got := relTo(raiz, fuera)
-	if strings.HasPrefix(got, "../") || got == ".." {
+	gotNorm := filepath.ToSlash(filepath.Clean(got))
+	if strings.HasPrefix(gotNorm, "../") || gotNorm == ".." {
 		t.Errorf("una ruta de fuera NO puede salir como relativa con ..: %q", got)
 	}
 	if !strings.Contains(got, "otro") {

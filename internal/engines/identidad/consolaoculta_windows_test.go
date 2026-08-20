@@ -81,7 +81,7 @@ func TestAyudanteLanzadorID(t *testing.T) {
 	// El camino REAL: el mismo constructor que usan noArranca y la auditoría.
 	conCtor := comandoIdentidad(t.Context(), os.Args[0],
 		"-test.run=^TestAyudanteReporteroID$", "-test.timeout=60s")
-	conCtor.Env = append(conCtor.Env, envModoConsola+"=reportero", envInformeConsola+"="+porCtor)
+	conCtor.Env = append(os.Environ(), envModoConsola+"=reportero", envInformeConsola+"="+porCtor)
 
 	var lineas []string
 	for _, caso := range []struct {

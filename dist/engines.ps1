@@ -427,12 +427,10 @@ if ($rutaScripts.Codigo -ne 0) {
 $pyScripts = $rutaScripts.Salida.Trim()
 Ok "instalados en $pyScripts"
 
-# Los scripts de Python van al PATH aqui mismo: es el unico paso que conoce
-# la ruta (depende de la version de Python del usuario).
-$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-if ($userPath -notlike "*$pyScripts*") {
-    [Environment]::SetEnvironmentVariable("PATH", "$pyScripts;$userPath", "User")
-    Ok "PATH de usuario: + $pyScripts"
+# Los scripts de Python se añaden al PATH del proceso actual (sin modificar el registro).
+if ($env:PATH -notlike "*$pyScripts*") {
+    $env:PATH = "$pyScripts;$env:PATH"
+    Ok "PATH de sesion: + $pyScripts"
 }
 
 # ── motores Go (govulncheck, staticcheck) ────────────────────────────────────

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -23,10 +24,16 @@ import (
 //     ése y no el de antes.
 //   - El aviso va en el propio tooltip. Quien mire el orbe a mitad de la demo
 //     lee que está viendo una demo, no un veredicto.
+var demoCorriendo atomic.Bool
+
 func (e *escritorio) anadirDemoDeEstados(menu *application.Menu) {
 	menu.AddSeparator()
 	menu.Add("Demo de estados (12 s) — build de depuración").OnClick(func(*application.Context) {
+		if !demoCorriendo.CompareAndSwap(false, true) {
+			return
+		}
 		go func() {
+			defer demoCorriendo.Store(false)
 			for _, s := range []string{"idle", "working", "pass", "blocked", "degraded", "offline"} {
 				e.tray.set(s, "DEMO (no es el estado de tu repo): «"+s+"»")
 				time.Sleep(2 * time.Second)

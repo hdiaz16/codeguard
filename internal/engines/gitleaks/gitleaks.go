@@ -121,7 +121,10 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	default:
 		return nil, fmt.Errorf("%w: modo desconocido %q", ErrUnavailable, e.Mode)
 	}
-	args = append(args, in.RepoRoot)
+	// Defensa en profundidad: el "--" (pflag lo honra) garantiza que la ruta
+	// del repo se lea como operando posicional y nunca como bandera, aunque
+	// hoy la construye el sistema y no el diff.
+	args = append(args, "--", in.RepoRoot)
 
 	leaks, err := e.correr(ctx, bin, in.RepoRoot, args)
 	if err != nil {
@@ -193,6 +196,18 @@ func (e *Engine) correr(ctx context.Context, bin, dir string, args []string) ([]
 			"(antivirus o EDR mirando el binario, disco de red, un diff enorme). "+
 			"Vuelve a intentar el commit; si se repite, reduce el tamaño del commit: %v",
 			ErrUnavailable, runErr)
+	case errors.Is(runErr, context.Canceled):
+		// Cancelación deliberada (el usuario abortó, o el contexto padre se
+		// canceló): no es un motor roto ni un motor lento, y el «repara los
+		// motores» del default mandaría a reinstalar lo que está sano.
+		//
+		// Bloquea IGUAL (ErrUnavailable, §14): un escaneo de secretos
+		// interrumpido a medias no garantiza «sin secretos», así que el
+		// commit no puede pasar. Lo único que cambia es el diagnóstico.
+		return nil, fmt.Errorf("%w: escaneo cancelado antes de terminar. No es una avería: "+
+			"la operación se abortó. El commit queda bloqueado porque un escaneo a medias "+
+			"no puede garantizar que no hubiera secretos — vuelve a intentarlo: %v",
+			ErrUnavailable, runErr)
 	default:
 		return nil, fmt.Errorf("%w: %v: %s", ErrUnavailable, runErr, out)
 	}
@@ -240,14 +255,29 @@ func (e *Engine) correr(ctx context.Context, bin, dir string, args []string) ([]
 	//
 	// Esto BLOQUEA el commit (ErrUnavailable, §14 fail-closed), y es lo correcto:
 	// la promesa de la etapa 1 no es «busqué», es «nada sale sin escanear».
-	if runErr == nil {
-		if fallos := erroresDeGitleaks(salida.Stderr); len(fallos) > 0 {
+	// La premisa —una corrida que contó errores propios no miró lo que se le
+	// pidió— no depende del código de salida, así que la auditoría vale para los
+	// DOS caminos que llegan aquí (tras el switch, runErr sólo puede ser nil o el
+	// código 9). En el camino con hallazgos también importa: un escaneo que
+	// encontró secretos Y falló a medias pudo dejar parte del alcance sin mirar,
+	// y entregar esa lista como si fuera completa hace que se roten sólo las
+	// credenciales vistas y queden vivas las de la parte no mirada.
+	if fallos := erroresDeGitleaks(salida.Stderr); len(fallos) > 0 {
+		if runErr == nil {
 			return nil, fmt.Errorf("%w: dijo que no había secretos, pero antes contó %d "+
 				"error(es) propios, así que no escaneó lo que se le pidió: %s. "+
 				"Un «sin secretos» de una corrida que falló no es un «sin secretos» — "+
 				"comprueba el repositorio (`git status`, `git fsck`) y vuelve a intentarlo",
 				ErrUnavailable, len(fallos), strings.Join(fallos, " · "))
 		}
+		// Bloquea igual que antes —los secretos ya bloqueaban—, pero sin
+		// entregar una lista parcial con cara de completa: el contrato es
+		// «hallazgos O el porqué», así que aquí va el porqué.
+		return nil, fmt.Errorf("%w: encontró secretos, pero contó %d error(es) propios, "+
+			"así que el escaneo quedó a medias y puede haber MÁS sin mirar: %s. "+
+			"Arregla el repositorio (`git status`, `git fsck`) y vuelve a correr antes de "+
+			"rotar nada: lo que una corrida parcial alcanzó a ver no es todo lo que hay",
+			ErrUnavailable, len(fallos), strings.Join(fallos, " · "))
 	}
 
 	raw, err := os.ReadFile(report.Name())

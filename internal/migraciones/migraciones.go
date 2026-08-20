@@ -122,12 +122,7 @@ func Parece(ruta string) bool {
 	}
 	segs := strings.Split(path.Dir(p), "/")
 	// Otro contenido nunca es esquema, ni dentro del árbol de migraciones.
-	for _, seg := range segs {
-		if dirsDeOtroContenido[strings.ToLower(seg)] {
-			return false
-		}
-	}
-	if semillaPorNombre(path.Base(p)) {
+	if EsOtroContenido(p) {
 		return false
 	}
 	// Bajo un directorio que DECLARA migraciones, lo demás son dominios: una
@@ -144,6 +139,36 @@ func Parece(ruta string) bool {
 	}
 	base := strings.ToLower(path.Base(p))
 	return archivosDeEsquema[base] || versionDeMigracion.MatchString(base)
+}
+
+// EsOtroContenido responde si esta ruta es contenido VETADO: semillas,
+// fixtures, volcados, ejemplos, consultas. Es el veto de Parece, y sólo el
+// veto — no clasifica migraciones, no mira versionado ni nombres de esquema.
+//
+// Existe como función pública porque el veto tiene que aplicarse en DOS
+// sitios que no pueden compartir a Parece entera:
+//
+//   - Aquí, al clasificar: una semilla no es migración.
+//   - En el consumo de paths.migrations (squawk): los globs de árbol que
+//     escribe Globs (`migrations/**/*.sql`) recapturan lo vetado que vive
+//     DENTRO del árbol — `supabase/migrations/seeds/paises.sql` — y un glob
+//     puesto a mano por el usuario puede recapturarlo también. Filtrar ahí
+//     con Parece sería un error en la otra dirección: descartaría archivos
+//     no versionados que el usuario incluyó deliberadamente en su config.
+//     Lo que nunca puede llegar a la compuerta de migración insegura es el
+//     contenido vetado, venga de donde venga el glob.
+//
+// Medido: sin este filtro en el consumo, un DROP TABLE en una semilla de
+// arranque casaba `migrations/**/*.sql` y salía BLOQUEADO por ban-drop-table
+// sobre datos que no tocan producción.
+func EsOtroContenido(ruta string) bool {
+	p := Normalizar(ruta)
+	for _, seg := range strings.Split(path.Dir(p), "/") {
+		if dirsDeOtroContenido[strings.ToLower(seg)] {
+			return true
+		}
+	}
+	return semillaPorNombre(path.Base(p))
 }
 
 // Globs devuelve los patrones para `paths.migrations` y, aparte, los .sql que
@@ -229,11 +254,40 @@ func semillaPorNombre(base string) bool {
 	campos := strings.FieldsFunc(nombre, func(r rune) bool {
 		return r == '_' || r == '-' || r == '.'
 	})
-	// Se salta el prefijo de versión (001, 20240103, v1…), si lo hay.
+	// Se salta el prefijo de versión (001, 20240103, v1…), si lo hay. Y la versión
+	// puede ocupar VARIOS campos: la propia regexp admite `v1.1__` porque —como
+	// dice su comentario— Flyway numera con puntos tanto como con guiones bajos, y
+	// el troceo de arriba parte por '.', así que `v1.1__seed_datos.sql` llega aquí
+	// como [v1, 1, seed, datos]. Saltando sólo el primero quedaba "1" como primer
+	// término, la semilla se vigilaba como migración de esquema y su TRUNCATE
+	// volvía a salir BLOQUEADO — el fallo que esta función nació para evitar,
+	// entrando por el layout que la regexp sí reconocía.
+	//
+	// Se descartan los campos puramente numéricos que siguen al prefijo, y sólo
+	// esos: la guarda del lado peligroso queda intacta, porque en
+	// `20240101_create_seed_table.sql` el término tras la versión es "create", no
+	// es numérico y no está en dirsDeOtroContenido, así que sigue vigilada.
 	if len(campos) > 1 && versionDeMigracion.MatchString(nombre) {
 		campos = campos[1:]
+		for len(campos) > 1 && soloDigitos(campos[0]) {
+			campos = campos[1:]
+		}
 	}
 	return len(campos) > 0 && dirsDeOtroContenido[campos[0]]
+}
+
+// soloDigitos: el campo es el resto de una versión multi-segmento, como el "1"
+// de `v1.1__` o el "2" de `1_2__` una vez troceado el nombre.
+func soloDigitos(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // raizDeMigraciones corta la ruta justo después del directorio que declara

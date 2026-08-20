@@ -223,6 +223,14 @@ func TestBajoUnDirectorioDeMigracionesElDominioNoDescalifica(t *testing.T) {
 		// BLOQUEADA por ban-drop-table, sobre datos que no tocan producción.
 		"supabase/migrations/20240103_seed_datos.sql",
 		"db/migrations/002_seeds.sql",
+		// Y con la versión repartida en VARIOS campos, que es como numera Flyway
+		// (`V1.1__`) y como se numera a mano (`1_2__`). El troceo del nombre parte
+		// por '.' y '_', así que estas llegaban con el resto de la versión —"1",
+		// "2"— de primer término y la semilla se vigilaba como esquema: su
+		// TRUNCATE salía bloqueado. La regexp de versión ya admitía este layout;
+		// lo que no lo seguía era el salto del prefijo.
+		"sql/v1.1__seed_datos.sql",
+		"db/migrations/1_2__seed.sql",
 	} {
 		if Parece(ruta) {
 			t.Errorf("%s son datos de arranque, no esquema", ruta)
@@ -235,6 +243,11 @@ func TestBajoUnDirectorioDeMigracionesElDominioNoDescalifica(t *testing.T) {
 	for _, ruta := range []string{
 		"migrations/20240101_create_seed_table.sql",
 		"migrations/003_add_test_flag.sql",
+		// El mismo guarda con la versión multi-segmento: saltar los campos
+		// numéricos del prefijo no puede llevarse por delante el término que
+		// decide. Aquí el primero tras la versión es "create", así que sigue
+		// siendo esquema y sigue vigilada.
+		"sql/v1.1__create_seed_table.sql",
 	} {
 		if !Parece(ruta) {
 			t.Errorf("%s ES una migración: la palabra aparece, pero describe la tabla, "+

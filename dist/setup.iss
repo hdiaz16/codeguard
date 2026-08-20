@@ -44,7 +44,8 @@ WizardSmallImageFile=wizard-small.bmp
 WizardImageStretch=yes
 WizardSizePercent=110
 ; avisa a Windows que el PATH cambio (las terminales nuevas lo heredan)
-ChangesEnvironment=yes
+ChangesEnvironment=no
+CreateUninstallRegKey=no
 Compression=lzma2
 SolidCompression=yes
 
@@ -56,8 +57,8 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 spanish.WelcomeLabel1=CodeGuard
 spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus {#MyRuleCount} reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk, ruff y mypy (vía pip)%n  •  govulncheck y staticcheck, que se COMPILAN: un par de minutos%n%nSon 9 de los 16 motores. gofmt va dentro de CodeGuard, y los 6 restantes%n(go vet, tsc, eslint y los tres de .NET) usan las herramientas que YA tienes:%nGo, Node y el SDK de .NET. Para tsc y eslint es deliberado — se usa la versión%nde tu proyecto, que es la que corre en el CI; imponer la nuestra rompería la%nparidad en vez de defenderla. Si a tu repo le falta alguna, el agente te lo%ndice en cada análisis en vez de callárselo.
 spanish.FinishedHeadingLabel=Listo.
-spanish.FinishedLabelNoIcons=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)
-spanish.FinishedLabel=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init%n%n(abre una terminal nueva para heredar el PATH)
+spanish.FinishedLabelNoIcons=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init
+spanish.FinishedLabel=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init
 spanish.ClickFinish=
 ; la pagina de licencia se reetiqueta como lo que es: informacion y permiso
 spanish.WizardLicense=Qué es CodeGuard
@@ -83,17 +84,14 @@ Source: "splash\*.bmp"; Flags: dontcopy
 ; fondo full-bleed de la pagina de bienvenida
 Source: "welcome-bg.bmp"; Flags: dontcopy
 
-[Registry]
-; el daemon arranca con la sesion; la clave se borra al desinstalar
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
-    ValueType: string; ValueName: "CodeGuard"; \
-    ValueData: """{app}\bin\{#MyDaemonExe}"""; Flags: uninsdeletevalue
+[Icons]
+Name: "{userstartup}\CodeGuard"; Filename: "{app}\bin\{#MyDaemonExe}"; \
+    Parameters: "--tray"; WorkingDir: "{app}\bin"; IconFilename: "{app}\bin\{#MyDaemonExe}"
+Name: "{userprograms}\CodeGuard\Desinstalar CodeGuard"; Filename: "{uninstallexe}"
 
 [Run]
-; Los motores NO van aqui: [Run] abriria consolas. Los corre EjecutarMotores
-; ([Code]) con powershell oculto, mostrando el avance dentro del asistente.
-Filename: "powershell.exe"; \
-    Parameters: "-NoProfile -WindowStyle Hidden -Command ""$env:PATH = [Environment]::GetEnvironmentVariable('PATH','User') + ';' + $env:PATH; Start-Process '{app}\bin\{#MyDaemonExe}'"""; \
+Filename: "{app}\bin\{#MyDaemonExe}"; \
+    Parameters: "--tray"; \
     Description: "Iniciar CodeGuard ahora (el orbe)"; \
     Flags: nowait postinstall skipifsilent runhidden
 
@@ -127,7 +125,6 @@ Type: filesandordirs; Name: "{app}\descargas"
 
 [Code]
 const
-  EnvKey = 'Environment';
   SplashFrames = 80;   // debe coincidir con build-wizard-art.ps1
 
 function GetSystemMetrics(nIndex: Integer): Integer;
@@ -185,8 +182,7 @@ function InitializeSetup(): Boolean;
 begin
   // ya instalado antes = actualizacion: se actualiza encima, sin borrar nada;
   // los motores con hash verificado se conservan y no se vuelven a descargar
-  EsActualizacion := RegKeyExists(HKCU,
-    'Software\Microsoft\Windows\CurrentVersion\Uninstall\{8F4E2C7A-1B3D-4A69-9E5C-2D7F0B1C4A88}_is1');
+  EsActualizacion := FileExists(ExpandConstant('{app}\bin\{#MyDaemonExe}'));
   if not WizardSilent() then
     MostrarSplash();
   Result := True;
@@ -252,38 +248,7 @@ begin
   LineaBienvenida('Todos los motores son necesarios: sin ellos se rompe la paridad con el CI.', 'Segoe UI', 8, ColBruma, Y);
 end;
 
-// ── PATH de usuario: alta idempotente y baja limpia ──────────────────────
-procedure EnvAddPath(const Ruta: string);
-var
-  Paths: string;
-begin
-  if not RegQueryStringValue(HKCU, EnvKey, 'Path', Paths) then
-    Paths := '';
-  if Pos(';' + Uppercase(Ruta) + ';', ';' + Uppercase(Paths) + ';') > 0 then
-    exit;
-  if Paths = '' then
-    Paths := Ruta
-  else
-    Paths := Ruta + ';' + Paths;
-  RegWriteStringValue(HKCU, EnvKey, 'Path', Paths);
-end;
 
-procedure EnvRemovePath(const Ruta: string);
-var
-  Paths: string;
-  P: Integer;
-begin
-  if not RegQueryStringValue(HKCU, EnvKey, 'Path', Paths) then
-    exit;
-  P := Pos(';' + Uppercase(Ruta) + ';', ';' + Uppercase(Paths) + ';');
-  if P = 0 then
-    exit;
-  if P = 1 then
-    Delete(Paths, 1, Length(Ruta) + 1)   // al inicio: quita "ruta;"
-  else
-    Delete(Paths, P - 1, Length(Ruta) + 1); // en medio/final: quita ";ruta"
-  RegWriteStringValue(HKCU, EnvKey, 'Path', Paths);
-end;
 
 // ── el daemon no puede estar corriendo mientras se reemplaza su .exe ─────
 //
@@ -450,17 +415,6 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
-    EnvAddPath(ExpandConstant('{app}\bin'));
-    EnvAddPath(ExpandConstant('{app}\engines'));
     EjecutarMotores();
-  end;
-end;
-
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-begin
-  if CurUninstallStep = usPostUninstall then
-  begin
-    EnvRemovePath(ExpandConstant('{app}\bin'));
-    EnvRemovePath(ExpandConstant('{app}\engines'));
   end;
 end;

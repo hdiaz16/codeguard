@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"log"
+	"runtime/debug"
 	"sync"
 
 	"codeguard/internal/capas"
@@ -41,17 +43,8 @@ import (
 //     garantiza errgroup.Wait: cada aviso se emite dentro de la goroutine del
 //     motor, antes de que termine. Quien reciba el resultado puede dar por
 //     cerrada la cuenta de avisos de ese análisis.
-//  4. El callback NO debe bloquear. Corre en la goroutine de un motor, en el
-//     camino del commit, y con el candado del avisador tomado: dormirse ahí
-//     retrasa el commit del desarrollador y frena a los demás motores.
-
-// Avance es UN paso del análisis, contado mientras ocurre.
-//
-// Lleva capas.Capa y no un tipo propio a propósito: es el mismo vocabulario que
-// viaja en Result.Capas y en ipc.Response.Capas. El orbe que pinta el avance en
-// vivo y el panel que lista las capas al terminar tienen que estar hablando de lo
-// mismo, o el dev vería «gofmt revisó» durante el análisis y «gofmt no pudo» en
-// el panel medio segundo después.
+//  4. El callback NO debe bloquear ni paniquear. Corre en la goroutine de un motor, en el
+//     camino del commit, y con el candado del avisador tomado.
 type Avance struct {
 	// Capa es la que acaba de terminar, con el estado que tendrá en el Result.
 	// Viene vacía en el aviso de apertura.
@@ -72,17 +65,21 @@ func (a Avance) Abre() bool { return a.Capa.Motor == "" }
 
 // avisador entrega los avances de UN análisis cumpliendo el contrato de arriba:
 // de uno en uno, en orden y con la cuenta llevada aquí.
-//
-// Con fn en nil todo es un no-op. Va así, y no con un `if opt.Progreso != nil` en
-// cada sitio de llamada, porque los sitios de llamada están dentro de las
-// goroutines de los motores: la comprobación repetida es justo la que un día se
-// olvida en uno de ellos y revienta el camino del commit del hook.
 type avisador struct {
 	fn func(Avance)
 
 	mu     sync.Mutex
 	hechas int
 	total  int
+}
+
+func (a *avisador) emitir(av Avance) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("codeguard: pánico en callback de progreso ignorado para no romper el análisis: %v\n%s", r, debug.Stack())
+		}
+	}()
+	a.fn(av)
 }
 
 // abrir anuncia cuántas capas van a mirar. Se llama una sola vez y antes de que
@@ -95,14 +92,11 @@ func (a *avisador) abrir(total int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.total = total
-	a.fn(Avance{Total: total})
+	a.emitir(Avance{Total: total})
 }
 
 // capa anuncia que una capa terminó. La llaman las goroutines de los motores en
 // paralelo; el candado es lo que convierte ese desorden en una secuencia.
-//
-// El candado se sostiene DURANTE la llamada a fn a propósito: es lo que hace
-// cierto el punto 1 del contrato. Por eso el punto 4 exige que fn no bloquee.
 func (a *avisador) capa(c capas.Capa) {
 	if a == nil || a.fn == nil {
 		return
@@ -110,5 +104,5 @@ func (a *avisador) capa(c capas.Capa) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.hechas++
-	a.fn(Avance{Capa: c, Hechas: a.hechas, Total: a.total})
+	a.emitir(Avance{Capa: c, Hechas: a.hechas, Total: a.total})
 }

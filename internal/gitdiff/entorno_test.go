@@ -47,7 +47,14 @@ func TestElGitQueLanzamosNoRecibeLaClaveDelModelo(t *testing.T) {
 		t.Error("git no recibió GIT_INDEX_FILE: analizaríamos el índice equivocado " +
 			"en cada `git commit -a`, y en silencio")
 	}
-	if !strings.Contains(strings.ToUpper(visto), "PATH=") {
+	var tienePath bool
+	for _, l := range strings.Split(visto, "\n") {
+		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(l)), "PATH=") {
+			tienePath = true
+			break
+		}
+	}
+	if !tienePath {
 		t.Error("git se quedó sin PATH: no encontraría ni sus propios subcomandos")
 	}
 }

@@ -125,9 +125,21 @@ func (a *analisisEnCurso) avanzar(runID string, av pipeline.Avance) (avanceVisib
 	if !a.vivo || runID != a.runID {
 		return avanceVisible{}, false
 	}
-	a.total = av.Total
+	// Las cifras sólo crecen. El bus no garantiza el orden entre emisiones —el
+	// comentario de arriba ya avisa de que hay que suponer rezagados—, y un
+	// avance atrasado trae un total o un hechas MENOR que el ya visto: pintarlo
+	// haría retroceder el marcador y lo descuadraría con miraron y caidas, que
+	// sí subieron con los avances que llegaron antes. Es el mismo invariante que
+	// el guion del orbe ya defiende del lado del cliente. Como total empieza en
+	// -1, el primer valor conocido entra aunque sea 0: se rechaza el paso atrás,
+	// no el descubrimiento.
+	if av.Total > a.total {
+		a.total = av.Total
+	}
 	if !av.Abre() {
-		a.hechas = av.Hechas
+		if av.Hechas > a.hechas {
+			a.hechas = av.Hechas
+		}
 		// Sólo se apunta como revisada la capa que REVISÓ. Una caída suma en su
 		// propia cuenta: el marcador no puede sugerir cobertura que no hubo.
 		switch {
@@ -243,7 +255,14 @@ func (v avanceVisible) tooltip() string {
 func (v avanceVisible) susurro() string {
 	switch {
 	case v.ultima.Motor == "": // apertura
-		if v.total <= 0 {
+		// -1 y 0 son dos afirmaciones distintas, como dice el campo total:
+		// «todavía no sé cuántas» no puede pintarse como «ninguna aplica», que
+		// promete una cobertura vacía que quizá no es cierta. Para el
+		// desconocido se usa la misma frase neutra que el tooltip.
+		if v.total < 0 {
+			return "revisando tu cambio"
+		}
+		if v.total == 0 {
 			return "ninguna capa aplica"
 		}
 		return plural(v.total, "1 capa mirando", "%d capas mirando")

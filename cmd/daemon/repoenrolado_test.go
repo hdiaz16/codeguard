@@ -2,6 +2,7 @@ package main
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"codeguard/internal/ipc"
@@ -21,6 +22,7 @@ func TestComandoRepoEnroladoActivaElRecienEnroladoAunqueYaHubieraOtroEnPantalla(
 	nuevo := repoEnDisco(t, "bds-portal")
 	e, _ := escritorioDePrueba([]registry.Repo{viejo})
 	e.tray = &trayState{} // sin bandeja ni burbuja: aquí sólo se observa lo que se publica
+	var mu sync.Mutex
 	var publicados []*panelPayload
 	e.emitir = func(nombre string, datos any) {
 		if nombre != "analysis" {
@@ -31,6 +33,8 @@ func TestComandoRepoEnroladoActivaElRecienEnroladoAunqueYaHubieraOtroEnPantalla(
 			t.Errorf("el panel espera un panelPayload en analysis, llegó %T", datos)
 			return
 		}
+		mu.Lock()
+		defer mu.Unlock()
 		publicados = append(publicados, p)
 	}
 
@@ -49,11 +53,18 @@ func TestComandoRepoEnroladoActivaElRecienEnroladoAunqueYaHubieraOtroEnPantalla(
 	if e.activo == nil || e.activo.RepoRoot != nuevo.Root {
 		t.Fatalf("el repo recién enrolado debe quedar como contexto activo, quedó %+v", e.activo)
 	}
-	if len(publicados) != 2 {
-		t.Fatalf("el panel debe recibir el contexto nuevo sin esperar a que lo reabran, recibió %d eventos", len(publicados))
+	mu.Lock()
+	nPub := len(publicados)
+	var ultimo *panelPayload
+	if nPub >= 2 {
+		ultimo = publicados[1]
 	}
-	ultimo := publicados[1]
-	if ultimo.RepoRoot != nuevo.Root || ultimo.Repo != "bds-portal" {
+	mu.Unlock()
+
+	if nPub != 2 {
+		t.Fatalf("el panel debe recibir el contexto nuevo sin esperar a que lo reabran, recibió %d eventos", nPub)
+	}
+	if ultimo == nil || ultimo.RepoRoot != nuevo.Root || ultimo.Repo != "bds-portal" {
 		t.Errorf("lo publicado debe ser el repo enrolado, llegó %+v", ultimo)
 	}
 	// Y sale en la lista del panel, que es donde se cambia de contexto.

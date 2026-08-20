@@ -71,7 +71,16 @@ func runToolConSalida(ctx context.Context, dir, bin string, args ...string) (tex
 	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, proc.ErrRecortada) {
 		return "", true, err // no arrancó, o venció el plazo
 	}
-	return string(salida.Combinada()), errors.As(err, &exitErr), nil
+	// El RECORTE también cuenta como fallo, y es la cuarta situación que faltaba
+	// en la tabla de arriba: el proceso superó el tope y se le mató a media
+	// escritura, así que la salida está partida. Con `fallo=false` el llamador la
+	// leería como el primer caso —«salió 0: miró y no encontró nada»— y si el
+	// trozo que alcanzó a escribir no trae diagnósticos parseables, reportaría
+	// CERO HALLAZGOS sobre un análisis a medias. El mismo verde silencioso que
+	// esta función nació para cerrar, por otra puerta. El texto parcial se sigue
+	// devolviendo —sus diagnósticos son válidos, se leen línea a línea—; lo que
+	// cambia es que ya no viaja con el sello de «limpio de verdad».
+	return string(salida.Combinada()), errors.As(err, &exitErr) || errors.Is(err, proc.ErrRecortada), nil
 }
 
 // runToolSeparado devuelve stdout y stderr SIN MEZCLAR.
@@ -124,21 +133,38 @@ func runToolSeparado(ctx context.Context, dir, bin string, args ...string) (stdo
 // es el peor final posible para un hallazgo real.
 //
 // El caso que lo destapó: Windows tiene dos nombres para el mismo directorio,
-// el corto 8.3 (HECTOR~1.BOD) y el largo. Python resuelve el corto antes de
-// imprimir rutas absolutas; Node no. Así que con la raíz en forma corta y el
-// motor respondiendo en forma larga, Rel devolvía nueve `..` y el hallazgo se
-// evaporaba. Lo encontró una prueba de integración de mypy, no un usuario —
-// esta vez.
+// el corto 8.3 (HECTOR~1.BOD) y el largo, y NO hay regla sobre qué forma
+// imprime cada motor —se midió un mypy devolviendo la corta mientras la raíz
+// venía en la larga, justo al revés de lo que se asumía aquí. Con las dos
+// formas mezcladas, Rel devolvía nueve `..` y el hallazgo se evaporaba. Lo
+// encontró una prueba de integración de mypy, no un usuario — esta vez.
 //
-// La defensa no depende de conocer ese caso: si el resultado se sale de la
-// raíz, se reintenta con la raíz canónica, y si aún se sale se devuelve la ruta
-// cruda. Una ruta rara es incómoda; una ruta inventada esconde el hallazgo.
+// La defensa no depende de conocer ese caso ni de adivinar qué lado viene en
+// qué forma: si el resultado se sale de la raíz, se reintenta con AMBOS lados
+// canonicalizados —EvalSymlinks resuelve el 8.3 a la forma larga, así que
+// corto-con-largo y largo-con-corto acaban comparándose en la misma forma—,
+// luego con sólo la raíz canónica, y si aún se sale se devuelve la ruta cruda.
+// Una ruta rara es incómoda; una ruta inventada esconde el hallazgo.
+//
+// EvalSymlinks(p) exige que p EXISTA en disco. Si no existe (hallazgo sobre
+// un archivo borrado entre el análisis y la lectura) ese intento se omite y
+// se cae al comportamiento de siempre: no es un silencio nuevo, es el mismo
+// desenlace que ya tenía ese caso.
 func relTo(root, p string) string {
 	if rel, ok := relDentroDe(root, p); ok {
 		return rel
 	}
-	if canon, err := filepath.EvalSymlinks(root); err == nil && canon != root {
-		if rel, ok := relDentroDe(canon, p); ok {
+	// Primero los dos lados en forma canónica: es el único reintento que
+	// arregla la disparidad corto/largo venga de donde venga.
+	canonRoot, errRoot := filepath.EvalSymlinks(root)
+	canonP, errP := filepath.EvalSymlinks(p)
+	if errRoot == nil && errP == nil {
+		if rel, ok := relDentroDe(canonRoot, canonP); ok {
+			return rel
+		}
+	}
+	if errRoot == nil && canonRoot != root {
+		if rel, ok := relDentroDe(canonRoot, p); ok {
 			return rel
 		}
 	}

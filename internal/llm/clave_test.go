@@ -16,6 +16,15 @@ import (
 // permisos, servicio de credenciales parado, credencial corrupta.
 var errBovedaRota = errors.New("el servicio de credenciales no responde")
 
+// REGLA DEL PAQUETE: las pruebas de este archivo reasignan las globales
+// leerSecreto y ultimoAviso —el mecanismo de inyección y la memoria del filtro
+// anti-repetición de ClaveDe—, y capturarLog reasigna la salida de log, que
+// también es global del proceso. Mientras siga así, NINGÚN test de este paquete
+// puede usar t.Parallel() ni llamar a ClaveDe desde una goroutine: sería una
+// carrera sobre esas variables, con verdes y rojos intermitentes en la prueba
+// que no tiene la culpa. El cierre real —pasar la lectora por parámetro en vez
+// de mutar una global— vive en clave.go y queda pendiente.
+
 // noEncontradoDeVerdad pide a la bóveda REAL el error de "esto no existe".
 //
 // Se pide en vez de fabricarlo porque el centinela no es exportable, y sobre
@@ -91,8 +100,12 @@ func TestUnFalloDeLaBovedaNoSeDisfrazaDeClaveAusente(t *testing.T) {
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
 			original := leerSecreto
+			avisoPrevio := ultimoAviso
 			leerSecreto = func(string) (string, error) { return c.guardada, c.errBoveda }
-			t.Cleanup(func() { leerSecreto = original })
+			// Se restauran AMBAS globales: dejar ultimoAviso pisado al salir
+			// contamina cualquier otra prueba del paquete que dependa del filtro
+			// anti-repetición, y el fallo saldría en la que no tiene la culpa.
+			t.Cleanup(func() { leerSecreto = original; ultimoAviso = avisoPrevio })
 			ultimoAviso = "" // la memoria del filtro anti-repetición, entre casos
 			t.Setenv(variable, c.entorno)
 			salida := capturarLog(t)
@@ -129,7 +142,8 @@ func TestUnFalloDeLaBovedaNoSeDisfrazaDeClaveAusente(t *testing.T) {
 func TestElAvisoDeBovedaNiInundaElLogNiSeCallaLaSegundaVez(t *testing.T) {
 	const variable = "CG_PRUEBA_CLAVE_MODELO"
 	original := leerSecreto
-	t.Cleanup(func() { leerSecreto = original })
+	avisoPrevio := ultimoAviso
+	t.Cleanup(func() { leerSecreto = original; ultimoAviso = avisoPrevio })
 	t.Setenv(variable, "")
 	ultimoAviso = ""
 	salida := capturarLog(t)

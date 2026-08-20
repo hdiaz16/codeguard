@@ -1,3 +1,5 @@
+//go:build e2ereal
+
 package trivydb
 
 // La descarga sola no basta: hay que ver a trivy CAZAR con la base que bajamos
@@ -39,8 +41,11 @@ func TestTrivyCazaConNuestraBase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, _ := exec.CommandContext(ctx, "trivy", "--cache-dir", cache,
+	out, err := exec.CommandContext(ctx, "trivy", "--cache-dir", cache,
 		"fs", "--scanners", "vuln", "--format", "json", "--quiet", "--skip-db-update", repo).CombinedOutput()
+	if err != nil && !strings.Contains(string(out), "CVE-") {
+		t.Fatalf("trivy falló: %v\n%s", err, out)
+	}
 	if !strings.Contains(string(out), "CVE-") {
 		t.Fatalf("trivy no cazó ningún CVE con nuestra base sobre yaml.v2 v2.2.2:\n%.600s", out)
 	}

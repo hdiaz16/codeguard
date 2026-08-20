@@ -88,9 +88,13 @@ func Guardar(variable, valor string) error {
 		c.CredentialBlob = &blob[0]
 	}
 	r, _, e := procCredWriteW.Call(uintptr(unsafe.Pointer(&c)), 0)
-	// blob se mantiene vivo hasta después de la llamada: sin esto el recolector
-	// podría moverlo o liberarlo mientras Windows lo está leyendo.
+	// Los buffers y estructuras se mantienen vivos hasta después de la llamada:
+	// sin esto el recolector podría moverlos o liberarlos durante la syscall.
+	runtime.KeepAlive(&c)
 	runtime.KeepAlive(blob)
+	runtime.KeepAlive(destino)
+	runtime.KeepAlive(usuario)
+	runtime.KeepAlive(comentario)
 	if r == 0 {
 		return fmt.Errorf("no se pudo guardar la credencial: %w", e)
 	}
@@ -114,6 +118,7 @@ func Leer(variable string) (string, error) {
 		0,
 		uintptr(unsafe.Pointer(&pc)),
 	)
+	runtime.KeepAlive(destino)
 	if r == 0 {
 		if errors.Is(e, elementoNoExiste) {
 			return "", errNoEncontrado
@@ -136,6 +141,7 @@ func Borrar(variable string) error {
 		return err
 	}
 	r, _, e := procCredDeleteW.Call(uintptr(unsafe.Pointer(destino)), credTypeGeneric, 0)
+	runtime.KeepAlive(destino)
 	if r == 0 && !errors.Is(e, elementoNoExiste) {
 		return fmt.Errorf("no se pudo borrar la credencial: %w", e)
 	}

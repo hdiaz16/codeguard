@@ -18,6 +18,7 @@ import (
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
+	"codeguard/internal/migraciones"
 )
 
 type Engine struct {
@@ -42,16 +43,34 @@ func (e *Engine) aplicaDialecto() bool {
 	return d == "" || d == "postgres"
 }
 
-func (e *Engine) migrationFiles(in engines.Input) []string {
+// migrationFiles devuelve error si algún patrón de paths.migrations no compila.
+// Descartarlo en silencio, como hacía antes, vaciaba la lista de globs por un
+// typo en la config: Applies() pasaba a false y esta capa BLOQUEANTE dejaba de
+// revisar migraciones sin que nadie se enterara — el agujero de cobertura exacto
+// que la compuerta existe para cerrar.
+func (e *Engine) migrationFiles(in engines.Input) ([]string, error) {
 	var globs []glob.Glob
 	for _, p := range e.MigrationGlobs {
-		if g, err := glob.Compile(p, '/'); err == nil {
-			globs = append(globs, g)
+		g, err := glob.Compile(p, '/')
+		if err != nil {
+			return nil, fmt.Errorf("patrón de paths.migrations inválido %q: %v", p, err)
 		}
+		globs = append(globs, g)
 	}
 	var out []string
 	for _, f := range in.Files {
 		if f.Status == "D" || filepath.Ext(f.Path) != ".sql" {
+			continue
+		}
+		// El contenido vetado (semillas, fixtures, volcados, consultas) no va
+		// a la compuerta de migración insegura AUNQUE case un glob. Los globs
+		// de árbol que escribe init (`migrations/**/*.sql`) recapturan lo
+		// vetado que vive dentro del árbol — `migrations/seeds/paises.sql` —
+		// y glob no soporta exclusión, así que el filtro tiene que vivir
+		// aquí, en el consumo. Se usa EsOtroContenido y NO Parece: Parece
+		// también rechaza lo no versionado, y descartar eso silenciaría
+		// archivos que el usuario incluyó a mano en su paths.migrations.
+		if migraciones.EsOtroContenido(f.Path) {
 			continue
 		}
 		for _, g := range globs {
@@ -61,11 +80,19 @@ func (e *Engine) migrationFiles(in engines.Input) []string {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (e *Engine) Applies(in engines.Input) bool {
-	return e.aplicaDialecto() && len(e.migrationFiles(in)) > 0
+	archivos, err := e.migrationFiles(in)
+	if err != nil {
+		// Con un glob roto la capa se aplica IGUAL: Applies no puede devolver
+		// error, así que devolver true es lo fail-closed — Run dirá qué patrón no
+		// compila y la corrida se enterará de que la config está mal, en vez de
+		// saltarse la revisión de migraciones sin decir nada.
+		return true
+	}
+	return e.aplicaDialecto() && len(archivos) > 0
 }
 
 type violation struct {
@@ -100,13 +127,26 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	if bin == "" {
 		bin = "squawk"
 	}
-	files := e.migrationFiles(in)
-	args := append([]string{"--reporter", "json"}, files...)
+	files, err := e.migrationFiles(in)
+	if err != nil {
+		return nil, err
+	}
+	// El "--" separa banderas de operandos: una migración cuyo nombre empiece
+	// por "-" no debe leerse como bandera de squawk (clap lo honra).
+	args := append([]string{"--reporter", "json", "--"}, files...)
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = in.RepoRoot
 	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	out := salida.Stdout
+	// Si el contexto se canceló o venció, squawk pudo morir a media faena: el
+	// JSON de stdout puede ser válido y cubrir sólo parte de los archivos, y
+	// reportarlo con Verified:true firmaría como revisadas migraciones que nadie
+	// analizó. Se comprueba ANTES de mirar la salida, porque de un análisis
+	// truncado no hay salida buena que sacar.
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("análisis de migraciones interrumpido: %w", err)
+	}
 	// squawk sale con código != 0 cuando hay violaciones; el JSON sigue siendo válido.
 	if runErr != nil && len(out) == 0 {
 		return nil, fmt.Errorf("squawk no corrió: %w", runErr)

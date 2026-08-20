@@ -68,6 +68,16 @@ func escritorioConOrbe(plazo time.Duration) (*escritorio, *trayGrabador, *grabad
 	return e, bandeja, &bus
 }
 
+// temporizadorDelVigilante devuelve el temporizador que el vigilante tiene armado
+// AHORA, con el candado tomado. Es la forma de comprobar el rearme —cada avance
+// detiene el anterior y arma uno nuevo— y el apagado tras el veredicto SIN reloj
+// de pared: el mecanismo se mira, no se espera.
+func temporizadorDelVigilante(a *analisisEnCurso) *time.Timer {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.timer
+}
+
 func peticion(runID, raiz, rama string) *ipc.Request {
 	return &ipc.Request{RunID: runID, RepoRoot: raiz, Branch: rama, DeadlineMs: 5000}
 }
@@ -123,6 +133,12 @@ func TestElMarcadorNoCuentaComoRevisadaUnaCapaQueSeCayo(t *testing.T) {
 	e.alAvanzarAnalisis(req, avanceDeCapa("trivy", capas.Ausente, 3, 4))
 
 	av := bus.progresos()
+	// Sin esta guarda, un orbe mudo panica por índice —aquí y en el bucle de
+	// abajo— en vez de decir qué avance faltó, y el panic entierra el mensaje
+	// que explica el porqué.
+	if len(av) != 4 {
+		t.Fatalf("el orbe publicó %d avances de 4 (arranque + 3 capas): %v", len(av), av)
+	}
 	ultimo := av[len(av)-1]
 	quiero := "demo · rama master · 1 revisó · 2 no pudieron · faltan 1"
 	if ultimo["detalle"] != quiero {
@@ -177,13 +193,38 @@ func TestElOrbeNoSeQuedaColgadoSiElAnalisisNoVuelve(t *testing.T) {
 // La contraparte, para que «quitar el vigilante» no pase por arreglo al revés:
 // un análisis que SÍ termina no puede acabar acusado de muerto.
 func TestElVeredictoApagaAlVigilante(t *testing.T) {
-	e, bandeja, _ := escritorioConOrbe(40 * time.Millisecond)
+	// Plazo largo a propósito: la prueba ya no necesita que el vigilante PUDIERA
+	// disparar por reloj —mira el mecanismo, no una ventana de tiempo— y así
+	// ningún retraso del planificador puede hacerlo disparar de verdad a mitad.
+	e, bandeja, _ := escritorioConOrbe(time.Hour)
 	req := peticion("r1", t.TempDir(), "master")
 
 	e.alEmpezarAnalisis(req)
+	// Sin vigilante armado al empezar, el resto de la prueba pasaría en vacío: no
+	// habría nada que apagar. Que el arma dispara cuando nadie termina el análisis
+	// lo fija TestElOrbeNoSeQuedaColgadoSiElAnalisisNoVuelve.
+	if temporizadorDelVigilante(&e.enCurso) == nil {
+		t.Fatal("el análisis empezó sin vigilante armado: la prueba no tendría nada que apagar")
+	}
+
 	e.alTerminarAnalisis(req, &ipc.Response{RunID: "r1", Verdict: "pass", CIParity: true})
 
-	time.Sleep(300 * time.Millisecond) // de sobra para que el vigilante hubiera saltado
+	// Aserción negativa SIN reloj de pared. Lo que se comprueba es que el
+	// vigilante NO PUEDE disparar después del veredicto, y eso se mira en el
+	// mecanismo: terminar() vuelve con el análisis cerrado y el temporizador
+	// detenido. Si el callback estuviera pintando justo ahora, pinta con el
+	// candado tomado, así que terminar() se habría quedado esperando y la pintada
+	// sería ANTERIOR a este punto: ya estaría en la lista de la bandeja y la vería
+	// el bucle de abajo. Antes se dormía 1 s contra un plazo de 40 ms, y en un CI
+	// cargado un retraso del planificador por encima del margen producía un
+	// «degraded» falso intermitente.
+	e.enCurso.mu.Lock()
+	vivo, armado := e.enCurso.vivo, e.enCurso.timer != nil
+	e.enCurso.mu.Unlock()
+	if vivo || armado {
+		t.Fatalf("el veredicto no apagó al vigilante (vivo=%v, temporizador armado=%v): "+
+			"acabará acusando de muerto a un análisis que terminó en «pass»", vivo, armado)
+	}
 
 	for _, em := range bandeja.todas() {
 		if em.estado == "degraded" {
@@ -293,8 +334,10 @@ func TestLaMuerteDelAnalisisNuncaSePintaDespuesDelVeredicto(t *testing.T) {
 	var a analisisEnCurso
 	var mu sync.Mutex
 	var orden []string
+	pintando := make(chan struct{})
 
 	a.empezar("r1", "demo", "master", 20*time.Millisecond, func(repo, rama string) {
+		close(pintando)
 		// Pintar cuesta: los setters de la bandeja esperan al hilo de la UI.
 		time.Sleep(80 * time.Millisecond)
 		mu.Lock()
@@ -302,7 +345,14 @@ func TestLaMuerteDelAnalisisNuncaSePintaDespuesDelVeredicto(t *testing.T) {
 		mu.Unlock()
 	})
 
-	time.Sleep(50 * time.Millisecond) // el vigilante ya disparó y está pintando
+	// Nada de reloj de pared: terminar se llama cuando el vigilante YA está
+	// pintando, que es el instante exacto de la carrera que se quiere fijar.
+	// Antes se dormía 50 ms suponiendo que para entonces habría disparado.
+	select {
+	case <-pintando:
+	case <-time.After(3 * time.Second):
+		t.Fatal("el vigilante no disparó en 3 s: sin muerte pintada no hay orden que comprobar")
+	}
 	a.terminar("r1")
 	mu.Lock()
 	orden = append(orden, "veredicto")
@@ -388,20 +438,51 @@ func TestElGuionDelOrbeCumpleSusReglas(t *testing.T) {
 // pinta un naranja falso que además se desmiente solo — que es justo cómo se
 // enseña a ignorar una señal.
 func TestUnAnalisisQueAvisaNoSeDaPorMuerto(t *testing.T) {
-	e, bandeja, _ := escritorioConOrbe(80 * time.Millisecond)
+	e, bandeja, _ := escritorioConOrbe(200 * time.Millisecond)
 	req := peticion("r1", "C:/repos/demo", "master")
 
 	e.alEmpezarAnalisis(req)
-	for i := 1; i <= 6; i++ { // 6 × 40 ms = 240 ms, tres veces el plazo
-		time.Sleep(40 * time.Millisecond)
-		e.alAvanzarAnalisis(req, avanceDeCapa("m", capas.Corrio, i, 9))
-	}
 
+	// El rearme se comprueba en el MECANISMO y no con el reloj de pared: cada
+	// avance detiene el temporizador anterior y arma otro con el plazo completo,
+	// así que tras cada avance el temporizador tiene que ser uno nuevo. Antes
+	// había sleeps de 60 ms contra un plazo de 200 ms, y un retraso del
+	// planificador por encima del margen pintaba un «degraded» que no tocaba:
+	// intermitente, y en un CI cargado.
+	anterior := temporizadorDelVigilante(&e.enCurso)
+	if anterior == nil {
+		t.Fatal("el análisis empezó sin vigilante armado: sin él, un «revisando» que no " +
+			"vuelve se queda pintado para siempre")
+	}
+	for i := 1; i <= 6; i++ {
+		e.alAvanzarAnalisis(req, avanceDeCapa("m", capas.Corrio, i, 9))
+		actual := temporizadorDelVigilante(&e.enCurso)
+		if actual == nil {
+			t.Fatalf("el avance %d dejó al análisis sin vigilante: si ahora se calla, el "+
+				"orbe se queda en «revisando» para siempre", i)
+		}
+		if actual == anterior {
+			t.Fatalf("el avance %d no rearmó al vigilante: el temporizador sigue contando "+
+				"desde el avance anterior y dará por muerto a un análisis que está avisando", i)
+		}
+		anterior = actual
+	}
 	for _, em := range bandeja.todas() {
 		if em.estado == "degraded" {
 			t.Fatalf("el análisis avisó seis veces y el vigilante lo dio por muerto igual: %v",
 				bandeja.todas())
 		}
+	}
+
+	// La otra mitad, y es la que la versión con sleeps NO tenía: que el
+	// temporizador rearmado sea de VERDAD. Al callarse, el vigilante tiene que
+	// disparar; si el rearme lo armara con un plazo roto —uno que no vence
+	// nunca— la comprobación de identidad de arriba pasaría igual y el orbe se
+	// quedaría colgado en «revisando». Espera POSITIVA con 15× de margen, el
+	// patrón del archivo: aquí lo que falla es que la muerte NO llegue.
+	sale := bandeja.esperarEstado(t, "degraded", 3*time.Second)
+	if !strings.Contains(sale.tooltip, "no terminó") {
+		t.Errorf("el orbe salió de «revisando» sin decir por qué (tooltip %q)", sale.tooltip)
 	}
 }
 

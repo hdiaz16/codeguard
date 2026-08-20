@@ -18,7 +18,8 @@ import (
 )
 
 func baselineCmd() *cobra.Command {
-	return &cobra.Command{
+	var si bool
+	cmd := &cobra.Command{
 		Use:   "baseline",
 		Short: "Escanea el repo completo y suprime los hallazgos preexistentes (solo lo nuevo bloqueará)",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -72,6 +73,17 @@ func baselineCmd() *cobra.Command {
 			// a otro comando es un resumen que nadie mira.
 			mostrarLoQueSeAcepta(res.Findings)
 
+			if !si && len(res.Findings) > 0 {
+				fmt.Print("\n¿Escribir baseline y suprimir estos hallazgos preexistentes? [S/n]: ")
+				var resp string
+				if _, err := fmt.Scanln(&resp); err == nil {
+					resp = strings.TrimSpace(strings.ToLower(resp))
+					if resp == "n" || resp == "no" {
+						return fmt.Errorf("operación cancelada por el usuario: baseline no escrita")
+					}
+				}
+			}
+
 			n, err := baseline.Write(repoRoot, res.Findings)
 			if err != nil {
 				return err
@@ -84,6 +96,8 @@ func baselineCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVarP(&si, "si", "y", false, "aceptar y escribir la baseline sin confirmación interactiva")
+	return cmd
 }
 
 // mostrarLoQueSeAcepta desglosa la deuda por pilar y saca a la luz los

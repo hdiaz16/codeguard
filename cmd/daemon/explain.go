@@ -1,6 +1,7 @@
 package main
 
 import (
+	"container/list"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,7 +32,63 @@ Reglas:
 - Tono de compañero, no de juez. Sin tecnicismos innecesarios, sin regaños.
 - Si el mensaje original ya es claro, mejora igual la parte del "cómo arreglarlo" con el código real.`
 
-var explainCache sync.Map // fingerprint -> string
+// maxExplicacionesCache topa las explicaciones en memoria. Un sync.Map a
+// secas crece sin límite: cada fingerprint único explicado se quedaba para
+// siempre, y un daemon que vive semanas sobre muchos repos acumulaba miles de
+// entradas. Evictar es seguro porque las explicaciones se REGENERAN pidiéndolas
+// al modelo de nuevo — perder una entrada cuesta una re-explicación, nunca
+// corrección.
+const maxExplicacionesCache = 1024
+
+// cacheExplicaciones es un LRU mínimo (fingerprint -> texto) con tope duro de
+// entradas. Mantiene la interfaz Load/Store del sync.Map que reemplaza.
+type cacheExplicaciones struct {
+	mu     sync.Mutex
+	orden  *list.List // frente = usado más recientemente; fondo = próximo a evictar
+	indice map[string]*list.Element
+}
+
+type entradaExplicacion struct {
+	fingerprint string
+	texto       string
+}
+
+func nuevoCacheExplicaciones() *cacheExplicaciones {
+	return &cacheExplicaciones{
+		orden:  list.New(),
+		indice: make(map[string]*list.Element),
+	}
+}
+
+func (c *cacheExplicaciones) Load(fingerprint string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.indice[fingerprint]
+	if !ok {
+		return "", false
+	}
+	c.orden.MoveToFront(el)
+	return el.Value.(entradaExplicacion).texto, true
+}
+
+func (c *cacheExplicaciones) Store(fingerprint, texto string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.indice[fingerprint]; ok {
+		el.Value = entradaExplicacion{fingerprint, texto}
+		c.orden.MoveToFront(el)
+		return
+	}
+	el := c.orden.PushFront(entradaExplicacion{fingerprint, texto})
+	c.indice[fingerprint] = el
+	if c.orden.Len() > maxExplicacionesCache {
+		viejo := c.orden.Back()
+		c.orden.Remove(viejo)
+		delete(c.indice, viejo.Value.(entradaExplicacion).fingerprint)
+	}
+}
+
+var explainCache = nuevoCacheExplicaciones()
 
 type explanation struct {
 	ID   string `json:"id"`
@@ -48,11 +105,20 @@ func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request,
 	count := 0
 	var sb strings.Builder
 	for _, f := range resp.Findings {
-		if !f.Blocking || count >= 3 {
+		if !f.Blocking {
 			continue
 		}
+		// La caché se consulta ANTES del tope: una explicación ya cacheada no
+		// cuesta llamada al modelo, así que se emite aunque el tope esté lleno.
+		// Antes el «count >= 3» iba primero y se comía explicaciones gratis.
 		if cached, ok := explainCache.Load(f.Fingerprint); ok {
-			emitExplain(app, f.ID, cached.(string))
+			emitExplain(app, f.ID, cached)
+			continue
+		}
+		// El tope solo frena las llamadas NUEVAS. Se sigue recorriendo —y no se
+		// corta el bucle— porque un hallazgo posterior puede estar cacheado y
+		// emitirlo no cuesta nada.
+		if count >= 3 {
 			continue
 		}
 		count++

@@ -41,6 +41,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Variables y no constantes: las pruebas levantan un registro falso y apuntan
@@ -50,6 +52,32 @@ var (
 	repositorio  = "aquasecurity/trivy-db"
 	etiqueta     = "2"
 )
+
+// Clientes propios con plazo: http.DefaultClient no tiene NINGUNO, así que una
+// conexión que se queda colgada a media descarga bloquearía la actualización
+// para siempre cuando el ctx del llamador no trae deadline —nada obliga a que lo
+// traiga—. El ctx sigue mandando cuando lo trae; esto es la red de seguridad
+// para cuando no, y Client.Timeout cubre también la lectura del cuerpo.
+var (
+	clienteCorto = &http.Client{Timeout: 30 * time.Second} // token y manifiestos: JSON de ~1 KB
+	clienteLargo = &http.Client{Timeout: 10 * time.Minute} // el blob: ~60 MB hoy, con margen
+)
+
+// muActualizar evita que dos goroutines de ESTE proceso se pongan a descargar la
+// misma base de 1.2 GB a la vez: es ahorro, no la garantía de integridad.
+//
+// La integridad la da el diseño de las rutas, y esa es la parte que importa: cada
+// llamada extrae en su propio directorio (db.nuevo-*) y aparta la base anterior
+// en un respaldo derivado de ese mismo nombre, así que no queda ninguna ruta de
+// trabajo compartida entre procesos. Antes sí las había —db.nuevo y db.viejo
+// fijas— y este mutex no podía protegerlas: un daemon viejo y uno nuevo, o el
+// daemon y el CLI, se borraban el directorio a medio extraer.
+//
+// Es un mutex de proceso y NO un candado en disco a propósito: un candado con
+// O_EXCL sobrevive a un proceso muerto —un kill deja el archivo y a partir de ahí
+// NINGUNA actualización vuelve a funcionar hasta que alguien lo borre a mano, que
+// es un modo de fallo peor que la carrera que evita.
+var muActualizar sync.Mutex
 
 const (
 	topeManifiesto = 1 << 20 // 1 MB: un índice o manifiesto OCI real ocupa ~1 KB
@@ -75,6 +103,11 @@ type manifiestoOCI struct {
 // directorio aparte y sólo se intercambia cuando todo está verificado — un
 // fallo a medias deja la base anterior intacta.
 func Actualizar(ctx context.Context, dirTrivy string) error {
+	// Una actualización a la vez: ver muActualizar. Se toma antes de pedir el
+	// token para no bajar dos veces el mismo gigabyte.
+	muActualizar.Lock()
+	defer muActualizar.Unlock()
+
 	token, err := pedirToken(ctx)
 	if err != nil {
 		return fmt.Errorf("token del registro: %w", err)
@@ -131,15 +164,34 @@ func Actualizar(ctx context.Context, dirTrivy string) error {
 		return fmt.Errorf("blob de la base: %w", err)
 	}
 
-	// Verificado: ahora sí se abre. La extracción va a un directorio aparte.
-	nuevo := filepath.Join(dirTrivy, "db.nuevo")
-	_ = os.RemoveAll(nuevo)
+	// Verificado: ahora sí se abre. La extracción va a un directorio ÚNICO por
+	// llamada, no al fijo db.nuevo. Con ruta fija, el mutex sólo ordenaba a las
+	// goroutines de ESTE proceso: un segundo proceso —un daemon viejo y uno
+	// nuevo, o el daemon y el CLI— hacía RemoveAll del directorio que el otro
+	// estaba extrayendo, y el rename final podía colocar en db una base a
+	// medias. En un motor bloqueante eso es lo peor que puede pasar.
+	//
+	// Con directorio propio no hay estado compartido mutable: lo único que se
+	// comparte son renames de directorios YA completos, cuyo solape se resuelve
+	// como error y nunca como base corrupta.
+	purgarExtraccionesHuerfanas(dirTrivy)
+	nuevo, err := os.MkdirTemp(dirTrivy, "db.nuevo-*")
+	if err != nil {
+		return fmt.Errorf("directorio de extracción: %w", err)
+	}
 	if err := extraer(tmp.Name(), nuevo); err != nil {
 		_ = os.RemoveAll(nuevo)
 		return fmt.Errorf("extrayendo la base: %w", err)
 	}
 
-	return intercambiar(dirTrivy, nuevo)
+	if err := intercambiar(dirTrivy, nuevo); err != nil {
+		// Si el intercambio no llegó a hacerse, la extracción sigue en disco y
+		// ahora tiene nombre único: se borra aquí para no acumular. Si tuvo
+		// éxito, `nuevo` ya no existe y esto es un no-op.
+		_ = os.RemoveAll(nuevo)
+		return err
+	}
+	return nil
 }
 
 func pedirToken(ctx context.Context) (string, error) {
@@ -148,7 +200,7 @@ func pedirToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := clienteCorto.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -180,7 +232,7 @@ func pedirManifiesto(ctx context.Context, token, ref string) ([]byte, error) {
 		"application/vnd.oci.image.manifest.v1+json",
 		"application/vnd.docker.distribution.manifest.v2+json",
 	}, ", "))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := clienteCorto.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +259,7 @@ func bajarBlob(ctx context.Context, token, digest string, destino *os.File) erro
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := clienteLargo.Do(req)
 	if err != nil {
 		return err
 	}
@@ -295,7 +347,14 @@ func extraer(rutaTgz, destino string) error {
 // la anterior y el siguiente ciclo lo reintenta.
 func intercambiar(dirTrivy, nuevo string) error {
 	db := filepath.Join(dirTrivy, "db")
-	viejo := filepath.Join(dirTrivy, "db.viejo")
+	// El apartado también cuelga del directorio único de esta llamada, y NO de
+	// un "db.viejo" compartido. Con la ruta fija quedaba una carrera fina entre
+	// procesos: el RemoveAll de abajo borraba el respaldo que el OTRO proceso
+	// acababa de apartar, y si a ese otro le fallaba el rename de colocación
+	// —el caso documentado de un trivy leyendo la base en Windows— su
+	// restauración no encontraba nada y db se quedaba AUSENTE. Derivarlo de
+	// `nuevo` cierra esa clase entera: nadie más conoce este nombre.
+	viejo := nuevo + ".viejo"
 	_ = os.RemoveAll(viejo)
 
 	hayVieja := false
@@ -313,6 +372,33 @@ func intercambiar(dirTrivy, nuevo string) error {
 	}
 	_ = os.RemoveAll(viejo)
 	return nil
+}
+
+// purgarExtraccionesHuerfanas borra los directorios de extracción que dejó atrás
+// un proceso muerto. Existe porque el código anterior, al usar la ruta fija
+// db.nuevo, se limpiaba solo en cada corrida: sin esto, cada kill a media
+// descarga dejaría hasta ~1.2 GB para siempre.
+//
+// El umbral de una hora es lo que hace que esto NO sea el candado en disco que
+// se rechazó: no se borra nada reciente, así que jamás puede tocar la extracción
+// en curso de otro proceso (extraer la base tarda minutos), y si no borra nada
+// tampoco bloquea a nadie. Los errores se ignoran a propósito: es higiene de
+// disco, no parte del contrato de la actualización.
+func purgarExtraccionesHuerfanas(dirTrivy string) {
+	entradas, err := os.ReadDir(dirTrivy)
+	if err != nil {
+		return
+	}
+	for _, e := range entradas {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "db.nuevo-") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) < time.Hour {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(dirTrivy, e.Name()))
+	}
 }
 
 func digestDe(b []byte) string {

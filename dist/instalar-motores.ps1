@@ -31,8 +31,8 @@ $codigo = 0
 try {
     & (Join-Path $PSScriptRoot "engines.ps1") *>> $log
 
-    # verificacion final con el PATH ya actualizado por el setup
-    $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "User") + ";" + $env:PATH
+    # verificacion final con el PATH inyectado en este proceso
+    $env:PATH = (Join-Path $PSScriptRoot "bin") + ";" + (Join-Path $PSScriptRoot "engines") + ";" + $env:PATH
     & (Join-Path $PSScriptRoot "bin\codeguard.exe") repair *>> $log
     if ($LASTEXITCODE -ne 0) { $codigo = $LASTEXITCODE }
 } catch {

@@ -1,6 +1,7 @@
 package identidad
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,5 +103,27 @@ func TestElRegistroRealEstaBienFormado(t *testing.T) {
 		} else if _, err := time.Parse("2006-01-02", e.Hasta); err != nil {
 			t.Errorf("%s / %s: fecha ilegible %q", e.Artefacto, e.Objetivo(), e.Hasta)
 		}
+	}
+}
+
+func TestValidacionDeFirmaRechazaExcepcionSinAceptadaPor(t *testing.T) {
+	ahora, _ := time.Parse("2006-01-02", "2026-08-19")
+	eSinFirma := Excepcion{
+		Artefacto:   "trivy",
+		Paquete:     "oras.land/oras-go/v2",
+		Motivo:      "prueba",
+		Hasta:       "2026-11-30",
+		AceptadaPor: "",
+	}
+	ok, razon := eSinFirma.vigente(ahora)
+	if ok || !strings.Contains(razon, "sin firmar") {
+		t.Errorf("excepción sin firma no debe ser vigente, got ok=%v, razon=%q", ok, razon)
+	}
+
+	eConFirma := eSinFirma
+	eConFirma.AceptadaPor = "seguridad@codeguard"
+	ok, _ = eConFirma.vigente(ahora)
+	if !ok {
+		t.Errorf("excepción con firma y dentro de fecha debe ser vigente")
 	}
 }

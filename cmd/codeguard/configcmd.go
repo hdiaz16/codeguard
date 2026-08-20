@@ -36,7 +36,14 @@ func configCmd() *cobra.Command {
 			if listar {
 				return mostrarConfigLLM()
 			}
-			repoRoot, _ := gitdiff.RepoRoot(".")
+			// El error se comprueba ANTES del IPC: descartándolo, fuera de un
+			// repo git se mandaba un RepoRoot vacío y el fallo salía como «el
+			// agente no está corriendo», que manda a reiniciar el agente cuando
+			// lo que pasa es otra cosa.
+			repoRoot, err := gitdiff.RepoRoot(".")
+			if err != nil {
+				return fmt.Errorf("no estás dentro de un repo git: %w", err)
+			}
 			if _, err := ipc.Call(&ipc.Request{
 				Command: "open-config", RepoRoot: repoRoot, DeadlineMs: 3000,
 			}, 3*time.Second); err != nil {
@@ -71,8 +78,16 @@ func guardarClaveDeStdin(variable string) error {
 	if err != nil {
 		return fmt.Errorf("no se pudo leer la clave de la entrada estándar: %w", err)
 	}
-	// Se recorta el salto de línea que añade cualquier pipe, pero NADA más: una
-	// clave puede llevar caracteres que parezcan basura y no lo son.
+	// Se recortan el salto de línea que añade cualquier pipe Y los espacios o
+	// tabuladores de los extremos, que es lo que trae un pegado desde el portal
+	// del proveedor. Nada de lo de dentro se toca: una clave puede llevar
+	// caracteres que parezcan basura y no lo son.
+	//
+	// Se auditó como corrupción de claves con espacios legítimos en los
+	// extremos, y se dejó a propósito: ninguna API key conocida los lleva, y
+	// guardar la clave con el espacio del pegado la vuelve inválida — el fallo
+	// aparecería mucho después, como un error de autenticación que no señala a
+	// aquí. El comentario anterior decía «NADA más» y contradecía al código.
 	clave := strings.Trim(string(crudo), " \r\n\t")
 	if clave == "" {
 		return fmt.Errorf("no llegó ninguna clave por la entrada estándar: "+
@@ -115,8 +130,10 @@ func probarConfigActual() error {
 	fmt.Printf("probando %s en %s…\n", nonEmptyOr(cfg.LLM.Model, "(sin modelo)"), cfg.LLM.Endpoint)
 	detalle, err := llm.Probar(cfg.LLM, "")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "FALLÓ:", err)
-		os.Exit(1)
+		// Se devuelve el error y NO se imprime aquí: main ya lo escribe en
+		// stderr con el prefijo "codeguard:", y hacer las dos cosas sacaba el
+		// mismo fallo dos veces.
+		return fmt.Errorf("la prueba del modelo falló: %w", err)
 	}
 	fmt.Println("OK —", detalle)
 	return nil

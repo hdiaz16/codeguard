@@ -19,17 +19,17 @@ import (
 // en los tests: MSBuild reporta paths absolutos y canonizados —aunque el
 // directorio de trabajo se le pase con alias 8.3— así que recortarlos contra
 // esta base es exactamente el trabajo que hace dnbRelativizar en producción.
-const raizCaptura = `C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad`
+const raizCaptura = `C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad`
 
 // Capturado con `dotnet build --no-restore --nologo -v quiet -clp:NoSummary
 // -t:Rebuild ...` sobre un proyecto con un `return a + b` sin punto y coma.
 // Tal cual, incluido el resumen: -clp:NoSummary NO lo suprime en `dotnet build`
 // y el error aparece DOS VECES.
-const capturaErrorCompilador = `C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj\Roto.cs(7,21): error CS1002: ; expected [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj\ErrProj.csproj]
+const capturaErrorCompilador = `C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj\Roto.cs(7,21): error CS1002: ; expected [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj\ErrProj.csproj]
 
 Build FAILED.
 
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj\Roto.cs(7,21): error CS1002: ; expected [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj\ErrProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj\Roto.cs(7,21): error CS1002: ; expected [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj\ErrProj.csproj]
     0 Warning(s)
     1 Error(s)
 
@@ -40,19 +40,19 @@ Time Elapsed 00:00:05.31
 // una variable asignada y no usada (CS0219 del compilador) y cuatro avisos de
 // los analizadores Roslyn, uno de ellos en un subdirectorio. Con el resumen
 // repitiendo las cinco líneas, como arriba.
-const capturaAvisosAnalizadores = `C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(7,13): warning CS0219: The variable 'sinUsar' is assigned but its value is never used [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(8,9): warning CA1806: Saludo calls Trim but does not use the new string instance that the method returns. Pass the instance as an argument to another method, assign the instance to a variable, or remove the call if it is unnecessary. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1806) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Servicios\Otro.cs(5,17): warning CA1822: Member 'Hacer' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(8,9): warning CA1062: In externally visible method 'string Avisos.Saludo(string nombre)', validate parameter 'nombre' is non-null before using it. If appropriate, throw an 'ArgumentNullException' when the argument is 'null'. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1062) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(5,19): warning CA1822: Member 'Saludo' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+const capturaAvisosAnalizadores = `C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(7,13): warning CS0219: The variable 'sinUsar' is assigned but its value is never used [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(8,9): warning CA1806: Saludo calls Trim but does not use the new string instance that the method returns. Pass the instance as an argument to another method, assign the instance to a variable, or remove the call if it is unnecessary. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1806) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Servicios\Otro.cs(5,17): warning CA1822: Member 'Hacer' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(8,9): warning CA1062: In externally visible method 'string Avisos.Saludo(string nombre)', validate parameter 'nombre' is non-null before using it. If appropriate, throw an 'ArgumentNullException' when the argument is 'null'. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1062) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(5,19): warning CA1822: Member 'Saludo' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
 
 Build succeeded.
 
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(7,13): warning CS0219: The variable 'sinUsar' is assigned but its value is never used [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(8,9): warning CA1806: Saludo calls Trim but does not use the new string instance that the method returns. Pass the instance as an argument to another method, assign the instance to a variable, or remove the call if it is unnecessary. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1806) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Servicios\Otro.cs(5,17): warning CA1822: Member 'Hacer' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(8,9): warning CA1062: In externally visible method 'string Avisos.Saludo(string nombre)', validate parameter 'nombre' is non-null before using it. If appropriate, throw an 'ArgumentNullException' when the argument is 'null'. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1062) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(5,19): warning CA1822: Member 'Saludo' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(7,13): warning CS0219: The variable 'sinUsar' is assigned but its value is never used [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(8,9): warning CA1806: Saludo calls Trim but does not use the new string instance that the method returns. Pass the instance as an argument to another method, assign the instance to a variable, or remove the call if it is unnecessary. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1806) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Servicios\Otro.cs(5,17): warning CA1822: Member 'Hacer' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(8,9): warning CA1062: In externally visible method 'string Avisos.Saludo(string nombre)', validate parameter 'nombre' is non-null before using it. If appropriate, throw an 'ArgumentNullException' when the argument is 'null'. (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1062) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\Avisos.cs(5,19): warning CA1822: Member 'Saludo' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\warnproj\WarnProj.csproj]
     5 Warning(s)
     0 Error(s)
 
@@ -64,11 +64,11 @@ Time Elapsed 00:00:04.77
 // .targets del SDK y el mensaje nombra project.assets.json. El proyecto puede
 // estar perfecto o estar roto: desde aquí NO SE SABE, y eso es lo que hay que
 // decir.
-const capturaSinRestore = `C:\Program Files\dotnet\sdk\10.0.204\Sdks\Microsoft.NET.Sdk\targets\Microsoft.PackageDependencyResolution.targets(266,5): error NETSDK1004: Assets file 'C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj_norestore\obj\project.assets.json' not found. Run a NuGet package restore to generate this file. [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj_norestore\ErrProj.csproj]
+const capturaSinRestore = `C:\Program Files\dotnet\sdk\10.0.204\Sdks\Microsoft.NET.Sdk\targets\Microsoft.PackageDependencyResolution.targets(266,5): error NETSDK1004: Assets file 'C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj_norestore\obj\project.assets.json' not found. Run a NuGet package restore to generate this file. [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj_norestore\ErrProj.csproj]
 
 Build FAILED.
 
-C:\Program Files\dotnet\sdk\10.0.204\Sdks\Microsoft.NET.Sdk\targets\Microsoft.PackageDependencyResolution.targets(266,5): error NETSDK1004: Assets file 'C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj_norestore\obj\project.assets.json' not found. Run a NuGet package restore to generate this file. [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj_norestore\ErrProj.csproj]
+C:\Program Files\dotnet\sdk\10.0.204\Sdks\Microsoft.NET.Sdk\targets\Microsoft.PackageDependencyResolution.targets(266,5): error NETSDK1004: Assets file 'C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj_norestore\obj\project.assets.json' not found. Run a NuGet package restore to generate this file. [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\errproj_norestore\ErrProj.csproj]
     0 Warning(s)
     1 Error(s)
 
@@ -79,10 +79,10 @@ Time Elapsed 00:00:00.52
 // avisos llegan una vez por framework, con el sufijo
 // "MultiTfm.csproj::TargetFramework=net9.0". Son dos posiciones del código, no
 // cuatro hallazgos.
-const capturaMultiTarget = `C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\Doble.cs(7,13): warning CS0219: The variable 'sinUsar' is assigned but its value is never used [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\MultiTfm.csproj::TargetFramework=net10.0]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\Doble.cs(5,16): warning CA1822: Member 'Sumar' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\MultiTfm.csproj::TargetFramework=net10.0]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\Doble.cs(7,13): warning CS0219: The variable 'sinUsar' is assigned but its value is never used [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\MultiTfm.csproj::TargetFramework=net9.0]
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\Doble.cs(5,16): warning CA1822: Member 'Sumar' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\MultiTfm.csproj::TargetFramework=net9.0]
+const capturaMultiTarget = `C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\Doble.cs(7,13): warning CS0219: The variable 'sinUsar' is assigned but its value is never used [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\MultiTfm.csproj::TargetFramework=net10.0]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\Doble.cs(5,16): warning CA1822: Member 'Sumar' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\MultiTfm.csproj::TargetFramework=net10.0]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\Doble.cs(7,13): warning CS0219: The variable 'sinUsar' is assigned but its value is never used [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\MultiTfm.csproj::TargetFramework=net9.0]
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\Doble.cs(5,16): warning CA1822: Member 'Sumar' does not access instance data and can be marked as static (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822) [C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\multitfm\MultiTfm.csproj::TargetFramework=net9.0]
 
 Build succeeded.
     4 Warning(s)
@@ -95,9 +95,9 @@ Time Elapsed 00:00:04.44
 // PROYECTO no traen (línea,columna) sino " : warning NUxxxx:". Los NU190x son
 // los avisos de vulnerabilidad de NuGet, que reporta DotnetVuln con el GHSA y
 // la severidad real.
-const capturaDiagnosticosDeProyecto = `C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\vulnproj\VulnProj.csproj : warning NU1510: PackageReference System.Text.Encodings.Web will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\vulnproj\VulnProj.csproj : warning NU1903: Package 'Newtonsoft.Json' 9.0.1 has a known high severity vulnerability, https://github.com/advisories/GHSA-5crp-9r3c-p9vr
-C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\vulnproj\VulnProj.csproj : warning NU1904: Package 'System.Text.Encodings.Web' 4.5.0 has a known critical severity vulnerability, https://github.com/advisories/GHSA-ghhp-997w-qr28
+const capturaDiagnosticosDeProyecto = `C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\vulnproj\VulnProj.csproj : warning NU1510: PackageReference System.Text.Encodings.Web will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\vulnproj\VulnProj.csproj : warning NU1903: Package 'Newtonsoft.Json' 9.0.1 has a known high severity vulnerability, https://github.com/advisories/GHSA-5crp-9r3c-p9vr
+C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\vulnproj\VulnProj.csproj : warning NU1904: Package 'System.Text.Encodings.Web' 4.5.0 has a known critical severity vulnerability, https://github.com/advisories/GHSA-ghhp-997w-qr28
 
 Build succeeded.
     3 Warning(s)
@@ -250,7 +250,7 @@ func TestDiagnosticosDeProyectoYNU190xQueYaReportaDotnetVuln(t *testing.T) {
 // staticcheck, que hace justo lo contrario.
 func TestRelativizarPruebaLasDosFormasDeLaRaiz(t *testing.T) {
 	corto := `C:\Users\HECTOR~1.BOD\AppData\Local\Temp\claude\proy`
-	largo := `C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\proy`
+	largo := `C:\Users\dev\AppData\Local\Temp\claude\proy`
 	got := dnbRelativizar(largo+`\src\A.cs`, []string{corto, largo})
 	if got != "src/A.cs" {
 		t.Errorf("dnbRelativizar = %q, esperaba src/A.cs", got)
@@ -262,9 +262,17 @@ func TestRelativizarPruebaLasDosFormasDeLaRaiz(t *testing.T) {
 	}
 	// Lo que no cuelga de la raíz —los .targets del SDK— se deja tal cual:
 	// mejor un path raro que uno inventado.
+	//
+	// El esperado va como LITERAL y no como `filepath.ToSlash(fuera)`: la propia
+	// dnbRelativizar normaliza con ToSlash (dotnetbuild.go:543), así que calcular
+	// el oráculo con la misma primitiva hace que el aserto siga a la
+	// implementación en vez de fijarla. Escrito el literal, lo que se exige es el
+	// contrato —salir siempre con '/'— y no la coincidencia de la función consigo
+	// misma.
 	fuera := `C:\Program Files\dotnet\sdk\10.0.204\Sdks\x.targets`
-	if got := dnbRelativizar(fuera, []string{largo}); got != filepath.ToSlash(fuera) {
-		t.Errorf("dnbRelativizar fuera de la raíz = %q, esperaba %q", got, filepath.ToSlash(fuera))
+	esperado := `C:/Program Files/dotnet/sdk/10.0.204/Sdks/x.targets`
+	if got := dnbRelativizar(fuera, []string{largo}); got != esperado {
+		t.Errorf("dnbRelativizar fuera de la raíz = %q, esperaba %q", got, esperado)
 	}
 }
 
@@ -404,6 +412,27 @@ func proyectoCSDeJuguete(t *testing.T, cuerpo string) string {
 	return root
 }
 
+// restaurarOFallar hace el restore previo a compilar, y un fallo aquí ES un
+// fallo del test.
+//
+// Antes se saltaba la prueba entera achacándolo a «¿sin red?», y eso no se
+// sostiene: el proyecto de juguete no declara NI UN PackageReference, así que su
+// restore lo resuelve el SDK local sin descargar nada. MEDIDO con el SDK
+// 10.0.204: `dotnet restore` sobre este mismo csproj con la única fuente
+// apuntando a `https://127.0.0.1:9/nada-que-no-existe` termina en exit 0 en
+// 49 ms. Si aquí falla, es el SDK o el csproj que genera este archivo —no la
+// red—, y saltar dejaba en verde, sin ejercitar nada, justo los dos tests que
+// impiden que todo proyecto de C# limpio quede degradado en cada commit.
+func restaurarOFallar(t *testing.T, ctx context.Context, root string) {
+	t.Helper()
+	restore := exec.CommandContext(ctx, "dotnet", "restore")
+	restore.Dir = root
+	if out, err := restore.CombinedOutput(); err != nil {
+		t.Fatalf("dotnet restore falló en un proyecto sin dependencias externas, "+
+			"donde no hay red que echarle la culpa: %v\n%s", err, out)
+	}
+}
+
 // EL CONTROL DEL ARREGLO DEL SILENCIO, con el SDK de verdad.
 //
 // El motor pide silencio a MSBuild a propósito (`-v quiet -clp:NoSummary
@@ -432,11 +461,7 @@ func TestIntegracionUnProyectoCSLimpioNoSeDegrada(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	restore := exec.CommandContext(ctx, "dotnet", "restore")
-	restore.Dir = root
-	if out, err := restore.CombinedOutput(); err != nil {
-		t.Skipf("dotnet restore no funcionó aquí (¿sin red?): %v\n%s", err, out)
-	}
+	restaurarOFallar(t, ctx, root)
 
 	fs, err := dnbCompilar(ctx, root, "Juguete.csproj")
 	if err != nil {
@@ -483,11 +508,7 @@ func TestIntegracionCompilaErroresYAvisosReales(t *testing.T) {
 		t.Errorf("el error debe decir qué hacer: %v", err)
 	}
 
-	restore := exec.CommandContext(ctx, "dotnet", "restore")
-	restore.Dir = root
-	if out, err := restore.CombinedOutput(); err != nil {
-		t.Skipf("dotnet restore no funcionó aquí (¿sin red?): %v\n%s", err, out)
-	}
+	restaurarOFallar(t, ctx, root)
 
 	fs, err = dnbCompilar(ctx, root, "Juguete.csproj")
 	if err != nil {

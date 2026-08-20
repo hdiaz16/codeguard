@@ -5,6 +5,7 @@ package sarif
 import (
 	"encoding/json"
 	"os"
+	"sort"
 
 	"codeguard/internal/finding"
 )
@@ -95,21 +96,36 @@ func Write(path, version string, findings []finding.Finding) error {
 		if line < 1 {
 			line = 1
 		}
+		// Una región con endLine < startLine es inválida en SARIF y GitHub puede
+		// rechazar el resultado ENTERO, lo que sí perdería el hallazgo. Se omite
+		// el campo, que es opcional, en vez de emitir algo contradictorio.
+		endLine := f.EndLine
+		if endLine < line {
+			endLine = 0
+		}
 		results = append(results, Result{
 			RuleID:  ruleID,
 			Level:   level(f.Severity),
 			Message: Text{Text: f.Message},
 			Locations: []Location{{PhysicalLocation: PhysicalLocation{
 				ArtifactLocation: ArtifactLocation{URI: f.File},
-				Region:           Region{StartLine: line, EndLine: f.EndLine},
+				Region:           Region{StartLine: line, EndLine: endLine},
 			}}},
 			PartialFingerprints: map[string]string{"codeguardFingerprint/v1": f.Fingerprint},
 		})
 	}
 
+	// Las claves se ordenan para que la salida SARIF sea determinista entre
+	// corridas: la iteracion de mapas en Go es de orden aleatorio, y con ella
+	// bailaba el JSON de dos corridas identicas.
+	ruleIDs := make([]string, 0, len(rules))
+	for id := range rules {
+		ruleIDs = append(ruleIDs, id)
+	}
+	sort.Strings(ruleIDs)
 	ruleList := make([]Rule, 0, len(rules))
-	for _, r := range rules {
-		ruleList = append(ruleList, r)
+	for _, id := range ruleIDs {
+		ruleList = append(ruleList, rules[id])
 	}
 
 	log := Log{

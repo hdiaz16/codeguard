@@ -16,6 +16,7 @@ import (
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
+	"codeguard/internal/textutil"
 )
 
 type Engine struct {
@@ -276,6 +277,16 @@ func porArchivo(fs []finding.Finding, analizados []objetivo) map[string][]findin
 		if o.sha == "" {
 			continue
 		}
+		// Dos archivos con el MISMO contenido comparten entrada, y la puebla
+		// sólo el primero. Si entraran los dos, out[sha] acabaría con la unión de
+		// sus hallazgos, y al servir el acierto cada ruta recibiría también los
+		// del otro reescritos con su nombre —el bucle de arriba reescribe File y
+		// recalcula la huella—: cada archivo reportaría el doble. Como el
+		// contenido es idéntico, los hallazgos del primero son los de cualquiera,
+		// que es justo lo que el caché por contenido da por supuesto.
+		if _, ya := out[o.sha]; ya {
+			continue
+		}
 		shaPorRel[o.rel] = o.sha
 		out[o.sha] = []finding.Finding{}
 	}
@@ -431,7 +442,7 @@ func truncar(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return textutil.TruncarRunas(s, n) + "…"
 }
 
 func firstLine(s string) string {

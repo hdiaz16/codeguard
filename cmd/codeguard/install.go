@@ -22,7 +22,7 @@ import (
 // (MSYS2). CRLF produce "bad interpreter" (§4.1).
 const shimTemplate = `#!/bin/sh
 # instalado por codeguard install — no editar a mano
-exec "$(git config codeguard.binpath)/codeguard.exe" hook %s "$@"
+exec "$(git config codeguard.binpath)/%s" hook %s "$@"
 `
 
 // dirGanchos es NUESTRO directorio de ganchos, el que apunta core.hooksPath.
@@ -59,14 +59,25 @@ func installCmd() *cobra.Command {
 				if !sustituir {
 					return errors.New(ajeno.explicar("install"))
 				}
-				fmt.Print(ajeno.avisoSustitucion())
+				fmt.Fprint(cmd.OutOrStdout(), ajeno.avisoSustitucion())
 			}
 			hooksDir := filepath.Join(repoRoot, dirGanchos)
 			if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 				return err
 			}
+			// El binario se resuelve ANTES de escribir nada: si no se sabe a qué
+			// invocar, no se dejan ganchos a medio instalar que fallen en cada
+			// commit. Y el shim lleva el nombre REAL del ejecutable en vez del
+			// literal codeguard.exe: con el literal, el binario tiene que
+			// llamarse exactamente así o los ganchos no encuentran nada (los
+			// tests de extremo a extremo ya cargan con esa restricción).
+			exe, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			binario := filepath.Base(exe)
 			for _, hook := range []string{"pre-commit", "prepare-commit-msg", "post-commit"} {
-				shim := fmt.Sprintf(shimTemplate, hook)
+				shim := fmt.Sprintf(shimTemplate, binario, hook)
 				path := filepath.Join(hooksDir, hook)
 				// WriteFile respeta los LF del template; nunca CRLF.
 				if err := os.WriteFile(path, []byte(shim), 0o755); err != nil {
@@ -83,21 +94,24 @@ func installCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// Si el .gitattributes que ya había no termina en salto de
+				// línea (típico si se editó a mano), anexar directo pegaría la
+				// regla al final de esa última línea y dejaría las dos rotas.
+				regla := gaRule
+				if len(ga) > 0 && ga[len(ga)-1] != '\n' {
+					regla = "\n" + gaRule
+				}
 				// Los errores de escritura y de cierre se comprueban: si esta
 				// regla no llega al .gitattributes, los shims se checan con
 				// CRLF en otra máquina y git falla con "bad interpreter".
 				// Perderla en silencio rompe el enrolamiento de quien clone.
-				_, werr := fmt.Fprintf(f, "%s\n", gaRule)
+				_, werr := fmt.Fprintf(f, "%s\n", regla)
 				if cerr := f.Close(); werr != nil || cerr != nil {
 					return fmt.Errorf("no se pudo escribir la regla de fin de línea en %s: %w",
 						gaPath, errors.Join(werr, cerr))
 				}
 			}
 
-			exe, err := os.Executable()
-			if err != nil {
-				return err
-			}
 			binDir := filepath.ToSlash(filepath.Dir(exe))
 			for _, kv := range [][2]string{
 				{"core.hooksPath", dirGanchos},
@@ -432,7 +446,7 @@ func repairCmd() *cobra.Command {
 			}
 			if !ok {
 				fmt.Println("\nsin gitleaks la compuerta de secretos es fail-closed y bloquea los commits")
-				os.Exit(1)
+				return errors.New("faltan dependencias del agente: revisa las líneas FALTA/ALERTA de arriba")
 			}
 			fmt.Println("todo en orden")
 			return nil

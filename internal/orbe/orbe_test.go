@@ -87,18 +87,42 @@ func TestPNGConcurrente(t *testing.T) {
 }
 
 // TestPNGTamanosDistintosNoColisionan fija la corrección de la clave del
-// cache. La versión con string(rune(tamano)) no es inyectiva: cualquier
-// tamaño que no sea un punto de código válido (negativos, sustitutos)
-// colapsa en U+FFFD, así que dos tamaños distintos comparten entrada y el
-// segundo recibe el PNG del primero. Los tamaños degenerados de aquí son el
-// canario barato de ese defecto; con 16/32/256 hoy funciona de casualidad.
+// cache: dos tamaños distintos DENTRO del rango dibujable no comparten
+// entrada. (La inyectividad de la clave con valores degenerados —negativos,
+// sustitutos— la cubre TestClaveEsUnicaYLegible, que prueba clave() directo
+// sin el clamp de PNG.)
+//
+// Ya no se prueban tamaños degenerados aquí: desde que PNG acota el tamaño a
+// [1, tamanoMaximo], PNG(-1) y PNG(-2) SÍ colapsan a la misma imagen (ambos
+// miden 1 px) a propósito, y eso lo fija TestPNGAcotaTamanosFueraDeRango.
 func TestPNGTamanosDistintosNoColisionan(t *testing.T) {
-	for _, caso := range []struct{ a, b int }{{-1, -2}, {16, 24}} {
+	for _, caso := range []struct{ a, b int }{{16, 24}, {32, 256}} {
 		anchoA := anchoPNG(t, PNG(caso.a, "idle"))
 		anchoB := anchoPNG(t, PNG(caso.b, "idle"))
 		if anchoA == anchoB {
 			t.Errorf("PNG(%d) y PNG(%d) devolvieron la misma imagen (ancho %d): las claves del cache colisionan",
 				caso.a, caso.b, anchoA)
+		}
+	}
+}
+
+// TestPNGAcotaTamanosFueRaDeRango fija el invariante de robustez: un tamaño
+// fuera del rango dibujable no tumba el proceso ni produce una imagen
+// degenerada, sino que se clampa a [1, tamanoMaximo]. Un tamaño ≤0 no tiene
+// sentido para una imagen; uno gigante intentaría asignar tamano²*4 bytes y
+// agotaría la memoria del daemon que supervisa todos los repos.
+func TestPNGAcotaTamanosFueraDeRango(t *testing.T) {
+	casos := []struct {
+		pedido   int
+		esperado int
+	}{
+		{-5, 1}, {0, 1}, {1, 1}, {256, 256},
+		{tamanoMaximo, tamanoMaximo}, {tamanoMaximo + 1, tamanoMaximo}, {1 << 20, tamanoMaximo},
+	}
+	for _, c := range casos {
+		if ancho := anchoPNG(t, PNG(c.pedido, "idle")); ancho != c.esperado {
+			t.Errorf("PNG(%d) mide %d px, se esperaba %d (clamp a [1, %d])",
+				c.pedido, ancho, c.esperado, tamanoMaximo)
 		}
 	}
 }

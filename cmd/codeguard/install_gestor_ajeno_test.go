@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"os/exec"
@@ -65,8 +66,7 @@ func hooksPathDe(t *testing.T, repo string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// capturarStdout devuelve lo que fn imprimió por la salida estándar. Parte del
-// contrato de este arreglo es lo que el usuario LEE, así que hay que leerlo.
+// capturarStdout devuelve lo que fn imprimió por la salida estándar.
 func capturarStdout(t *testing.T, fn func() error) (salida string, err error) {
 	t.Helper()
 	viejo := os.Stdout
@@ -80,8 +80,6 @@ func capturarStdout(t *testing.T, fn func() error) (salida string, err error) {
 		b, _ := io.ReadAll(r)
 		hecho <- string(b)
 	}()
-	// En un defer: si fn llama a t.Fatal, la salida estándar tiene que volver a
-	// su sitio igualmente o las pruebas siguientes escriben a un pipe muerto.
 	defer func() {
 		_ = w.Close()
 		os.Stdout = viejo
@@ -91,16 +89,20 @@ func capturarStdout(t *testing.T, fn func() error) (salida string, err error) {
 }
 
 // correrInstall ejecuta el comando de verdad y devuelve lo que imprimió y el
-// error.
+// error mediante buffers inyectados, sin mutar os.Stdout global.
 func correrInstall(t *testing.T, sustituir bool) (string, error) {
 	t.Helper()
 	cmd := installCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
 	if sustituir {
 		if ferr := cmd.Flags().Set(banderaSustituir, "true"); ferr != nil {
 			t.Fatalf("la bandera --%s no existe: %v", banderaSustituir, ferr)
 		}
 	}
-	return capturarStdout(t, func() error { return cmd.RunE(cmd, nil) })
+	err := cmd.RunE(cmd, nil)
+	return buf.String(), err
 }
 
 func TestInstallNoPisaLosGanchosDeOtroGestor(t *testing.T) {

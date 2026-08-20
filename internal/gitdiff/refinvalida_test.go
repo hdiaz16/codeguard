@@ -41,7 +41,11 @@ func TestRangeNoLeDaARefSinValidarAGit(t *testing.T) {
 	d, err := Range(repo, "--output="+pwned, "HEAD")
 
 	if err == nil {
-		t.Errorf("una ref inválida debe fallar de forma ruidosa; devolvió un diff con %d archivo(s) y ningún error", len(d.Files))
+		archivos := 0
+		if d != nil {
+			archivos = len(d.Files)
+		}
+		t.Fatalf("una ref inválida debe fallar de forma ruidosa; devolvió un diff con %d archivo(s) y ningún error", archivos)
 	}
 	if err != nil && !strings.Contains(err.Error(), "--base") {
 		t.Errorf("el error debe decir qué flag venía mal para que se pueda arreglar: %v", err)

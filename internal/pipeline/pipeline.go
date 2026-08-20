@@ -132,7 +132,13 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 		res.Verdict, res.Reason = Skipped, MotivoMergeORevert
 		return res, nil
 	}
-	files := filterExcluded(opt.Config, opt.Diff.Files)
+	files, patronesInvalidos := filterExcluded(opt.Config, opt.Diff.Files)
+	// Un patrón que no compila NO se descarta en silencio: el equipo cree que
+	// esa ruta está excluida y no lo está. Se nombra en Degraded para que el
+	// typo en config.yaml sea visible en el veredicto, no un agujero mudo.
+	for _, p := range patronesInvalidos {
+		res.Degraded = append(res.Degraded, "patron-invalido:"+p)
+	}
 	// Sin archivos que pasarles, la etapa 2 no tiene trabajo. La etapa 1 SÍ, y
 	// ahí estaba N005: esta lista es el diff de ÁRBOLES entre base y head
 	// filtrado por paths.exclude, y la compuerta de secretos no la lee nunca —
@@ -185,13 +191,25 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 	if opt.Secrets != nil {
 		secretFindings, err := opt.Secrets.Run(ctx, in)
 		if err != nil {
-			if errors.Is(err, gitleaks.ErrUnavailable) {
-				// Única ruta de error que bloquea (sección 14).
-				res.Verdict = Block
+			// CUALQUIER error de la etapa 1 bloquea, y se resuelve AQUÍ, en la
+			// compuerta — no se delega al llamador con `return nil, err`
+			// (sección 14: la promesa no es «busqué», es «nada sale sin
+			// escanear»). Antes sólo ErrUnavailable cerraba y el resto salía
+			// como error pelado: un timeout del ctx —este camino corre con
+			// opt.Timeout— dejaba el veredicto en manos de cada llamador, y
+			// basta que uno lo degrade para que la única compuerta bloqueante
+			// del producto se vuelva optativa. Con el Block dentro, el cierre
+			// viaja en el Result y ningún consumidor tiene que acordarse.
+			res.Verdict = Block
+			switch {
+			case errors.Is(err, gitleaks.ErrUnavailable):
 				res.Reason = fmt.Sprintf("la compuerta de secretos no pudo correr (fail-closed): %v", err)
-				return res, nil
+			case errors.Is(err, context.DeadlineExceeded):
+				res.Reason = fmt.Sprintf("la compuerta de secretos no terminó dentro de su plazo (fail-closed): %v", err)
+			default:
+				res.Reason = fmt.Sprintf("la compuerta de secretos falló al ejecutarse (fail-closed): %v", err)
 			}
-			return nil, err
+			return res, nil
 		}
 		res.Findings = append(res.Findings, secretFindings...)
 	}
@@ -449,11 +467,17 @@ func SoloFaltantes(degraded []string) bool {
 	return len(degraded) > 0
 }
 
-func filterExcluded(cfg *config.Config, files []gitdiff.ChangedFile) []gitdiff.ChangedFile {
+// filterExcluded devuelve también los patrones que no compilan: descartarlos
+// en silencio convertía un typo en config.yaml en una ruta que el equipo cree
+// excluida y se analiza (o deja de vigilarse) sin que nadie lo sepa.
+func filterExcluded(cfg *config.Config, files []gitdiff.ChangedFile) ([]gitdiff.ChangedFile, []string) {
 	patterns := make([]glob.Glob, 0, len(cfg.Paths.Exclude)+len(cfg.Paths.Generated))
+	var invalidos []string
 	for _, p := range append(append([]string{}, cfg.Paths.Exclude...), cfg.Paths.Generated...) {
 		if g, err := glob.Compile(p, '/'); err == nil {
 			patterns = append(patterns, g)
+		} else {
+			invalidos = append(invalidos, p)
 		}
 	}
 	var kept []gitdiff.ChangedFile
@@ -469,7 +493,7 @@ func filterExcluded(cfg *config.Config, files []gitdiff.ChangedFile) []gitdiff.C
 			kept = append(kept, f)
 		}
 	}
-	return kept
+	return kept, invalidos
 }
 
 // consolidate implementa la etapa 7: dedupe por (archivo, línea, regla) y

@@ -155,18 +155,25 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	}
 	var out []finding.Finding
 	for _, dir := range e.modulos(in) {
-		clave := e.claveModulo(in.RepoRoot, dir)
-		if e.Cache != nil && clave != "" {
-			if fs, ok := e.Cache.Leer([]string{clave})[clave]; ok {
-				out = append(out, fs...)
-				continue
+		// La clave se calcula SÓLO si hay caché que la use: claveModulo pasa por
+		// HuellaModulo, que recorre y hashea todos los .go y manifiestos del
+		// módulo, y sin caché ese trabajo se tiraba entero a la basura.
+		clave := ""
+		if e.Cache != nil {
+			clave = e.claveModulo(in.RepoRoot, dir)
+			if clave != "" {
+				if fs, ok := e.Cache.Leer([]string{clave})[clave]; ok {
+					out = append(out, fs...)
+					continue
+				}
 			}
 		}
 		fs, err := e.correrModulo(ctx, bin, in.RepoRoot, dir)
 		if err != nil {
 			return nil, err
 		}
-		if e.Cache != nil && clave != "" {
+		// clave != "" implica e.Cache != nil: sólo se asigna dentro de esa rama.
+		if clave != "" {
 			e.Cache.Guardar(map[string][]finding.Finding{clave: fs})
 		}
 		out = append(out, fs...)
@@ -208,7 +215,7 @@ func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string) ([
 	if salida.Recortada {
 		return nil, fmt.Errorf("govulncheck devolvió más de %d MB de salida", proc.MaxSalida>>20)
 	}
-	return interpretar(salida.Stdout, dir, e.BlockReachable)
+	return interpretar(salida.Stdout, repoRoot, dir, e.BlockReachable)
 }
 
 // interpretar lee el flujo de govulncheck, y ADEMÁS exige que el flujo exista.
@@ -230,7 +237,7 @@ func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string) ([
 // demuestra que quien analizó era govulncheck — sin lanzar un proceso extra para
 // preguntárselo, que es lo que hay que hacer con las herramientas que no dejan
 // esta huella.
-func interpretar(raw []byte, dir string, bloquea bool) ([]finding.Finding, error) {
+func interpretar(raw []byte, repoRoot, dir string, bloquea bool) ([]finding.Finding, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	resumen := map[string]string{}
 	var crudos []hallazgo
@@ -309,8 +316,13 @@ func interpretar(raw []byte, dir string, bloquea bool) ([]finding.Finding, error
 		if ua == nil || ub == nil {
 			return ua != nil
 		}
-		if ua.Position.Filename != ub.Position.Filename {
-			return ua.Position.Filename < ub.Position.Filename
+		// Se ordena por la ruta YA anclada al repo: ordenar por la absoluta
+		// cruda haría que «la primera ruta» dependiera del $HOME de cada
+		// máquina, y con ella bailaría la huella del hallazgo elegido.
+		fa := rutaEnRepo(repoRoot, dir, ua.Position.Filename)
+		fb := rutaEnRepo(repoRoot, dir, ub.Position.Filename)
+		if fa != fb {
+			return fa < fb
 		}
 		return ua.Position.Line < ub.Position.Line
 	})
@@ -331,11 +343,12 @@ func interpretar(raw []byte, dir string, bloquea bool) ([]finding.Finding, error
 
 		file, line := path.Join(dir, "go.mod"), 1
 		if u := marcoUsuario(h.Trace); u != nil {
-			rel := filepath.ToSlash(u.Position.Filename)
-			if !path.IsAbs(rel) && dir != "." {
-				rel = path.Join(dir, rel)
+			// Sin ruta anclable al repo (la posición cae fuera, p. ej. en el
+			// caché de módulos) se conserva el go.mod del módulo: es una
+			// referencia estable, y mejor eso que una absoluta que no lo es.
+			if rel := rutaEnRepo(repoRoot, dir, u.Position.Filename); rel != "" {
+				file, line = rel, u.Position.Line
 			}
-			file, line = rel, u.Position.Line
 		}
 		otras := ""
 		if n := rutasPorOSV[h.OSV]; n > 1 {
@@ -385,6 +398,33 @@ func sinPresentarse(seIdentifico bool) string {
 // marcoUsuario es el último marco de la traza con posición: la traza va de la
 // función vulnerable (en la dependencia) hacia afuera, así que el último marco
 // posicionado es el punto del código propio desde el que se llega a ella.
+// rutaEnRepo ancla al repo la posición que emite govulncheck. La herramienta las
+// da ABSOLUTAS del sistema de archivos, y dejarlas así rompe tres cosas: la
+// huella (ComputeFingerprint incluye File) deja de coincidir entre la máquina
+// del dev y el CI —o sea que la baseline no suprime lo mismo, que es justo lo
+// que existe para hacer—, se filtra el $HOME en los reportes, y el hallazgo
+// queda desalineado con los demás motores, que reportan relativo al repo.
+// Devuelve "" cuando la absoluta cae FUERA del repo (el marco apunta al caché de
+// módulos y no a código propio); el llamador cae entonces al go.mod del módulo.
+func rutaEnRepo(repoRoot, dir, nombre string) string {
+	rel := filepath.ToSlash(nombre)
+	if path.IsAbs(rel) {
+		r, err := filepath.Rel(repoRoot, filepath.FromSlash(rel))
+		if err != nil {
+			return "" // volúmenes distintos en Windows, por ejemplo
+		}
+		r = filepath.ToSlash(r)
+		if r == ".." || strings.HasPrefix(r, "../") {
+			return ""
+		}
+		return r
+	}
+	if dir != "." {
+		return path.Join(dir, rel)
+	}
+	return rel
+}
+
 func marcoUsuario(trace []marco) *marco {
 	for i := len(trace) - 1; i >= 0; i-- {
 		if trace[i].Position != nil {

@@ -86,7 +86,7 @@ func TestRutaLLMLocalNuncaEsRelativa(t *testing.T) {
 		{"variable ausente", "", true},
 		{"variable en blanco", "   ", true},
 		{"valor relativo puesto a mano", `datos\local`, true},
-		{"valor absoluto normal", `C:\Users\quien\AppData\Local`, false},
+		{"valor absoluto normal", t.TempDir(), false},
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {

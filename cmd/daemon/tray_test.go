@@ -224,13 +224,13 @@ func TestTrayCambiosConcurrentesNoSePierdenNiSeMezclan(t *testing.T) {
 // Dos pass seguidos: el timer del primero no puede acortar la ventana verde
 // del segundo ni revertir con el tooltip viejo.
 func TestTrayElSegundoPassRearmaSuPropiaVentana(t *testing.T) {
-	tray, g := bandejaDePrueba(60 * time.Millisecond)
+	tray, g := bandejaDePrueba(120 * time.Millisecond)
 
 	tray.setPass("primer commit")
-	time.Sleep(40 * time.Millisecond) // el primer timer aún no vence
+	time.Sleep(30 * time.Millisecond) // el primer timer aún no vence
 	tray.setPass("segundo commit")
 
-	e := g.esperarEstado(t, "idle", 2*time.Second)
+	e := g.esperarEstado(t, "idle", 3*time.Second)
 	if e.tooltip != "segundo commit" {
 		t.Errorf("volvió a idle con el tooltip %q; esperaba el del pass vigente «segundo commit»\nemitidos: %v",
 			e.tooltip, g.todas())

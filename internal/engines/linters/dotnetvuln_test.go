@@ -2,6 +2,8 @@ package linters
 
 import (
 	"context"
+	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,7 +29,7 @@ const capturaVulnerables = `{
   ],
   "projects": [
     {
-      "path": "C:/Users/hector.diaz.BODESA/AppData/Local/Temp/claude/C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/vulnproj/VulnProj.csproj",
+      "path": "C:/Users/dev/AppData/Local/Temp/claude/C--Users-dev-proyecto/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/vulnproj/VulnProj.csproj",
       "frameworks": [
         {
           "framework": "net10.0",
@@ -74,7 +76,7 @@ const capturaTransitiva = `{
   ],
   "projects": [
     {
-      "path": "C:/Users/hector.diaz.BODESA/AppData/Local/Temp/claude/C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/mono/backend/Api/Api.csproj",
+      "path": "C:/Users/dev/AppData/Local/Temp/claude/C--Users-dev-proyecto/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/mono/backend/Api/Api.csproj",
       "frameworks": [
         {
           "framework": "net10.0",
@@ -109,7 +111,7 @@ const capturaLimpia = `{
   ],
   "projects": [
     {
-      "path": "C:/Users/hector.diaz.BODESA/AppData/Local/Temp/claude/C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/multitfm/MultiTfm.csproj"
+      "path": "C:/Users/dev/AppData/Local/Temp/claude/C--Users-dev-proyecto/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/multitfm/MultiTfm.csproj"
     }
   ]
 }
@@ -125,7 +127,7 @@ const capturaProblemaDeOrigen = `{
   "parameters": "--vulnerable --include-transitive",
   "problems": [
     {
-      "project": "C:/Users/hector.diaz.BODESA/AppData/Local/Temp/claude/C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/vulnproj/VulnProj.csproj",
+      "project": "C:/Users/dev/AppData/Local/Temp/claude/C--Users-dev-proyecto/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/vulnproj/VulnProj.csproj",
       "level": "error",
       "text": "You are running the 'list package' operation with an 'HTTP' source, 'http://127.0.0.1:9/v3/index.json [http://127.0.0.1:9/v3/index.json]'. NuGet requires HTTPS sources. To use HTTP sources, you must explicitly set 'allowInsecureConnections' to true in your NuGet.Config file. Refer to https://aka.ms/nuget-https-everywhere for more information."
     }
@@ -135,7 +137,7 @@ const capturaProblemaDeOrigen = `{
   ],
   "projects": [
     {
-      "path": "C:/Users/hector.diaz.BODESA/AppData/Local/Temp/claude/C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/vulnproj/VulnProj.csproj"
+      "path": "C:/Users/dev/AppData/Local/Temp/claude/C--Users-dev-proyecto/21867769-946e-43a7-a2eb-657c824f2799/scratchpad/vulnproj/VulnProj.csproj"
     }
   ]
 }
@@ -399,7 +401,14 @@ func TestIntegracionDetectaElCVEDeNewtonsoftJson(t *testing.T) {
 
 	fs, err := (DotnetVuln{BlockCritical: true}).revisarProyecto(ctx, root, "Vuln.csproj")
 	if err != nil {
-		t.Skipf("dotnet list package --vulnerable no pudo consultar el índice (¿sin red?): %v", err)
+		if errors.Is(err, exec.ErrNotFound) {
+			t.Skip("dotnet no está instalado en PATH")
+		}
+		var nerr net.Error
+		if errors.As(err, &nerr) && nerr.Timeout() {
+			t.Skipf("sin red para consultar vulnerabilidades de dotnet: %v", err)
+		}
+		t.Fatalf("dotnet list package --vulnerable falló inesperadamente: %v", err)
 	}
 	if len(fs) == 0 {
 		t.Fatal("Newtonsoft.Json 9.0.1 tiene una vulnerabilidad alta conocida: el motor no encontró nada")
@@ -413,5 +422,50 @@ func TestIntegracionDetectaElCVEDeNewtonsoftJson(t *testing.T) {
 	}
 	if f.Pillar != finding.Security || f.Severity != finding.Error || !f.Blocking {
 		t.Errorf("pilar/severidad/bloqueo = %v/%v/%v, esperaba security/error/bloqueante en CI", f.Pillar, f.Severity, f.Blocking)
+	}
+}
+
+// LA SALIDA REAL DEL SDK CON --no-restore Y SIN ASSETS FILE.
+//
+// Capturada de `dotnet list Medir.csproj package --vulnerable --include-transitive
+// --no-restore --format json` con SDK 10.0.204 sobre un proyecto sin obj/:
+// **salida 1, stderr VACÍO (0 bytes)** y todo el diagnóstico en este JSON de
+// stdout. Es el caso NORMAL de un clon fresco, y la razón por la que
+// revisarProyecto intenta interpretar antes de dar un "no corrió" genérico: el
+// remedio que el desarrollador necesita está aquí dentro.
+const capturaSinAssetsFile = `{
+  "version": 1,
+  "parameters": "--vulnerable --include-transitive",
+  "problems": [
+    {
+      "project": "C:/repos/demo/Medir.csproj",
+      "level": "error",
+      "text": "No assets file was found for ` + "`C:/repos/demo/Medir.csproj`" + `. Please run restore before running this command."
+    }
+  ],
+  "sources": [ "https://api.nuget.org/v3/index.json" ],
+  "projects": [ { "path": "C:/repos/demo/Medir.csproj" } ]
+}
+`
+
+// Un clon sin restore NO puede salir como "0 vulnerabilidades": tiene que
+// degradar la capa y decir cómo se arregla. Es el desenlace que el gancho ya da
+// para dotnet-build (NETSDK1004) y que este motor tenía que igualar al dejar de
+// restaurar por su cuenta.
+func TestSinAssetsFileDegradaConElRemedioYNoDiceCeroCVEs(t *testing.T) {
+	fs, err := (DotnetVuln{}).interpretar([]byte(capturaSinAssetsFile), t.TempDir(), "Medir.csproj")
+	if err == nil {
+		t.Fatalf("un proyecto sin grafo resuelto NO puede pasar por revisado; devolvió %d hallazgo(s)", len(fs))
+	}
+	if fs != nil {
+		t.Errorf("no puede devolver hallazgos cuando no pudo mirar: %+v", fs)
+	}
+	for _, exigido := range []string{"dotnet restore", "NO puede afirmar"} {
+		if !strings.Contains(err.Error(), exigido) {
+			t.Errorf("el error no lleva %q, así que el dev no sabe qué hacer: %v", exigido, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "No assets file was found") {
+		t.Errorf("el error no cita lo que dijo la herramienta: %v", err)
 	}
 }

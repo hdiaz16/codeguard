@@ -222,8 +222,26 @@ func copiar(arbol, ruta string, lineas []gitdiff.LineaAnadida) (string, int64, e
 	if seguro(rel) {
 		destino := filepath.Join(arbol, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(destino), 0o700); err == nil {
-			if err := os.WriteFile(destino, buf.Bytes(), 0o600); err == nil {
-				return rel, int64(buf.Len()), nil
+			// Creación EXCLUSIVA y no WriteFile, que trunca. En un sistema de
+			// archivos que no distingue mayúsculas —NTFS, o sea la única
+			// plataforma de esto— dos rutas del commit que sólo difieran en el
+			// caso (`Config.yaml` y `config.yaml`: git las admite y llegan así de
+			// un commit hecho en Linux) resuelven al MISMO archivo, y la segunda
+			// escritura machacaría el contenido de la primera. Ese contenido no se
+			// escanearía nunca y un secreto dentro pasaría sin que nadie se
+			// entere — justo lo que promete el comentario de arriba que no pasa.
+			//
+			// Las rutas que llegan aquí son únicas, así que si el destino ya
+			// existe es que dos han chocado: se cae al nombre plano, que se deriva
+			// del hash de la ruta EXACTA y por tanto difiere entre las dos formas,
+			// y el contenido se mira igual. La creación exclusiva lo resuelve en
+			// una sola operación, sin ventana entre comprobar y escribir.
+			if f, err := os.OpenFile(destino, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600); err == nil {
+				_, errEscribir := f.Write(buf.Bytes())
+				errCerrar := f.Close()
+				if errEscribir == nil && errCerrar == nil {
+					return rel, int64(buf.Len()), nil
+				}
 			}
 		}
 	}

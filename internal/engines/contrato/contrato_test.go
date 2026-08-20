@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // La sonda de identidad se lanza cuando el motor acaba de terminar sin encontrar
@@ -96,7 +97,9 @@ func TestLaMemoriaCaducaCuandoLaHerramientaCambia(t *testing.T) {
 	// Ahora se sustituye por otra que NO se identifica. Si la memoria no caducara,
 	// el veredicto viejo la absolvería — y eso es exactamente el fallo que todo
 	// este trabajo retira, con un caché en medio.
-	compilar("package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"soy otra cosa\") }\n")
+	compilar("package main\n\nimport \"fmt\"\n\nfunc main() {\n\t// payload cambiado para forzar cambio de tamaño y firma\n\tfmt.Println(\"soy otra cosa muy distinta con mucho más texto\")\n}\n")
+	nuevo := time.Now().Add(2 * time.Second)
+	_ = os.Chtimes(falso, nuevo, nuevo)
 	if err := Identidad(context.Background(), prueba); err == nil {
 		t.Error("la herramienta cambió y el veredicto memorizado la sigue absolviendo: " +
 			"la clave tiene que llevar tamaño y fecha del binario")

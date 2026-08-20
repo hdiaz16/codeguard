@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -103,8 +103,9 @@ func enginesCmd() *cobra.Command {
 			fmt.Println("  2. un binario alterado — bórralo y reinstala con install.ps1")
 			fmt.Println("\nHasta aclararlo, trata sus resultados con reserva: un gitleaks")
 			fmt.Println("manipulado puede no reportar ni un solo secreto.")
-			os.Exit(1)
-			return nil
+			// La guía queda en stdout; el veredicto corto va por el error, que main
+			// imprime en stderr y convierte en salida ≠0 para la compuerta del CI.
+			return errors.New("hay motores no reconocidos: revisa el detalle de arriba")
 		},
 	}
 	cmd.Flags().BoolVar(&auditar, "auditar", false,
@@ -119,9 +120,11 @@ func enginesCmd() *cobra.Command {
 // motor puede coincidir con su hash a la perfección y arrastrar un CVE crítico
 // dentro; el hash sólo prueba que nadie lo tocó por el camino.
 //
-// Sale con 1 si hay algo crítico o alto, para que el CI pueda usarlo como
+// Devuelve error si hay algo crítico o alto, para que el CI pueda usarlo como
 // compuerta: una herramienta de seguridad que reparte binarios sin mirarlos
-// pide una confianza que no se ganó.
+// pide una confianza que no se ganó. Se devuelve y no se sale con os.Exit
+// porque el defer cancel() de abajo tiene que correr siempre: salir aquí
+// dejaba el contexto sin cancelar y los subprocesos de trivy huérfanos.
 func auditarMotores(dir string) error {
 	fmt.Println("auditando lo que CodeGuard instala en tu equipo…")
 	fmt.Println()
@@ -130,7 +133,7 @@ func auditarMotores(dir string) error {
 
 	a, err := identidad.Auditar(ctx, identidad.Opciones{
 		DirMotores:     dir,
-		DirPython:      dirPaquetesPython(),
+		DirPython:      dirPaquetesPython(ctx),
 		PaquetesPython: clausuraPaquetesPython(ctx),
 	})
 	if err != nil {
@@ -199,14 +202,16 @@ func auditarMotores(dir string) error {
 	fmt.Println("Si no hay versión corregida, la salida no es bajar el umbral: es")
 	fmt.Println("firmar el riesgo en internal/engines/identidad/excepciones.json,")
 	fmt.Println("con motivo y fecha de caducidad.")
-	os.Exit(1)
-	return nil
+	return errors.New("hay vulnerabilidades críticas o altas sin aceptar en los motores que distribuimos")
 }
 
 // dirPaquetesPython pregunta a Python dónde instaló pip los paquetes de
 // usuario, en vez de adivinar la ruta: depende de la versión de Python.
-func dirPaquetesPython() string {
-	out, err := exec.Command("python", "-c",
+// Recibe el ctx de la auditoría porque un intérprete colgado (instalación
+// rota, antivirus escaneando) no puede dejar la auditoría esperando para
+// siempre: al expirar el plazo el subproceso muere. Igual que la clausura.
+func dirPaquetesPython(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "python", "-c",
 		"import sysconfig; print(sysconfig.get_path('purelib', 'nt_user'))").Output()
 	if err != nil {
 		return ""

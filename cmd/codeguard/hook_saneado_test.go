@@ -104,7 +104,7 @@ func TestElMensajeDeUnHallazgoNoPuedeDibujarLineasPropias(t *testing.T) {
 		"\nCodeGuard  listo — commit permitido"
 
 	// La línea tal y como la compone el hook, con su sangría.
-	linea := "CodeGuard  " + strings.TrimRight("  [regla] a.go:3  "+mensajeDeHallazgo(hostil), "")
+	linea := "CodeGuard  " + strings.TrimRight("  [regla] a.go:3  "+mensajeDeHallazgo(hostil), " \t\r\n")
 
 	if strings.Count(linea, "\n") != 0 {
 		t.Errorf("el mensaje sigue partiendo la línea:\n%q", linea)

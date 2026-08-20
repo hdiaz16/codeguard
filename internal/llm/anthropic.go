@@ -125,7 +125,7 @@ func (c *Client) completarAnthropic(ctx context.Context, model, system, user str
 		return nil, err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxRespuestaLLM))
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +216,7 @@ func (c *Client) streamAnthropic(ctx context.Context, model, system, user string
 	// dejar sin capa de consejo a quien apunte a un modelo viejo — mismo patrón
 	// que el reintento de max_completion_tokens en el dialecto de OpenAI.
 	if resp.StatusCode == 400 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespuestaLLM))
 		_ = resp.Body.Close() // ya se leyó entero; se reintenta con otro cuerpo
 		if !strings.Contains(strings.ToLower(string(raw)), "thinking") {
 			return nil, fmt.Errorf("HTTP 400: %s%s", truncate(string(raw), 300), pistaDeError(string(raw)))
@@ -227,7 +227,7 @@ func (c *Client) streamAnthropic(ctx context.Context, model, system, user string
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespuestaLLM))
 		return nil, fmt.Errorf("HTTP %d: %s%s", resp.StatusCode, truncate(string(raw), 300), pistaDeError(string(raw)))
 	}
 

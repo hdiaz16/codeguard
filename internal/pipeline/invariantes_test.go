@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -407,8 +408,13 @@ func huellaDeSecretoEnSarif(t *testing.T, ruta string) string {
 			vistas = append(vistas, res.RuleID)
 			id := strings.ToLower(res.RuleID)
 			if strings.Contains(id, "gitleaks") || strings.Contains(id, "secret") {
-				for _, v := range res.PartialFingerprints {
-					return v
+				var claves []string
+				for k := range res.PartialFingerprints {
+					claves = append(claves, k)
+				}
+				sort.Strings(claves)
+				if len(claves) > 0 {
+					return res.PartialFingerprints[claves[0]]
 				}
 			}
 		}

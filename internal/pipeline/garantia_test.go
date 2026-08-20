@@ -26,6 +26,19 @@ func TestQueDegradacionesRompenLaGarantia(t *testing.T) {
 			[]string{"semgrep:plazo"}, true},
 		{"mezcla: una deliberada y una rota, gana la rota",
 			[]string{"deterministic:diff_too_large", "rulepack-ausente:2026.08.2"}, true},
+		// Estas dos las emite el daemon y ANTES NO ROMPÍAN: no casaban con
+		// ninguno de los cuatro patrones de la lista blanca, así que se
+		// descartaban en silencio con el job en verde.
+		{"el config del repo no se pudo leer: se analizó con el de por defecto",
+			[]string{"config:unreadable"}, true},
+		{"el pipeline falló entero: no hay nada que garantizar",
+			[]string{"pipeline:git no respondió"}, true},
+		// EL CASO QUE FIJA EL DEFAULT. Con lista blanca esto pasaba en verde, y
+		// era el agujero: cualquier degradación futura que signifique «no se
+		// miró» entraba sin que nadie se enterara. Si alguien vuelve a invertir
+		// el criterio, este caso es el que se pone rojo.
+		{"una etiqueta que nadie ha clasificado rompe: el desconocido cierra",
+			[]string{"motor-nuevo:se-quedo-a-medias"}, true},
 
 		// ── las que NO: política deliberada del producto ──
 		{"diff demasiado grande es una decisión anunciada, no una avería",
@@ -34,6 +47,13 @@ func TestQueDegradacionesRompenLaGarantia(t *testing.T) {
 			[]string{"daemon:offline"}, false},
 		{"migración sin vigilar es aviso de configuración (decisión de N011)",
 			[]string{"squawk:migracion-sin-vigilar"}, false},
+		// Y las dos que se equivocan hacia el lado SEGURO, exentas por eso y no
+		// por ser deliberadas: van por aquí para que la inversión a lista negra
+		// no las convierta en jobs rojos sin motivo.
+		{"un patrón de exclusión que no compila hace que se analice MÁS, no menos",
+			[]string{`patron-invalido:vendor/[a-`}, false},
+		{"sin las reglas que bajan severidad los hallazgos salen más estrictos",
+			[]string{"demoted:unavailable"}, false},
 		{"sin degradaciones",
 			nil, false},
 	}

@@ -239,8 +239,14 @@ func TestRepoRoot(t *testing.T) {
 	}
 	// git devuelve la ruta con /; se compara normalizado y sin distinguir
 	// mayúsculas (TempDir puede venir como C:\Users\HECTOR~1 vs c:/users/...).
-	quiero, _ := filepath.EvalSymlinks(dir)
-	tengo, _ := filepath.EvalSymlinks(filepath.FromSlash(root))
+	quiero, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tengo, err := filepath.EvalSymlinks(filepath.FromSlash(root))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.EqualFold(tengo, quiero) {
 		t.Errorf("RepoRoot devolvió %q, se esperaba %q", tengo, quiero)
 	}

@@ -17,7 +17,7 @@ func Guardar(string, string) error { return errNoDisponible }
 
 func Leer(string) (string, error) { return "", errNoDisponible }
 
-func Borrar(string) error { return nil }
+func Borrar(string) error { return errNoDisponible }
 
 func NoEncontrado(err error) bool { return errors.Is(err, errNoDisponible) }
 

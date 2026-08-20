@@ -302,6 +302,16 @@ go test ./...
 powershell -ExecutionPolicy Bypass -File tests\suite.ps1   # e2e, necesita el daemon vivo
 ```
 
+Las pruebas que lanzan los linters **de verdad** necesitan proyectos de juguete
+con las dependencias ya instaladas, y sin apuntarlas se saltan solas — si ves
+`SKIP` en las de integración, es esto y no un test roto:
+
+```powershell
+$env:CODEGUARD_TOY_JS = "<dir con toy-eslint y toy-biome>"   # npm install hecho
+$env:CODEGUARD_TOY_TS = "<proyecto con typescript>"
+$env:CODEGUARD_TOY_PY = "<dir para el proyecto de mypy>"     # se prepara solo
+```
+
 Go 1.26 · Wails v3 · SQLite sin cgo · sin dependencias de red en tiempo de
 análisis.
 

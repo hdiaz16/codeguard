@@ -80,3 +80,33 @@ func TestLaBarraDeLaRutaNoCambiaElIdentificador(t *testing.T) {
 			conBarraInvertida, conBarraNormal)
 	}
 }
+
+// EL AGUJERO QUE EL TEST DE ARRIBA NO CUBRÍA: dos repos con la misma carpeta
+// FINAL. RepoIDDe reducía la ruta a su último componente, así que
+// C:\trabajo\proyecto y D:\personal\proyecto compartían identificador y
+// mezclaban runs, hallazgos, cachés y estadísticas.
+//
+// El caso llegó a ocurrir de verdad: los repos temporales de los e2e nacen con
+// nombres como "001" en un directorio distinto cada corrida, y todos sus runs
+// acabaron apilados en el mismo cajón.
+func TestDosReposConLaMismaCarpetaFinalNoCompartenIdentificador(t *testing.T) {
+	a := RepoIDDe(`C:\trabajo\proyecto`, "")
+	b := RepoIDDe(`D:\personal\proyecto`, "")
+	if a == b {
+		t.Errorf("dos repos distintos comparten identificador %q: sus historiales se mezclan", a)
+	}
+	// Y el temporal de dos corridas de e2e tampoco:
+	if RepoIDDe(`C:\Temp\a1b2\001`, "") == RepoIDDe(`C:\Temp\c3d4\001`, "") {
+		t.Error("dos repos temporales homónimos comparten identificador")
+	}
+}
+
+// La ruta completa entra en el id, así que la capitalización pasa a importar
+// donde antes no llegaba a mirarse. En Windows la misma carpeta escrita de dos
+// maneras es UNA, y no puede abrir dos cajones: lo pliega el ToLower de
+// CanonicalRepoID.
+func TestLaCapitalizacionDeLaRutaNoCambiaElIdentificador(t *testing.T) {
+	if RepoIDDe(`C:\Users\dev\Demo`, "") != RepoIDDe(`c:\users\dev\demo`, "") {
+		t.Error("la misma carpeta con distinta capitalización abrió dos identificadores")
+	}
+}

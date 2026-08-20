@@ -2,6 +2,8 @@ package linters
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os/exec"
 	"strings"
 	"testing"
@@ -413,17 +415,31 @@ func TestJavaLintNoAplicaSinArchivosJava(t *testing.T) {
 	}
 }
 
+// La ausencia de PMD se simula redefiniendo LOCALAPPDATA, y eso vale porque
+// `Run` resuelve la herramienta ANTES de mirar java (javalint.go:110): el error
+// que sale es el de PMD aunque la máquina no tenga JVM, así que la prueba mide
+// lo que dice medir incluso donde los tests de integración se saltan.
 func TestJavaLintSinHerramientaNoDiceQueEstaLimpio(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
 	raiz := t.TempDir()
 	escribir(t, raiz, "src/A.java", fuenteJavaLimpio)
 
-	fs, err := JavaLint{}.Run(context.Background(), engines.Input{RepoRoot: raiz, Files: archivosJava("src/A.java")})
+	hallazgos, err := JavaLint{}.Run(context.Background(), engines.Input{RepoRoot: raiz, Files: archivosJava("src/A.java")})
 	if err == nil {
-		t.Fatalf("sin PMD instalado debe fallar, devolvió %d hallazgos", len(fs))
+		t.Fatalf("sin PMD instalado debe fallar, devolvió %d hallazgos", len(hallazgos))
 	}
-	if len(fs) != 0 {
-		t.Errorf("una degradación no puede traer hallazgos, trajo %d", len(fs))
+	// Y no vale cualquier error: javalint.go promete en su línea 108 que envuelve
+	// fs.ErrNotExist, y de ese centinela depende que el orquestador lo etiquete
+	// «falta: pmd» —configuración, que el usuario puede arreglar— en vez de
+	// declarar el análisis degradado. Es el mismo errors.Is que usa el propio
+	// motor para decidir (javalint.go:125). Sin comprobarlo, el día que el error
+	// deje de envolverlo el mensaje cambia de sentido y esta prueba sigue verde.
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("el error debe envolver fs.ErrNotExist para que salga como «falta: pmd» "+
+			"y no como capa degradada: %v", err)
+	}
+	if len(hallazgos) != 0 {
+		t.Errorf("una degradación no puede traer hallazgos, trajo %d", len(hallazgos))
 	}
 }
 

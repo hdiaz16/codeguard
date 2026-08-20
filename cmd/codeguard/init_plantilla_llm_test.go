@@ -46,8 +46,8 @@ func TestLaPlantillaNoInvitaAPonerMaxDiffTokensEnCero(t *testing.T) {
 	for i := iMax - 1; i >= 0 && strings.HasPrefix(strings.TrimSpace(lineas[i]), "#"); i-- {
 		encima = append(encima, lineas[i])
 	}
-	if !strings.Contains(strings.Join(encima, "\n"), "0") {
-		t.Errorf("max_diff_tokens no lleva encima un comentario que desmienta el 0; "+
+	if !strings.Contains(strings.Join(encima, "\n"), "Un 0 aquí no abre el grifo") {
+		t.Errorf("max_diff_tokens no lleva encima el comentario que desmiente el 0; "+
 			"lo que hay es:\n%s", strings.Join(encima, "\n"))
 	}
 }

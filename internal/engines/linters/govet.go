@@ -18,6 +18,7 @@ import (
 
 	"codeguard/internal/engines"
 	"codeguard/internal/finding"
+	"codeguard/internal/textutil"
 )
 
 // GoVet implementa la compuerta de lint de errores para Go (§7: lint severidad
@@ -389,7 +390,7 @@ func recorteVet(s string) string {
 		s = s[:i]
 	}
 	if len(s) > 200 {
-		s = s[:200] + "…"
+		s = textutil.TruncarRunas(s, 200) + "…"
 	}
 	return strings.TrimSpace(s)
 }

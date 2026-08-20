@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,12 @@ import (
 	"testing"
 	"time"
 )
+
+// errHashDistinto separa el fallo GRAVE —lo que se bajó no es lo que se espera,
+// por corrupción o manipulación— de un problema de red. Quien llama tiene que
+// tratarlo como fallo, nunca como «no se pudo probar»: los dos viajaban por el
+// mismo canal indistinguible y el test respondía a ambos con un skip.
+var errHashDistinto = errors.New("el hash no coincide con el esperado")
 
 // El jar de control se baja con su hash comprobado, igual que los motores de
 // verdad: no vamos a predicar integridad de la cadena y luego tragarnos
@@ -34,7 +41,7 @@ func descargarVerificado(url, sha, destino string) error {
 	}
 	suma := sha256.Sum256(cuerpo)
 	if got := hex.EncodeToString(suma[:]); got != sha {
-		return fmt.Errorf("hash del jar de control no coincide: %s", got)
+		return fmt.Errorf("%w (jar de control, obtuvimos %s)", errHashDistinto, got)
 	}
 	return os.WriteFile(destino, cuerpo, 0o644)
 }
@@ -74,6 +81,13 @@ func TestEscanerEncuentraLoQueDebeEncontrar(t *testing.T) {
 	)
 	dir := t.TempDir()
 	if err := descargarVerificado(url, sha, filepath.Join(dir, "log4j-core-2.14.1.jar")); err != nil {
+		// Un hash que no coincide NO es «no se pudo probar»: es la señal de que
+		// el artefacto de control no es lo que creemos, que es exactamente el
+		// escenario de cadena de suministro comprometida que la verificación
+		// existe para detectar. Eso se grita. La red sí es un skip legítimo.
+		if errors.Is(err, errHashDistinto) {
+			t.Fatalf("el jar de control no es lo que esperábamos: %v", err)
+		}
 		t.Skipf("no se pudo traer el jar de control: %v", err)
 	}
 

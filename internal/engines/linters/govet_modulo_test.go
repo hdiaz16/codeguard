@@ -2,6 +2,7 @@ package linters
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,7 +46,16 @@ func TestGoVetSobreUnModuloConPaqueteDeTestExterno(t *testing.T) {
 	// pasaría sin ejercitar el fallo y sería decorativo.
 	cmd := exec.Command("go", "vet", "-json", "./.")
 	cmd.Dir = raiz
-	salida, _ := cmd.Output()
+	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOCACHE="+t.TempDir())
+	salida, err := cmd.CombinedOutput()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.Is(err, exec.ErrNotFound) {
+			t.Skip("go no encontrado en PATH")
+		} else if !errors.As(err, &ee) {
+			t.Fatalf("ejecución de go vet falló: %v\n%s", err, salida)
+		}
+	}
 	if n := strings.Count(string(salida), "{"); n < 2 {
 		t.Skipf("este toolchain no emite un flujo aquí (%d objeto(s)): el test no probaría nada", n)
 	}

@@ -175,6 +175,7 @@ func sinComentariosNiCadenas(s string) string {
 		cadena // '…'
 	)
 	estado := normal
+	nivelBloque := 0
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch estado {
@@ -201,6 +202,7 @@ func sinComentariosNiCadenas(s string) string {
 				estado, i = linea, i+1
 			case c == '/' && i+1 < len(s) && s[i+1] == '*':
 				estado, i = bloque, i+1
+				nivelBloque = 0
 			case c == '\'':
 				estado = cadena
 			default:
@@ -212,8 +214,16 @@ func sinComentariosNiCadenas(s string) string {
 				b.WriteByte(c) // el salto se conserva: hay marcas ancladas a la línea
 			}
 		case bloque:
-			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-				estado, i = normal, i+1
+			if c == '/' && i+1 < len(s) && s[i+1] == '*' {
+				nivelBloque++
+				i++
+			} else if c == '*' && i+1 < len(s) && s[i+1] == '/' {
+				if nivelBloque > 0 {
+					nivelBloque--
+				} else {
+					estado = normal
+				}
+				i++
 			}
 		case cadena:
 			if c == '\'' {

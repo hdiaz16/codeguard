@@ -19,5 +19,8 @@ import (
 // Vive en su propio archivo para que ampliar la superficie del paquete no
 // obligue a tocar pipeline.go.
 func FiltrarExcluidos(cfg *config.Config, files []gitdiff.ChangedFile) []gitdiff.ChangedFile {
-	return filterExcluded(cfg, files)
+	// Los patrones inválidos sólo importan en el camino del análisis (van a
+	// Degraded); aquí, donde sólo se pregunta "qué capas vigilan", se descartan.
+	kept, _ := filterExcluded(cfg, files)
+	return kept
 }

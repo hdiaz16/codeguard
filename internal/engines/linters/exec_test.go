@@ -11,6 +11,13 @@ import (
 
 // topeChico baja el tope de salida de runTool durante una prueba, para poder
 // provocar un recorte sin generar 64 MB.
+//
+// Muta topeSalida, que es estado global del paquete, así que NINGUNA prueba que
+// llame aquí puede usar t.Parallel(): dos en paralelo se pisarían el tope y una
+// correría runTool con el de la otra, con recortes fantasma imposibles de
+// atribuir. Hoy ninguna lo hace, y no se pone candado porque un candado que
+// nadie contiende no impide que la próxima añada t.Parallel sin tomarlo: el
+// cierre real es que runTool reciba el tope por parámetro, y eso vive en exec.go.
 func topeChico(t *testing.T, n int64) {
 	t.Helper()
 	previo := topeSalida

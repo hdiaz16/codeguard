@@ -125,9 +125,11 @@ func TestSiNoEncajaConNingunaSigueSiendoDesconocido(t *testing.T) {
 			{Version: "1.0.1", SHA256Exe: strings.Repeat("b", 64)},
 		}},
 	}}
-	if res := Verificar(dir); res[0].Estado != Desconocido {
+	// Se busca por nombre en vez de indexar res[0]: si Verificar dejara de
+	// reportar el motor, un panic por índice no diría qué se rompió.
+	if r := buscar(t, Verificar(dir), "prueba"); r.Estado != Desconocido {
 		t.Fatalf("un binario que no es ninguna de las dos debe quedar como %q, quedó como %q",
-			Desconocido, res[0].Estado)
+			Desconocido, r.Estado)
 	}
 }
 
@@ -160,7 +162,7 @@ func TestLosCriticosSeListanPrimero(t *testing.T) {
 // donde se mira si los motores son los que publicaron sus autores.
 func TestJarInstaladoSeVerificaPorSuNombreReal(t *testing.T) {
 	dir := t.TempDir()
-	v := VersionesConocidas("google-java-format")[0]
+	v := primeraVersion(t, "google-java-format")
 	if v.Instalado == "" {
 		t.Fatal("la versión debe declarar con qué nombre queda instalada")
 	}
@@ -183,7 +185,7 @@ func TestJarInstaladoSeVerificaPorSuNombreReal(t *testing.T) {
 // de reglas alterado calla los hallazgos sin que nada parezca roto.
 func TestArbolInstaladoSeVerificaEntero(t *testing.T) {
 	dir := t.TempDir()
-	v := VersionesConocidas("pmd")[0]
+	v := primeraVersion(t, "pmd")
 	home := filepath.Join(dir, v.Instalado)
 	if err := os.MkdirAll(filepath.Join(home, "lib"), 0o755); err != nil {
 		t.Fatal(err)
@@ -256,6 +258,18 @@ func TestHuellaArbolSoloDependeDelContenido(t *testing.T) {
 	if h1 != h2 {
 		t.Errorf("dos árboles con el mismo contenido deben dar la misma huella: %s vs %s", h1, h2)
 	}
+}
+
+// primeraVersion devuelve la primera versión conocida del motor, o falla con un
+// mensaje claro. Indexar [0] a ciegas convertía un manifiesto incompleto en un
+// panic por índice, que no dice ni qué motor ni qué le falta.
+func primeraVersion(t *testing.T, motor string) Version {
+	t.Helper()
+	vs := VersionesConocidas(motor)
+	if len(vs) == 0 {
+		t.Fatalf("%s no tiene ninguna versión en el manifiesto", motor)
+	}
+	return vs[0]
 }
 
 func buscar(t *testing.T, res []Resultado, motor string) Resultado {

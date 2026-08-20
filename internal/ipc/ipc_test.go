@@ -192,4 +192,17 @@ func TestElPipeEsExclusivo(t *testing.T) {
 	}
 }
 
-var _ net.Listener = (net.Listener)(nil) // el contrato del paquete es net.Listener
+func TestListenImplementaNetListener(t *testing.T) {
+	pipePropio(t)
+	l, err := Listen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if _, ok := any(l).(net.Listener); !ok {
+		t.Fatal("Listen() debe retornar una instancia válida de net.Listener")
+	}
+	if l.Addr() == nil {
+		t.Fatal("l.Addr() no debe ser nil")
+	}
+}

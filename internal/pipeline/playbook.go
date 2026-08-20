@@ -2,7 +2,9 @@ package pipeline
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path"
@@ -110,7 +112,19 @@ func revisarLockfiles(cfg *config.Config, files []gitdiff.ChangedFile) []finding
 					break
 				}
 				if existe == "" {
-					if _, err := os.Stat(filepath.Join(cfg.RepoRoot, filepath.FromSlash(ruta))); err == nil {
+					// Sólo «no existe» cuenta como que no hay lockfile. Cualquier
+					// otro error de Stat —permisos, una unidad de red dormida, un
+					// nombre que el FS no admite— NO prueba que falte, y aquí el
+					// precio de equivocarse es un hallazgo BLOQUEANTE que le dice
+					// al dev «tu proyecto no tiene lockfile» teniéndolo delante, y
+					// lo manda a correr un install que no arregla nada: acusar en
+					// falso sin salida más que el bypass, que es lo contrario de
+					// lo que este bloque razona doce líneas más abajo. Ante la
+					// duda se asume que está, igual que hace el registro de
+					// proyectos cuando el Stat de un repo falla por algo que no
+					// sea la ausencia.
+					_, err := os.Stat(filepath.Join(cfg.RepoRoot, filepath.FromSlash(ruta)))
+					if err == nil || !errors.Is(err, fs.ErrNotExist) {
 						existe = lock
 					}
 				}

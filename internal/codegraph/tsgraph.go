@@ -1,10 +1,12 @@
 package codegraph
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"codeguard/internal/gitdiff"
@@ -69,6 +71,24 @@ func BuildTS(root string) (*Graph, error) {
 		lineas := strings.Split(src, "\n")
 		mod := moduloDe(rel)
 
+		// Offsets de inicio de línea: se calculan UNA vez por archivo y la línea
+		// de cada coincidencia sale por búsqueda binaria. Antes se recontaban los
+		// "\n" desde el principio del archivo por CADA coincidencia, que con
+		// archivos de cientos de KB y muchas declaraciones es cuadrático.
+		inicios := make([]int, len(lineas))
+		off := 0
+		for i, l := range lineas {
+			inicios[i] = off
+			off += len(l) + 1
+		}
+		lineaDe := func(offset int) int {
+			i := sort.Search(len(inicios), func(i int) bool { return inicios[i] > offset }) - 1
+			if i < 0 {
+				i = 0
+			}
+			return i + 1
+		}
+
 		// declaraciones: nombre + línea
 		type decl struct {
 			nombre string
@@ -79,19 +99,28 @@ func BuildTS(root string) (*Graph, error) {
 		for _, re := range []struct {
 			re   *regexp.Regexp
 			kind string
-		}{{reFuncDecl, "func"}, {reArrow, "func"}, {reMethod, "method"}, {reClass, "method"}} {
+		}{{reFuncDecl, "func"}, {reArrow, "func"}, {reMethod, "method"}, {reClass, "class"}} {
 			for _, m := range re.re.FindAllStringSubmatchIndex(src, -1) {
 				nombre := src[m[2]:m[3]]
 				if noSonLlamadas[nombre] || len(nombre) < 2 {
 					continue
 				}
-				decls = append(decls, decl{nombre, 1 + strings.Count(src[:m[0]], "\n"), re.kind})
+				decls = append(decls, decl{nombre, lineaDe(m[0]), re.kind})
 			}
 		}
 		for _, d := range decls {
 			id := mod + "." + d.nombre
 			if nodes[id] != nil {
-				continue
+				// Colisión: el mismo nombre en otro archivo del mismo módulo
+				// (helpers homónimos por archivo, habitual en Next.js). Antes
+				// se descartaba en silencio y con ella se iban sus llamadas y
+				// sus consultas. Se desambigua con archivo:línea; byName sigue
+				// indexando por nombre simple, así que las llamadas resuelven
+				// a las dos, y el id sin sufijo se conserva para la primera.
+				id = fmt.Sprintf("%s@%s:%d", id, rel, d.linea)
+				if nodes[id] != nil {
+					continue
+				}
 			}
 			nodes[id] = &Node{ID: id, Label: d.nombre, Pkg: mod, File: rel, Line: d.linea, Kind: d.kind}
 			byName[d.nombre] = append(byName[d.nombre], id)

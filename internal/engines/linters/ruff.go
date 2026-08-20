@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"codeguard/internal/engines"
@@ -68,8 +69,13 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 	// tal cual, sin reescribir la ruta ni recalcular la huella.
 	var findings []finding.Finding
 	pendientes := archivos
+	// La huella se calcula UNA vez y la comparten lectura y escritura. Antes se
+	// recalculaba al guardar, y eso abría una ventana: un cambio de configuración
+	// a mitad de corrida hacía escribir bajo una clave distinta de la leída, y el
+	// caché dejaba de acertar sin que nada fallara.
+	cfgHash := ""
 	if e.Cache != nil {
-		cfgHash := huellaConfigRuff(in.RepoRoot)
+		cfgHash = huellaConfigRuff(in.RepoRoot, archivos)
 		claves := make(map[string]string, len(archivos)) // ruta → clave
 		var lista []string
 		for _, f := range archivos {
@@ -98,13 +104,26 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 	}
 
 	var paths []string
+	raiz := filepath.Clean(in.RepoRoot)
 	for _, f := range pendientes {
-		paths = append(paths, filepath.Join(in.RepoRoot, filepath.FromSlash(f.Path)))
+		// La ruta sale del diff y acaba como argumento de un proceso externo:
+		// Join la limpia pero no la CONTIENE, así que una absoluta o un ".." la
+		// sacaría del repo y ruff analizaría archivos ajenos. Se rechaza con
+		// error, no se salta en silencio: un diff así es avería o manipulación, y
+		// omitir el archivo lo dejaría sin analizar dando el commit por bueno.
+		rel := filepath.FromSlash(f.Path)
+		abs := filepath.Join(raiz, rel)
+		if filepath.IsAbs(rel) || (abs != raiz && !strings.HasPrefix(abs, raiz+string(filepath.Separator))) {
+			return nil, fmt.Errorf("ruta del diff fuera del repo: %q", f.Path)
+		}
+		paths = append(paths, abs)
 	}
 	nuevos := []finding.Finding{}
 
 	// ── lint de errores ──
-	checkOut, err := runTool(ctx, in.RepoRoot, bin, append([]string{"check", "--output-format", "json", "--exit-zero"}, paths...)...)
+	// El "--" separa banderas de operandos: una ruta que empiece por "-" no
+	// debe leerse como bandera de ruff. clap lo honra en `check` y `format`.
+	checkOut, err := runTool(ctx, in.RepoRoot, bin, append([]string{"check", "--output-format", "json", "--exit-zero", "--"}, paths...)...)
 	if err != nil {
 		return nil, fmt.Errorf("ruff no corrió: %w", err)
 	}
@@ -137,11 +156,20 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 	}
 
 	// ── formato ──
-	fmtOut, err := runTool(ctx, in.RepoRoot, bin, append([]string{"format", "--check"}, paths...)...)
+	//
+	// runToolConSalida y no runTool: `ruff format --check` sale con 1 cuando
+	// hay archivos sin formatear (hallazgos) pero con 2 cuando NO PUDO revisar
+	// —config inválida, sintaxis que no parsea, panic—. En ese caso la salida
+	// no trae ni un "Would reformat:" ni un "-->", el parser de abajo no
+	// extrae nada, y sin el código de salida eso se reportaba como "formato
+	// limpio" sobre archivos que ruff no miró: el verde silencioso simétrico
+	// al que runToolConSalida cerró en tsc.
+	fmtOut, fmtFallo, err := runToolConSalida(ctx, in.RepoRoot, bin, append([]string{"format", "--check", "--"}, paths...)...)
 	if err != nil {
 		return nil, fmt.Errorf("ruff format no corrió: %w", err)
 	}
 	seen := map[string]bool{}
+	formatTargets := 0
 	for _, line := range strings.Split(fmtOut, "\n") {
 		line = strings.TrimSpace(line)
 		var target string
@@ -158,6 +186,7 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 		default:
 			continue
 		}
+		formatTargets++
 		rel := relTo(in.RepoRoot, target)
 		if seen[rel] {
 			continue
@@ -182,8 +211,18 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 		nuevos = append(nuevos, f)
 	}
 
+	// Fail-closed: exit ≠0 sin UN SOLO target parseado significa que ruff no
+	// revisó el formato (avería real), no que estaba todo limpio. Devolver
+	// cero hallazgos aquí sería el verde silencioso, y encima quedaría
+	// congelado en el caché como veredicto limpio — el agravante que ya se
+	// sufrió con govet/govulncheck. Se devuelve error ANTES de Guardar, así
+	// que una avería nunca se cachea.
+	if fmtFallo && formatTargets == 0 {
+		return nil, fmt.Errorf("ruff format falló al ejecutarse (no se pudo revisar el formato): %s", strings.TrimSpace(fmtOut))
+	}
+
 	if e.Cache != nil {
-		e.Cache.Guardar(porArchivoRuff(nuevos, pendientes, huellaConfigRuff(in.RepoRoot)))
+		e.Cache.Guardar(porArchivoRuff(nuevos, pendientes, cfgHash))
 	}
 	return append(findings, nuevos...), nil
 }
@@ -232,23 +271,67 @@ func porArchivoRuff(fs []finding.Finding, archivos []gitdiff.ChangedFile, cfgHas
 	return out
 }
 
-// huellaConfigRuff resume la configuración de ruff QUE VIVE EN EL REPO.
+// huellaConfigRuff resume todo lo que puede cambiar el veredicto de ruff sin que
+// cambie el contenido del .py: la VERSIÓN del binario y la configuración que vive
+// en el repo.
 //
-// Va dentro de la clave porque ruff obedece a esos archivos: cambiar una regla
-// en pyproject.toml cambia el veredicto sin que cambien ni el contenido del .py
-// ni la configuración de CodeGuard. Sin esto, el caché serviría el resultado de
-// la configuración anterior y la regla nueva no se aplicaría a nada que ya
-// estuviera analizado — una corrección que no llega, que es el fallo que este
-// proyecto lleva persiguiendo.
-func huellaConfigRuff(repoRoot string) string {
+// La configuración va dentro de la clave porque ruff obedece a esos archivos:
+// cambiar una regla en pyproject.toml cambia el veredicto sin que cambien ni el
+// contenido del .py ni la configuración de CodeGuard. Sin esto, el caché serviría
+// el resultado de la configuración anterior y la regla nueva no se aplicaría a
+// nada que ya estuviera analizado — una corrección que no llega, que es el fallo
+// que este proyecto lleva persiguiendo.
+//
+// La VERSIÓN del binario se auditó y se dejó FUERA a propósito: javafmt y
+// javalint sí la meten, pero la leen de la ruta del artefacto versionado «sin
+// pagar» un proceso extra (java.go), y a ruff lo instala pip como
+// Scripts\ruff.exe, sin versión en la ruta — habría que invocar `ruff --version`
+// en cada corrida. No compensa: el análisis es POR DIFF, así que un contenido
+// distinto ya produce una clave distinta, y el único caso que quedaría fuera es
+// que reaparezca un archivo con el MISMO sha y la misma config después de
+// actualizar ruff.
+//
+// Y la configuración no es sólo la de la raíz: ruff la descubre por directorio y
+// la de una subcarpeta manda sobre los archivos de esa subcarpeta. Se buscan
+// configs en los directorios de los archivos afectados y sus padres hasta la
+// raíz — recorrer el repo entero en cada commit costaría más de lo que el caché
+// ahorra.
+func huellaConfigRuff(repoRoot string, archivos []gitdiff.ChangedFile) string {
 	h := sha256.New()
-	for _, nombre := range []string{"ruff.toml", ".ruff.toml", "pyproject.toml", "setup.cfg"} {
-		b, err := os.ReadFile(filepath.Join(repoRoot, nombre))
-		if err != nil {
-			continue
+	// Se acumulan en un mapa y se hashean ORDENADAS: el orden en que git liste
+	// los archivos del diff no puede cambiar la huella del mismo repo.
+	configs := map[string][]byte{}
+	raiz := filepath.Clean(repoRoot)
+	for _, f := range archivos {
+		dir := filepath.Dir(filepath.Join(raiz, filepath.FromSlash(f.Path)))
+		for {
+			if dir != raiz && !strings.HasPrefix(dir, raiz+string(filepath.Separator)) {
+				break // ruta que se sale del repo: nada que buscar ahí fuera
+			}
+			for _, nombre := range []string{"ruff.toml", ".ruff.toml", "pyproject.toml", "setup.cfg"} {
+				ruta := filepath.Join(dir, nombre)
+				if _, ya := configs[ruta]; ya {
+					continue
+				}
+				if b, err := os.ReadFile(ruta); err == nil {
+					configs[ruta] = b
+				}
+			}
+			if dir == raiz {
+				break
+			}
+			dir = filepath.Dir(dir)
 		}
-		h.Write([]byte(nombre))
-		h.Write(b)
+	}
+	rutas := make([]string, 0, len(configs))
+	for r := range configs {
+		rutas = append(rutas, r)
+	}
+	sort.Strings(rutas)
+	for _, r := range rutas {
+		h.Write([]byte(r))
+		h.Write(configs[r])
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
+

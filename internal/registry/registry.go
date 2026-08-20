@@ -5,12 +5,17 @@ package registry
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"codeguard/internal/fsutil"
 )
 
 type Repo struct {
@@ -78,10 +83,14 @@ func Load() []Repo {
 	// aquí, y los archivos que vienen de versiones anteriores traen la misma
 	// carpeta repetida en varias escrituras.
 	repos, colapsado := colapsar(repos)
-	// los que ya no existen en disco se olvidan solos
+	// los que ya no existen en disco se olvidan solos — pero sólo cuando la
+	// inexistencia es REAL. Un os.Stat que falla por permisos, una unidad de
+	// red caída o un montaje dormido no prueba que el repo desapareció, y
+	// olvidarlo aquí lo borraría del archivo PARA SIEMPRE por un error
+	// transitorio. Ante la duda, el repo se conserva.
 	alive := make([]Repo, 0, len(repos))
 	for _, r := range repos {
-		if _, err := os.Stat(r.Root); err == nil {
+		if _, err := os.Stat(r.Root); err == nil || !errors.Is(err, fs.ErrNotExist) {
 			alive = append(alive, r)
 		}
 	}
@@ -90,7 +99,8 @@ func Load() []Repo {
 	// otro lector la seguía viendo.
 	if len(alive) != len(repos) || colapsado {
 		if data, err := json.MarshalIndent(alive, "", "  "); err == nil {
-			_ = os.WriteFile(path(), data, 0o644) // best-effort: Load tolera que falte o falle
+			// Atómico: un crash a media escritura ya no trunca el registro.
+			_ = fsutil.EscribirAtomico(path(), data, 0o644) // best-effort: Load tolera que falte o falle
 		}
 	}
 	sort.Slice(alive, func(i, j int) bool { return alive[i].Nombre < alive[j].Nombre })
@@ -110,7 +120,10 @@ func Add(root, nombre, lenguaje string) {
 	if raw, err := os.ReadFile(path()); err == nil {
 		// Si el archivo existe pero no se puede parsear, NO seguimos: escribir
 		// encima perdería los demás proyectos por un JSON corrupto pasajero.
+		// Pero tampoco se traga en silencio: sin esto, `codeguard init` no daba
+		// error y el proyecto nunca aparecía en el panel, sin pista de por qué.
 		if err := json.Unmarshal(raw, &repos); err != nil {
+			log.Printf("registro corrupto en %s: %v (repararlo o borrarlo a mano)", path(), err)
 			return
 		}
 	}
@@ -135,7 +148,8 @@ func Add(root, nombre, lenguaje string) {
 		repos = append(repos, Repo{Root: root, Nombre: nombre, Alta: now, UltVez: now, Lenguaje: lenguaje})
 	}
 	if data, err := json.MarshalIndent(repos, "", "  "); err == nil {
-		_ = os.WriteFile(path(), data, 0o644) // best-effort: Load tolera que falte o falle
+		// Atómico: un crash a media escritura ya no trunca el registro.
+		_ = fsutil.EscribirAtomico(path(), data, 0o644) // best-effort: Load tolera que falte o falle
 	}
 }
 
@@ -258,7 +272,8 @@ func Remove(root string) bool {
 		return false
 	}
 	if data, err := json.MarshalIndent(quedan, "", "  "); err == nil {
-		_ = os.WriteFile(path(), data, 0o644) // best-effort: Load tolera que falte o falle
+		// Atómico: un crash a media escritura ya no trunca el registro.
+		_ = fsutil.EscribirAtomico(path(), data, 0o644) // best-effort: Load tolera que falte o falle
 	}
 	return true
 }

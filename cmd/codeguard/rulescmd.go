@@ -90,14 +90,35 @@ func rulesCmd() *cobra.Command {
 				return fmt.Errorf("el modelo no respondió: %w", err)
 			}
 			// JSON es YAML válido: Semgrep lee el archivo tal cual. Validamos
-			// que sea JSON bien formado con la llave "rules" antes de escribir.
+			// que sea JSON bien formado Y que traiga de verdad la llave "rules".
+			// El Unmarshal a un struct NO distingue «llave ausente» de «lista
+			// vacía», así que un {} o un {"foo":1} —JSON válido, pero no una
+			// respuesta del modelo— pasaba el filtro y escribía un archivo de
+			// reglas vacío con pinta de legítimo. {"rules":[]} sí es una
+			// respuesta buena (el prompt admite «si nada es verificable»), y por
+			// eso se comprueba la presencia de la llave, no que traiga reglas.
 			raw := extractJSON(res.Content)
+			var sobre map[string]json.RawMessage
 			var probe struct {
 				Rules []map[string]any `json:"rules"`
 			}
-			if raw == "" || json.Unmarshal([]byte(raw), &probe) != nil {
+			if raw == "" || json.Unmarshal([]byte(raw), &sobre) != nil ||
+				sobre["rules"] == nil || json.Unmarshal([]byte(raw), &probe) != nil {
 				dbg := filepath.Join(repoRoot, ".codeguard", "rules-debug.txt")
-				_ = os.WriteFile(dbg, []byte(res.Content), 0o644) // volcado de diagnóstico; el error ya se devuelve abajo
+				// El error de escritura NO se traga: el mensaje de abajo manda
+				// al usuario a este archivo, y remitirlo a uno que no existe es
+				// peor que no ofrecerlo. El directorio existe —config.Load ya
+				// leyó .codeguard/config.yaml más arriba—, así que si esto falla
+				// es disco o permisos, y entonces el diagnóstico viaja en el
+				// propio error.
+				if werr := os.WriteFile(dbg, []byte(res.Content), 0o644); werr != nil {
+					inicio := res.Content
+					if len(inicio) > 400 {
+						inicio = inicio[:400] + "…"
+					}
+					return fmt.Errorf("el modelo no devolvió reglas utilizables y tampoco se pudo volcar "+
+						"la respuesta (%v); empieza así: %s", werr, inicio)
+				}
 				return fmt.Errorf("el modelo no devolvió reglas utilizables (respuesta cruda en %s)", dbg)
 			}
 			pretty, _ := json.MarshalIndent(probe, "", "  ")

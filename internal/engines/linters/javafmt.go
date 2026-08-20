@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -317,10 +318,13 @@ func jfmtRutasCambiadas(repoRoot, dirProyecto string, stdout []byte) []string {
 func jfmtSoloFinalesDeLinea(ctx context.Context, repoRoot, absProyecto, dirProyecto, jar, rel string) (bool, error) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(rel)))
 	if err != nil {
-		// Desapareció entre las dos pasadas. Sin contenido con el que comparar no
-		// se puede afirmar nada, y afirmar "está mal formateado" de un archivo que
-		// ya no existe es peor que callar.
-		return true, nil
+		if errors.Is(err, fs.ErrNotExist) {
+			// Desapareció entre las dos pasadas. Sin contenido con el que comparar no
+			// se puede afirmar nada, y afirmar "está mal formateado" de un archivo que
+			// ya no existe es peor que callar.
+			return true, nil
+		}
+		return false, fmt.Errorf("jfmtSoloFinalesDeLinea leyendo %s: %w", rel, err)
 	}
 	stdout, err := jfmtCorrer(ctx, absProyecto, dirProyecto, jar, []string{"-jar", jar, enProyecto(dirProyecto, rel)})
 	if err != nil {
@@ -390,6 +394,32 @@ func jfmtCorrer(ctx context.Context, absProyecto, dirProyecto, jar string, args 
 	// No hace falta que el impostor sea artificial para que ocurra: basta un java
 	// que escriba su queja en stdout, un mensaje de la JVM en otro idioma que no
 	// empiece por "Error: ", o un envoltorio corporativo delante del java real.
+	//
+	// Pero esa forma —código 1, stdout vacío— la comparten DOS desenlaces, y
+	// achacárselos los dos al motor manda al dev a reinstalar algo que está
+	// sano. El otro es que UN .java del lote no parsea: la herramienta escribe
+	// el diagnóstico en stderr con la ruta tal como se la pasamos
+	// ("ruta:línea:columna: error: …") y no lista nada en stdout.
+	//
+	// Se sigue devolviendo error —esta capa NO puede decir "limpio"—, y eso es
+	// deliberado: en un lote de diez archivos con uno roto, stdout vacío no
+	// significa "los otros nueve están bien formateados", significa que no se
+	// llegó a saber. Tratarlo como limpio sería el "no se miró parece se miró"
+	// de siempre. Lo que cambia es QUÉ se dice: se nombra el archivo que no
+	// parsea en vez de acusar a la herramienta, porque el dev tiene que ir a
+	// arreglar su código, no su instalación. El detalle con línea y columna lo
+	// da javalint.
+	//
+	// La heurística está medida en la dirección segura: si una versión futura
+	// cambia el formato del diagnóstico y deja de casar, cae en el mensaje de
+	// avería de abajo — degrada igual, sólo con peor texto.
+	if codigo == 1 && len(salida.Stdout) == 0 && jfmtArchivoQueNoParsea(salida.Stderr, args) != "" {
+		return nil, fmt.Errorf("google-java-format no pudo parsear %s en %s, así que el "+
+			"formato del lote se queda sin juzgar: arregla la sintaxis y vuelve a intentar "+
+			"(javalint lo señala con línea y columna). Salida: %s",
+			jfmtArchivoQueNoParsea(salida.Stderr, args), dirProyecto,
+			jRecortar(colapsar(string(salida.Stderr)), 200))
+	}
 	if codigo == 1 && len(salida.Stdout) == 0 {
 		return nil, fmt.Errorf("google-java-format salió con 1 en %s y no devolvió el archivo "+
 			"formateado: no llegó a hacer su trabajo (¿un java que no es el esperado, o un "+
@@ -432,6 +462,41 @@ func jfmtCorrer(ctx context.Context, absProyecto, dirProyecto, jar string, args 
 		}
 	}
 	return salida.Stdout, nil
+}
+
+// jfmtArchivoQueNoParsea devuelve la ruta del archivo del lote que stderr señala
+// como imparseable, o "" si stderr no habla de ninguno.
+//
+// Es la evidencia que separa "un archivo tuyo no compila" de "la herramienta no
+// corrió": google-java-format emite sus diagnósticos con la ruta TAL COMO se la
+// pasamos por línea de comandos, así que basta buscar cada argumento que acabe
+// en .java dentro de stderr, sin normalizar nada. Los args que terminan en .java
+// son exactamente las rutas pedidas (en la primera pasada van tras los flags; en
+// la segunda es el único archivo).
+//
+// NO está verificado contra un google-java-format real: esta máquina no tiene
+// java y los tests que lo necesitan se saltan. Por eso el orden de las guardas
+// importa — si esto no casa, el llamador cae en el mensaje de avería, que es el
+// lado seguro.
+var reJfmtError = regexp.MustCompile(`(?m)^([^\r\n:]+\.java)(?::\d+)?(?::\d+)?:\s*error:`)
+
+func jfmtArchivoQueNoParsea(stderr []byte, args []string) string {
+	matches := reJfmtError.FindAllSubmatch(stderr, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		candidato := string(m[1])
+		for _, a := range args {
+			if strings.HasSuffix(a, ".java") && (a == candidato || strings.EqualFold(filepath.Clean(a), filepath.Clean(candidato))) {
+				return a
+			}
+		}
+	}
+	return ""
 }
 
 // contestaAlgo acepta cualquier respuesta con contenido, y la tolerancia es

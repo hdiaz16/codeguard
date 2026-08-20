@@ -77,6 +77,18 @@ func TestLosRequisitosSonLosEjecutablesQueLosMotoresInvocan(t *testing.T) {
 			t.Errorf("%s necesita %q y la tabla dice %q", motor, esperado, got)
 		}
 	}
+	// Y al revés, que es el sentido que faltaba: la otra prueba sólo exige que
+	// `requisitos` case con Engines(), así que nada obligaba a pasar por aquí. Un
+	// motor añadido a la tabla sin justificación nunca se contrastaba con el
+	// ejecutable que invoca DE VERDAD, y la tabla volvía a ser el mapa escrito a
+	// mano que se queda viejo — justo lo que este archivo existe para impedir.
+	for motor := range requisitos {
+		if _, ok := quiero[motor]; !ok {
+			t.Errorf("%q está en `requisitos` pero no tiene justificación en esta prueba. "+
+				"Añádelo a `quiero` con el ejecutable que el motor invoca de verdad —o \"\" si "+
+				"no se comprueba— y di por qué, como se hizo con tsc y eslint.", motor)
+		}
+	}
 }
 
 // gofmt no puede salir nunca como "no disponible": no lanza ningún proceso,
@@ -89,13 +101,27 @@ func TestGofmtNuncaSaleComoNoDisponible(t *testing.T) {
 	}
 }
 
+// cambiaRequisito apunta un motor a otro ejecutable durante una prueba y lo
+// devuelve a su sitio al terminar, pase lo que pase dentro.
+//
+// Muta el mapa global `requisitos`, y por eso las pruebas de este archivo son
+// INCOMPATIBLES con t.Parallel(): dos en paralelo se pisarían el valor y
+// Disponibilidad leería la tabla a medio cambiar, con fallos intermitentes que
+// nadie sabría de dónde salen. Hoy ninguna lo usa. Si algún día hiciera falta,
+// el arreglo es que Disponibilidad reciba la tabla por parámetro, no poner
+// candados alrededor de un global.
+func cambiaRequisito(t *testing.T, motor, ejecutable string) {
+	t.Helper()
+	original := requisitos[motor]
+	requisitos[motor] = ejecutable
+	t.Cleanup(func() { requisitos[motor] = original })
+}
+
 // Un motor que esta máquina NO tiene sale nombrado, con su motivo. Se usa un
 // requisito imposible para no depender de qué haya instalado hoy en el disco de
 // nadie: una prueba que dependa de eso pasa aquí y falla en otra máquina.
 func TestUnMotorSinSuEjecutableSaleNombradoConMotivo(t *testing.T) {
-	original := requisitos["semgrep"]
-	requisitos["semgrep"] = "no-existe-este-ejecutable-cg"
-	defer func() { requisitos["semgrep"] = original }()
+	cambiaRequisito(t, "semgrep", "no-existe-este-ejecutable-cg")
 
 	d := Disponibilidad([]string{"semgrep", "gofmt"})
 	if len(d) != 1 || d[0].Motor != "semgrep" {
@@ -113,9 +139,7 @@ func TestUnMotorSinSuEjecutableSaleNombradoConMotivo(t *testing.T) {
 // el repo tiene 3 haría que el panel avisara de un tsc ausente a alguien que no
 // escribe TypeScript — ruido sobre una capa que no le afecta.
 func TestSoloSePreguntaPorLasCapasDelRepo(t *testing.T) {
-	original := requisitos["mypy"]
-	requisitos["mypy"] = "no-existe-este-ejecutable-cg"
-	defer func() { requisitos["mypy"] = original }()
+	cambiaRequisito(t, "mypy", "no-existe-este-ejecutable-cg")
 
 	if d := Disponibilidad([]string{"semgrep", "gofmt"}); len(d) != 0 {
 		t.Errorf("nadie preguntó por mypy y salió igual: %v", d)

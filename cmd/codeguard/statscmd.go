@@ -24,12 +24,22 @@ func statsCmd() *cobra.Command {
 
 			repoID := ""
 			if !allRepos {
-				if root, err := gitdiff.RepoRoot("."); err == nil {
-					// Con el respaldo de RepoIDDe: sin él, un repo sin remote
-					// buscaba bajo la cadena vacía y `stats` decía "sin hallazgos
-					// registrados todavía" con la base llena.
-					repoID = store.RepoIDDe(root, gitRemote(root))
+				root, err := gitdiff.RepoRoot(".")
+				if err != nil {
+					// repoID vacío significa GLOBAL (todos los repos): seguir
+					// aquí mostraría las estadísticas de todos disfrazadas de
+					// las del repo actual, y el usuario no pidió --all. Un error
+					// ambiguo no se convierte en «todo bien». (No se distingue
+					// "no es repo" de "git roto" por el tipo de error: gitdiff.run
+					// envuelve con %v y rompe la cadena de errors.As; el mensaje
+					// cubre ambos y muestra la causa real.)
+					return fmt.Errorf("no se pudo determinar el repositorio actual "+
+						"(¿estás dentro de un repo git?); usa --all para las estadísticas globales: %v", err)
 				}
+				// Con el respaldo de RepoIDDe: sin él, un repo sin remote
+				// buscaba bajo la cadena vacía y `stats` decía "sin hallazgos
+				// registrados todavía" con la base llena.
+				repoID = store.RepoIDDe(root, gitRemote(root))
 			}
 
 			// ── El avance hacia el umbral del §17 se dice primero: la poda

@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"codeguard/internal/engines"
@@ -79,7 +78,12 @@ func (e DotnetFormat) Run(ctx context.Context, in engines.Input) ([]finding.Find
 		return nil, fmt.Errorf("no encuentro ningún .csproj para los .cs tocados")
 	}
 
-	report := filepath.Join(os.TempDir(), "codeguard-dnf.json")
+	tmpReport, err := os.CreateTemp("", "codeguard-dnf-*.json")
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo crear archivo temporal para reporte: %w", err)
+	}
+	report := tmpReport.Name()
+	_ = tmpReport.Close()
 	defer os.Remove(report)
 
 	var rep dnfReport

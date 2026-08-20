@@ -24,6 +24,7 @@ import (
 	"codeguard/internal/daemon"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
+	"codeguard/internal/gitdiff"
 	"codeguard/internal/ipc"
 	"codeguard/internal/pipeline"
 	"codeguard/internal/registry"
@@ -89,6 +90,13 @@ type escritorio struct {
 	// El grafo puede pesar cientos de KB: viaja por HTTP interno, no por el
 	// bus de eventos (ahí llegaba vacío). El explorador hace fetch("/graph.json").
 	grafoJSON atomic.Value // []byte
+	// grafoMu hace indivisible el par "servir el grafo + abrir la ventana".
+	// Sin él, dos peticiones casi a la vez (panel y CLI, p.ej.) cruzaban el
+	// Store de /graph.json con la apertura: la ventana del pedido A podía
+	// acabar pintando el grafo del pedido B sin ningún aviso. Como sólo hay
+	// UNA ventana de explorador, la regla es "el último pedido gana entero":
+	// su grafo y su ventana, nunca la mezcla.
+	grafoMu sync.Mutex
 	// grafoPendiente es el grafo que el explorador recibiría por el bus en
 	// cuanto avisa que cargó. Desde que el grafo viaja por HTTP nadie lo
 	// llena, y el manejador de explorer-ready no encuentra nada que mandar.
@@ -172,6 +180,17 @@ func (e *escritorio) manejadorHTTP() http.Handler {
 		_, _ = w.Write(e.grafoJSON.Load().([]byte))
 	})
 	// Igual que el grafo: la configuración se sirve por HTTP y no por eventos.
+	// Pero NO tal cual: sale sólo la lista blanca de configLLMServida —la ventana
+	// necesita saber QUE hay clave, no su valor, que no sale del Administrador de
+	// credenciales— y si no se puede serializar, no se sirve: fail-closed.
+	//
+	// Y NO es «cualquier proceso local con un GET», como decía aquí antes: este mux
+	// se monta como AssetOptions.Handler de Wails (main.go:517), o sea que lo sirve
+	// el canal de assets de la WebView2 y no un socket. MEDIDO: el daemon no tiene
+	// ningún puerto TCP en escucha, así que desde fuera no hay GET posible. Quien lo
+	// lee es lo que corra DENTRO de la webview, y por eso la lista blanca sigue
+	// valiendo: el día que el panel cargue algo de terceros, o que un asset se
+	// cuele, el JSON no puede llevar más de lo que se decidió exponer.
 	handler.HandleFunc("/config-llm.json", func(w http.ResponseWriter, r *http.Request) {
 		raiz, _ := e.raizConfig.Load().(string)
 		if raiz == "" {
@@ -181,10 +200,76 @@ func (e *escritorio) manejadorHTTP() http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(leerConfigLLM(filepath.FromSlash(raiz)))
+		data, err := configLLMParaServir(leerConfigLLM(filepath.FromSlash(raiz)))
+		if err != nil {
+			log.Println("config-llm: no se pudo enmascarar la configuración:", err)
+			http.Error(w, "no se pudo servir la configuración", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(data)
 	})
 	handler.Handle("/", assetsFS)
 	return handler
+}
+
+// claveEnmascarada es el centinela que el camino de guardado reconoce como «la
+// clave no se tocó» (ver guardarLLMLocal). /config-llm.json ya no sirve ningún
+// campo de credencial —ni tapado—, así que la constante queda por dos motivos: un
+// formulario ya abierto que la devuelva no debe pisar la clave guardada, y el
+// contrato de guardarLLMLocal no se toca.
+const claveEnmascarada = "__codeguard_guardada__"
+
+// configLLMServida es la lista BLANCA de lo que /config-llm.json expone: sólo
+// estos campos, copiados a mano desde estadoConfigLLM.
+//
+// Sustituye a la lista NEGRA anterior, que tapaba todo campo cuyo nombre oliera a
+// credencial ("key", "token", "secret"...). Esa lista protegía al revés de como se
+// rompe: el día que estadoConfigLLM gane un campo sensible con un nombre fuera de
+// la lista —"cabecera", "firma", "certificado"— saldría en claro sin que nadie lo
+// notara.
+//
+// Y ADEMÁS la lista negra tenía un daño ya activo: "api_key_env" contiene "key",
+// así que el NOMBRE de la variable de entorno se servía tapado. config.html:184
+// llena con él el campo del formulario y lo devuelve al guardar (línea 209), de
+// modo que guardarLLMLocal acababa guardando la clave bajo la variable
+// "__codeguard_guardada__" y la capa de consejo se quedaba buscando una variable
+// que no existe. El nombre de una variable no es una credencial; el valor, que sí
+// lo es, nunca ha estado en este struct — vive en el Administrador de credenciales
+// y aquí sólo viaja QUE existe (HayKey).
+//
+// Con la lista blanca el modo de fallo se invierte: un campo nuevo NO aparece en
+// el JSON hasta que alguien lo añade aquí a propósito, y ese añadido se ve en la
+// revisión.
+type configLLMServida struct {
+	Proveedores []proveedorUI `json:"proveedores"`
+	Provider    string        `json:"provider"`
+	Endpoint    string        `json:"endpoint"`
+	APIKeyEnv   string        `json:"api_key_env"`
+	Model       string        `json:"model"`
+	ModelFast   string        `json:"model_fast"`
+	TimeoutMs   int           `json:"timeout_ms"`
+	EsLocal     bool          `json:"es_local"`
+	HayKey      bool          `json:"hay_key"`
+	RutaLocal   string        `json:"ruta_local"`
+	DelEquipo   string        `json:"del_equipo"`
+}
+
+// configLLMParaServir serializa la configuración del modelo pasando por la lista
+// blanca: lo que no esté en configLLMServida no sale por el endpoint.
+func configLLMParaServir(e estadoConfigLLM) ([]byte, error) {
+	return json.Marshal(configLLMServida{
+		Proveedores: e.Proveedores,
+		Provider:    e.Provider,
+		Endpoint:    e.Endpoint,
+		APIKeyEnv:   e.APIKeyEnv,
+		Model:       e.Model,
+		ModelFast:   e.ModelFast,
+		TimeoutMs:   e.TimeoutMs,
+		EsLocal:     e.EsLocal,
+		HayKey:      e.HayKey,
+		RutaLocal:   e.RutaLocal,
+		DelEquipo:   e.DelEquipo,
+	})
 }
 
 // ── Ventanas ─────────────────────────────────────────────────────────────────
@@ -385,7 +470,10 @@ func (e *escritorio) menuBandeja() *application.Menu {
 	// (ni el menú, ni el panel, ni `codeguard version` la decían).
 	menu.Add("CodeGuard " + version).SetEnabled(false)
 	menu.AddSeparator()
-	menu.Add("Mostrar panel").OnClick(func(*application.Context) { e.mostrarPanel() })
+	// Vía InvokeAsync como todo lo que toca ventanas: el callback del menú no
+	// corre en el hilo de la UI, y mostrarPanel toca ultimoAnclaje y la
+	// ventana. Los demás caminos (clic en el orbe, bandeja, IPC) ya lo hacen.
+	menu.Add("Mostrar panel").OnClick(func(*application.Context) { application.InvokeAsync(e.mostrarPanel) })
 	menu.Add("Ocultar panel").OnClick(func(*application.Context) { e.app.Event.Emit("panel-hide", nil) })
 	menu.Add("Mostrar/ocultar burbuja").OnClick(func(*application.Context) {
 		application.InvokeAsync(func() {
@@ -482,8 +570,12 @@ func (e *escritorio) registrarEventosPanel() {
 	e.app.Event.On("panel-close", func(*application.CustomEvent) {
 		application.InvokeAsync(func() { e.panel.Hide() })
 	})
-	// Feedback del panel → tabla feedback (etapa 9).
-	e.app.Event.On("feedback", guardarFeedback)
+	// Feedback del panel → tabla feedback (etapa 9). En su propia goroutine,
+	// por el mismo motivo que pedir-historial: abre la base y escribe, y el
+	// hilo del bus de eventos no puede quedarse esperando a un disco.
+	e.app.Event.On("feedback", func(ev *application.CustomEvent) {
+		go guardarFeedback(ev)
+	})
 	// La pestaña de historial pide sus datos al abrirse. Va en su propia
 	// goroutine: abre la base y consulta, y el hilo de la UI no puede quedarse
 	// esperando a un disco.
@@ -944,6 +1036,11 @@ type contextoGrafo struct {
 func (e *escritorio) abrirGrafo(raiz string) {
 	c := e.contextoDelGrafo(raiz)
 	go func() {
+		// Store y apertura bajo el mismo candado: quien sale último de aquí
+		// deja SU grafo servido y SU apertura encolada la última, así que la
+		// ventana que sobrevive lee los datos de su propio pedido.
+		e.grafoMu.Lock()
+		defer e.grafoMu.Unlock()
 		e.prepararGrafo(c)
 		application.InvokeAsync(e.abrirVentanaExplorador)
 	}()
@@ -1437,14 +1534,17 @@ func construirPayload(req *ipc.Request, resp *ipc.Response, cfg *config.Config, 
 		// El motivo del salto llegaba hasta aquí por el pipe y moría en esta
 		// línea, que no existía: la UI se quedaba sin poder explicar por qué no
 		// se revisó y acababa conjeturándolo.
-		Reason:    resp.Reason,
-		Blocking:  resp.BlockingFindings,
-		Advisory:  resp.AdvisoryFindings,
-		CIParity:  resp.CIParity,
-		Degraded:  resp.Degraded,
-		MaxShow:   maxShow,
-		ElapsedMs: resp.ElapsedMs,
-		At:        time.Now().Format("15:04:05"),
+		Reason:   resp.Reason,
+		Blocking: resp.BlockingFindings,
+		Advisory: resp.AdvisoryFindings,
+		CIParity: resp.CIParity,
+		Degraded: resp.Degraded,
+		// El diff ya cruzó el pipe en el Request; perderlo aquí es lo que
+		// apagaba la zona activa de los archivos limpios en el explorador.
+		ChangedFiles: rutasDelDiff(req.StagedFiles),
+		MaxShow:      maxShow,
+		ElapsedMs:    resp.ElapsedMs,
+		At:           time.Now().Format("15:04:05"),
 	}
 	for _, f := range resp.Findings {
 		payload.Findings = append(payload.Findings, panelFinding{
@@ -1454,6 +1554,23 @@ func construirPayload(req *ipc.Request, resp *ipc.Response, cfg *config.Config, 
 		})
 	}
 	return payload
+}
+
+// rutasDelDiff saca las rutas de los archivos del commit y nada más. El Status y
+// el SHA256 no cruzan al payload: al overlay le basta QUÉ archivos se tocaron
+// para encender su zona, y lo demás sería equipaje muerto camino de la UI.
+//
+// Vive aquí y no en overlay.go para que ese archivo siga sin saber de ipc ni de
+// gitdiff: sólo consume el payload.
+func rutasDelDiff(files []gitdiff.ChangedFile) []string {
+	if len(files) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(files))
+	for _, f := range files {
+		out = append(out, f.Path)
+	}
+	return out
 }
 
 // actualizarOrbe pone el clima del orbe tras un análisis. El COLOR lo decide

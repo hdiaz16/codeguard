@@ -297,7 +297,11 @@ func repoConRamas(t *testing.T, ramas ...string) (repo, shaCorto, shaLargo strin
 		cmd.Dir = repo
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Skipf("git %s falló (%v): %s", strings.Join(args, " "), err, out)
+			// Fatal, no Skip: git ya se confirmó presente arriba, así que un
+			// comando de SETUP del fixture (init, config, commit) que falla no
+			// es una precondición ausente sino un fixture roto. Saltar aquí
+			// escondería esa rotura y el test dejaría de probar lo que dice.
+			t.Fatalf("git %s falló al preparar el repo de prueba (%v): %s", strings.Join(args, " "), err, out)
 		}
 		return strings.TrimSpace(string(out))
 	}

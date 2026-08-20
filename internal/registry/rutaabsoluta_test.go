@@ -43,9 +43,29 @@ func TestElRegistroNuncaSeEscribeDentroDelArbolDeTrabajo(t *testing.T) {
 			t.Chdir(trabajo)
 			t.Setenv("LOCALAPPDATA", c.localappdata)
 
-			Add(filepath.Join(trabajo, "proyecto"), "proyecto", "go")
+			// El bool de Remove NO se descarta, y esa es la mitad que faltaba:
+			// «el árbol de trabajo quedó limpio» se cumple igual de bien si Add
+			// no llegó a escribir nada, así que sin comprobar que el ciclo
+			// ocurrió de verdad este test podría pasar por no haber hecho nada
+			// —el verde silencioso de siempre—. Remove devuelve true sólo si
+			// encontró la entrada que Add escribió, o sea que exige que el
+			// registro haya funcionado, y en el fallback %TEMP%\codeguard,
+			// porque estos LOCALAPPDATA no son absolutos. Mismo uso del bool
+			// que hace registry_test.go.
+			//
+			// Se registra `trabajo` y no un `trabajo\proyecto` inventado: Load
+			// purga —y reescribe— las entradas cuyo Root no existe en disco
+			// (registry.go, «los que ya no existen se olvidan solos»), así que
+			// con una ruta ficticia el Load de en medio borraba la entrada y el
+			// bool salía false sin que nada estuviera roto. Registrar el
+			// directorio de trabajo es además lo que pasa de verdad: durante un
+			// hook, el repo que se enrola ES el CWD.
+			Add(trabajo, "proyecto", "go")
 			Load()
-			Remove(filepath.Join(trabajo, "proyecto"))
+			if !Remove(trabajo) {
+				t.Fatal("Add no dejó rastro del proyecto: el árbol de trabajo está " +
+					"limpio porque no se escribió nada, no porque se escribiera en su sitio")
+			}
 
 			entradas, err := os.ReadDir(trabajo)
 			if err != nil {

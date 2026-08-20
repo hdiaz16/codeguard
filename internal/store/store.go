@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -81,12 +82,33 @@ func RepoIDDe(repoRoot, remote string) string {
 	if strings.TrimSpace(remote) != "" {
 		return CanonicalRepoID(remote)
 	}
-	limpia := strings.TrimRight(strings.ReplaceAll(repoRoot, `\`, "/"), "/")
-	nombre := limpia
-	if i := strings.LastIndex(limpia, "/"); i >= 0 {
-		nombre = limpia[i+1:]
+	// La ruta entra ENTERA, no sólo la carpeta final. Con el nombre solo,
+	// C:\trabajo\proyecto y D:\personal\proyecto abrían el MISMO cajón y
+	// mezclaban runs, hallazgos, cachés y estadísticas. No era teórico: en la
+	// base de esta máquina los cuatro repos son locales y dos de ellos se
+	// llaman "001" y "002" —los temporales de los e2e, que nacen en un
+	// directorio distinto cada corrida—, así que sus 125 runs estaban apilados
+	// en dos cajones compartidos.
+	//
+	// La ruta no se filtra a la telemetría: CanonicalRepoID devuelve el SHA-256,
+	// no el texto. Y las mayúsculas las pliega su ToLower, que es lo correcto
+	// donde el sistema de archivos tampoco las distingue.
+	//
+	// El historial anterior de un repo sin remote queda bajo el id viejo:
+	// huérfano pero intacto, y sigue viéndose con `stats --all`. No hay
+	// migración posible y no es pereza: el id viejo sólo codificaba el basename
+	// y la ruta completa no se persiste en ninguna columna —UpsertRepo recibe
+	// remote vacío y filepath.Base—, así que nada permite reconstruir de qué
+	// ruta venía cada run; y lo que dos repos ya mezclaron no se puede
+	// desmezclar. Seguir escribiendo bajo el id viejo sí perpetuaba la mezcla.
+	realPath := repoRoot
+	if eval, err := filepath.EvalSymlinks(repoRoot); err == nil && eval != "" {
+		realPath = eval
+	} else if abs, err := filepath.Abs(repoRoot); err == nil && abs != "" {
+		realPath = abs
 	}
-	return CanonicalRepoID("local/" + nombre)
+	limpia := strings.TrimRight(filepath.ToSlash(filepath.Clean(realPath)), "/")
+	return CanonicalRepoID("local/" + limpia)
 }
 
 // busyTimeoutMS es cuánto espera una conexión a que OTRO PROCESO suelte la
@@ -143,7 +165,36 @@ func abrir(path string, busyMS int) (*Store, error) {
 func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) migrate() error {
-	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+	// BEGIN IMMEDIATE toma el lock de escritura ANTES de leer schema_migrations.
+	// Sin él, el «mira si está aplicada y si no aplícala» no es atómico ENTRE
+	// PROCESOS: si el hook y el daemon abren la base virgen a la vez, los dos
+	// leen exists=0, los dos aplican el DDL y el perdedor revienta en el INSERT
+	// por PRIMARY KEY — Open fallaba en un primer arranque que no tenía nada de
+	// malo. Los DDL no son idempotentes (ningún CREATE lleva IF NOT EXISTS), así
+	// que serializar es la salida: el segundo proceso espera su busy_timeout y
+	// se encuentra el trabajo hecho.
+	//
+	// Va sobre una conexión TOMADA del pool y no sobre s.db: database/sql
+	// devuelve la conexión al pool en cada Exec y puede resetear la sesión, lo
+	// que se llevaría por delante la transacción recién abierta.
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return fmt.Errorf("tomando el lock de migraciones: %w", err)
+	}
+	confirmado := false
+	defer func() {
+		if !confirmado {
+			// Si algo falla antes del COMMIT la base queda como estaba: ninguna
+			// migración a medias queda registrada como aplicada.
+			_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		}
+	}()
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return err
 	}
@@ -160,7 +211,7 @@ func (s *Store) migrate() error {
 	sort.Strings(names)
 	for _, name := range names {
 		var exists int
-		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, name).Scan(&exists); err != nil {
+		if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, name).Scan(&exists); err != nil {
 			return err
 		}
 		if exists > 0 {
@@ -170,22 +221,17 @@ func (s *Store) migrate() error {
 		if err != nil {
 			return err
 		}
-		tx, err := s.db.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(string(ddl)); err != nil {
-			_ = tx.Rollback() // el error de la migración ya va en el return
+		if _, err := conn.ExecContext(ctx, string(ddl)); err != nil {
 			return fmt.Errorf("migración %s: %w", name, err)
 		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, name, nowISO()); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
+		if _, err := conn.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, name, nowISO()); err != nil {
 			return err
 		}
 	}
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return err
+	}
+	confirmado = true
 	return nil
 }
 

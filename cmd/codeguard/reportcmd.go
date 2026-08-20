@@ -71,7 +71,15 @@ func reportCmd() *cobra.Command {
 
 			// hallazgos previos (para saber cuáles se resolvieron) y las
 			// discrepancias anotadas, que sobreviven a la regeneración
-			previos := leerFingerprintsPrevios(filepath.Join(repoRoot, filepath.FromSlash(reportFile)))
+			previos, err := leerFingerprintsPrevios(filepath.Join(repoRoot, filepath.FromSlash(reportFile)))
+			if err != nil {
+				// El informe anterior no se pudo leer entero: sin sus
+				// fingerprints no se puede decir qué se resolvió, así que esta
+				// corrida no declara RESUELTO nada (fail-closed) y lo avisa.
+				// No se aborta el comando: el informe se reescribe entero más
+				// abajo, así que la próxima corrida ya parte de un archivo sano.
+				fmt.Printf("  ⚠️  no se pudo leer el informe anterior (%v): esta corrida no marcará resueltos\n", err)
+			}
 			discrepancias := leerDiscrepanciasPrevias(filepath.Join(repoRoot, filepath.FromSlash(reportFile)))
 
 			rutas, err := gitdiff.Rastreados(repoRoot)
@@ -104,7 +112,14 @@ func reportCmd() *cobra.Command {
 			// ENCONTRÓ, y hasta ahora no existía ninguna superficie donde un
 			// humano pudiera revisarlos: quedaban como fingerprints en
 			// baseline.txt, hallados pero invisibles.
-			supr := baseline.Load(repoRoot)
+			// Una baseline ilegible NO se degrada aquí: el informe la aplica él
+			// mismo para separar bloqueantes de deuda, y con una baseline
+			// parcial presentaría deuda aceptada como bloqueante — el informe
+			// mentiría en las dos direcciones a la vez. Se falla y se dice.
+			supr, err := baseline.Load(repoRoot)
+			if err != nil {
+				return err
+			}
 
 			res, err := pipeline.Run(context.Background(), pipeline.Options{
 				Config:   cfg,
@@ -244,14 +259,17 @@ func leerDiscrepanciasPrevias(path string) string {
 	return cuerpo
 }
 
-func leerFingerprintsPrevios(path string) map[string]string {
+func leerFingerprintsPrevios(path string) (map[string]string, error) {
 	out := map[string]string{}
 	f, err := os.Open(path)
 	if err != nil {
-		return out
+		return out, nil // sin informe anterior no hay "previos": no es un error
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
+	// Mismo motivo que en baseline.Load: el buffer de 64 KB convertía una
+	// línea larga en un EOF falso y el mapa salía a medias sin ruido.
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var ultimoTitulo string
 	for sc.Scan() {
 		line := sc.Text()
@@ -263,7 +281,12 @@ func leerFingerprintsPrevios(path string) map[string]string {
 			out[m[1]] = ultimoTitulo
 		}
 	}
-	return out
+	if err := sc.Err(); err != nil {
+		// Un mapa leído a medias no se entrega como si estuviera completo:
+		// el llamador decide (hoy: no declarar resueltos y avisar).
+		return nil, fmt.Errorf("informe anterior truncado: %w", err)
+	}
+	return out, nil
 }
 
 // calcularResueltos decide qué se puede declarar resuelto y qué no.
@@ -455,10 +478,10 @@ func escribirHallazgo(b *strings.Builder, n int, f finding.Finding) {
 	// porque en Markdown un encabezado tiene que empezar la línea.
 	fmt.Fprintf(b, "**Qué detectó:** %s\n\n", mensajeDeHallazgo(f.Message))
 	if f.Why != "" {
-		fmt.Fprintf(b, "**Por qué importa:** %s\n\n", f.Why)
+		fmt.Fprintf(b, "**Por qué importa:** %s\n\n", mensajeDeHallazgo(f.Why))
 	}
 	if f.FixHint != "" {
-		fmt.Fprintf(b, "**Cómo resolverlo:** %s\n\n", f.FixHint)
+		fmt.Fprintf(b, "**Cómo resolverlo:** %s\n\n", mensajeDeHallazgo(f.FixHint))
 	}
 	fmt.Fprintf(b, "**Archivo:** `%s` · **línea:** %d\n\n", f.File, f.Line)
 }

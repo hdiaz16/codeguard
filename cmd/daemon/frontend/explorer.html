@@ -7,7 +7,7 @@
   :root {
     --d0:#1a1c20; --d1:#25272c; --d2:#2e3138; --d3:#383c44;
     --ink:#eaf3f0; --ink-2:#a7b3b0; --ink-3:#78847f;
-    --fn:#6fdcb4; --method:#e5b54a; --query:#e08a72; --hot:#e4604b;
+    --fn:#6fdcb4; --method:#e5b54a; --class:#b49ae0; --query:#e08a72; --hot:#e4604b;
   }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--d0); color:var(--ink);
@@ -41,6 +41,7 @@
   .chip.on { color:var(--d0); font-weight:650; }
   .chip[data-k=func].on   { background:var(--fn); }
   .chip[data-k=method].on { background:var(--method); }
+  .chip[data-k=class].on  { background:var(--class); }
   .chip[data-k=query].on  { background:var(--query); }
   .projs { display:flex; gap:5px; flex-wrap:wrap; margin:0 0 11px; }
   .projs .p {
@@ -137,6 +138,7 @@
   <div class="chips" id="kinds">
     <span class="chip on" data-k="func">funciones</span>
     <span class="chip on" data-k="method">métodos</span>
+    <span class="chip on" data-k="class">clases</span>
     <span class="chip on" data-k="query">consultas</span>
   </div>
 
@@ -230,7 +232,7 @@ try {
   throw err;
 }
 
-const COLORS = { func:"#6fdcb4", method:"#e5b54a", query:"#e08a72" };
+const COLORS = { func:"#6fdcb4", method:"#e5b54a", class:"#b49ae0", query:"#e08a72" };
 const DIM = "#2b343c";
 
 // grados y adyacencia
@@ -252,7 +254,7 @@ const gData = {
 };
 
 const byId = new Map(gData.nodes.map(n => [n.id, n]));
-const state = { kinds:new Set(["func","method","query"]), minDeg:0, query:"", selected:null, onlyIssues:false };
+const state = { kinds:new Set(["func","method","class","query"]), minDeg:0, query:"", selected:null, onlyIssues:false };
 
 // ── overlay del análisis: hallazgos y zona tocada sobre el grafo ────────────
 const OV = DATA.overlay || null;

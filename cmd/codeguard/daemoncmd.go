@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os/signal"
 	"syscall"
 	"time"
@@ -35,21 +37,39 @@ func daemonStopCmd() *cobra.Command {
 		Short:  "Pide al daemon que termine limpiamente (para el desinstalador)",
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Si el pipe no contesta, no hay daemon: nada que apagar.
+			// Sólo «el pipe NO EXISTE» prueba que no hay daemon: exit 0
+			// legítimo, apagar lo apagado no es un error. Un error ambiguo
+			// —timeout, pipe ocupado, permisos— con el pipe existente significa
+			// que el daemon PODRÍA seguir vivo: declararlo apagado (exit 0)
+			// haría que el desinstalador NO cayera al taskkill y dejara un
+			// daemon vivo suelto. Ante la duda, exit 1: el desinstalador cae
+			// al taskkill de siempre, que es el camino seguro.
 			if _, err := ipc.Call(&ipc.Request{Command: "apagar", DeadlineMs: 2000}, 2*time.Second); err != nil {
-				fmt.Println("el daemon no está corriendo")
-				return nil
+				if errors.Is(err, fs.ErrNotExist) {
+					fmt.Println("el daemon no está corriendo")
+					return nil
+				}
+				return fmt.Errorf("no se pudo confirmar el estado del daemon (puede seguir vivo): %w", err)
 			}
 			// El ack llega ANTES de que el proceso muera (el apagado va por el
 			// hilo de la UI), así que se espera a que el pipe deje de contestar.
 			for plazo := time.Now().Add(5 * time.Second); time.Now().Before(plazo); {
 				time.Sleep(250 * time.Millisecond)
-				if _, err := ipc.Call(&ipc.Request{Command: "ping", DeadlineMs: 500}, 500*time.Millisecond); err != nil {
+				_, err := ipc.Call(&ipc.Request{Command: "ping", DeadlineMs: 500}, 500*time.Millisecond)
+				if err == nil {
+					continue
+				}
+				// Aquí el error esperado es «el pipe ya no existe», que es la
+				// prueba de que el daemon murió. Un error ambiguo (timeout,
+				// pipe ocupado un instante) no prueba nada: declararlo apagado
+				// sería la misma mentira de arriba, así que se sigue esperando
+				// hasta el plazo.
+				if errors.Is(err, fs.ErrNotExist) {
 					fmt.Println("daemon apagado")
 					return nil
 				}
 			}
-			return fmt.Errorf("el daemon sigue vivo tras pedirle el apagado")
+			return fmt.Errorf("el daemon sigue vivo tras pedirle el apagado (o no se pudo confirmar su muerte)")
 		},
 	}
 }

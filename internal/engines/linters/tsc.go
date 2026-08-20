@@ -152,7 +152,15 @@ func correrProyecto(ctx context.Context, repoRoot, dir string) ([]finding.Findin
 		lineNo, _ := strconv.Atoi(m[2])
 		// tsc reporta relativo a SU proyecto; el hallazgo viaja relativo al repo.
 		file := filepath.ToSlash(m[1])
-		if dir != "." && !path.IsAbs(file) {
+		// esAbsolutaJS y no path.IsAbs: path.IsAbs sólo mira el '/' inicial, así
+		// que una ruta absoluta de Windows —"C:/repo/src/foo.ts", que tsc emite
+		// según el tsconfig o cuando el archivo cae fuera del rootDir— pasaba por
+		// relativa y el Join producía "frontend/C:/repo/src/foo.ts": un hallazgo
+		// que apunta a un archivo inexistente, imposible de localizar y con la
+		// huella calculada sobre una ruta basura. La función reconoce las dos
+		// formas (C:/… y /…) sin preguntarle al SO, y ya la usan eslint.go y
+		// java.go — que pide expresamente reutilizarla en vez de hacer otra copia.
+		if dir != "." && !esAbsolutaJS(file) {
 			file = path.Join(dir, file)
 		}
 		f := finding.Finding{

@@ -79,7 +79,10 @@ func TestUnProcesoRealNoVeLaApiKey(t *testing.T) {
 
 	cmd := exec.Command("cmd", "/c", "set")
 	cmd.Env = Entorno("PYTHONUTF8=1")
-	salida, _ := Correr(context.Background(), cmd, MaxSalida)
+	salida, err := Correr(context.Background(), cmd, MaxSalida)
+	if err != nil {
+		t.Fatalf("falló la ejecución de cmd.exe: %v", err)
+	}
 	visto := string(salida.Combinada())
 
 	if strings.Contains(visto, "clave-secreta-de-prueba") {

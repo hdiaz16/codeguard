@@ -20,6 +20,7 @@ package pipeline_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,8 +105,18 @@ func levantarModelo(t *testing.T, archivo string, linea int) *modeloFalso {
 		archivo, linea, mensajeCritico, archivo, linea, mensajeAviso)
 
 	m.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cuerpo := make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(cuerpo)
+		// ReadAll y no un Read suelto: un único Read puede devolver menos bytes
+		// de los pedidos, y registrar un cuerpo truncado haría que el arnés
+		// juzgara una petición que no es la que el cliente mandó — el aserto de
+		// que la clave viaja redactada pasaría en falso si la clave quedó en el
+		// trozo no leído. El error de lectura tampoco se traga: un cuerpo a
+		// medias dado por bueno es justo el "parece que se miró" que este arnés
+		// existe para cazar. Errorf y no Fatalf porque esto corre en la goroutine
+		// del servidor, donde FailNow no es legal.
+		cuerpo, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("no se pudo leer el cuerpo de la petición al modelo: %v", err)
+		}
 		m.registrar(string(cuerpo))
 
 		w.Header().Set("Content-Type", "text/event-stream")

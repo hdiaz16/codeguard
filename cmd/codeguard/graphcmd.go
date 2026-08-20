@@ -138,10 +138,23 @@ func graphCmd() *cobra.Command {
 			fmt.Fprintf(&b, "# Grafo de dependencias\n\n")
 			fmt.Fprintf(&b, "Extraído del código real — modo: %s. Regenerar: `%s`\n\n", mode, regen)
 			b.WriteString("```mermaid\nflowchart LR\n")
+			// IDs por nombre, no derivados del nombre: sanitizar los caracteres
+			// no alfanuméricos fusionaba nodos distintos ("foo/bar" y "foo-bar"
+			// daban el mismo n_foo_bar) y el grafo mentía sin avisar. Como
+			// sorted es determinista, los IDs también lo son al regenerar.
+			ids := map[string]string{}
+			idDe := func(nombre string) string {
+				if id, ok := ids[nombre]; ok {
+					return id
+				}
+				id := fmt.Sprintf("n_%d", len(ids))
+				ids[nombre] = id
+				return id
+			}
 			for _, e := range sorted {
 				parts := strings.SplitN(e, "|", 2)
 				fmt.Fprintf(&b, "    %s[\"%s\"] --> %s[\"%s\"]\n",
-					nodeID(parts[0]), parts[0], nodeID(parts[1]), parts[1])
+					idDe(parts[0]), parts[0], idDe(parts[1]), parts[1])
 			}
 			b.WriteString("```\n")
 			if truncated > 0 {
@@ -201,6 +214,12 @@ func goEdges(repoRoot, dir string) (map[string]bool, error) {
 			module = strings.TrimSpace(strings.TrimPrefix(line, "module "))
 			break
 		}
+	}
+	// Sin nombre de módulo no hay filtro posible: el HasPrefix de abajo no
+	// reconoce ninguna dependencia como interna y el módulo entero desaparece
+	// del grafo con un "no encontré dependencias" que parece un repo limpio.
+	if module == "" {
+		return nil, fmt.Errorf("no pude leer el nombre del módulo en %s", filepath.Join(moduloDir, "go.mod"))
 	}
 	c := exec.Command("go", "list", "-f", "{{.ImportPath}}: {{range .Imports}}{{.}} {{end}}", "./...")
 	c.Dir = moduloDir
@@ -275,17 +294,37 @@ func tsEdges(repoRoot string) (map[string]bool, error) {
 			} else {
 				target = path.Clean(path.Join(path.Dir(rel), m[1]))
 			}
-			toPkg := shorten(path.Dir(target))
-			// si el import apunta a un índice de carpeta, la carpeta es el destino
-			if !strings.Contains(path.Base(target), ".") {
-				toPkg = shorten(target)
-			}
+			toPkg := destinoTS(repoRoot, target)
 			if fromPkg != toPkg && fromPkg != "" && toPkg != "" && toPkg != "." {
 				edges[fromPkg+"|"+toPkg] = true
 			}
 		}
 	}
 	return edges, nil
+}
+
+// destinoTS resuelve el import en disco, como hace el propio compilador de TS,
+// en vez de adivinar por la sintaxis: los imports TS/JS casi nunca llevan
+// extensión, así que "./utils" (que es utils.ts) se tomaba por la CARPETA
+// utils y el grafo mezclaba nodos de archivo con nodos de carpeta.
+func destinoTS(repoRoot, target string) string {
+	// import con extensión explícita que existe tal cual: es un archivo
+	if st, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(target))); err == nil && !st.IsDir() {
+		return shorten(path.Dir(target))
+	}
+	// sin extensión: primero el archivo (utils.ts), que es el caso común
+	for _, ext := range []string{".ts", ".tsx", ".js", ".jsx"} {
+		if st, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(target+ext))); err == nil && !st.IsDir() {
+			return shorten(path.Dir(target))
+		}
+	}
+	// y sólo después la carpeta con índice (utils/index.ts): ahí sí es carpeta
+	if dirExistsIn(repoRoot, target) {
+		return shorten(target)
+	}
+	// No resolvible (archivo sin rastrear, .mjs/.cjs/.json): se asume archivo,
+	// que es el caso común, en vez de carpeta como se hacía antes.
+	return shorten(path.Dir(target))
 }
 
 // shorten agrupa a máximo 3 niveles para que el grafo respire.
@@ -297,10 +336,6 @@ func shorten(p string) string {
 	}
 	return strings.Join(parts, "/")
 }
-
-var idClean = regexp.MustCompile(`[^a-zA-Z0-9]`)
-
-func nodeID(s string) string { return "n_" + idClean.ReplaceAllString(s, "_") }
 
 func dirExistsIn(root, rel string) bool {
 	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))

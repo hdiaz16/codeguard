@@ -1,4 +1,4 @@
-﻿# =============================================================================
+# =============================================================================
 # CodeGuard - desinstalador
 # Quita el agente de esta maquina: binarios, motores, arranque, PATH y datos.
 # NO toca los repos: para desenrolar un repo usa -Repos con sus rutas.
@@ -71,32 +71,34 @@ Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -Confirm:$false -ErrorAction SilentlyContinue }
 Ok "detenido"
 
-# La entrada de "Aplicaciones instaladas" que deja CodeGuard-Setup.exe (Inno).
-# Este script y el Setup son dos caminos de instalacion que no se conocian:
-# desinstalar por aqui dejaba la entrada fantasma en el panel de Windows
-# apuntando a una version vieja, y ejecutar aquel unins000.exe despues podia
-# comerse una instalacion nueva hecha por script. Se quita la entrada y sus
-# archivos; los archivos reales los borra este script pieza a pieza mas abajo.
-Step "Quitando el registro del instalador grafico (si existe)"
-Get-ChildItem "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall" -ErrorAction SilentlyContinue |
-    Where-Object { (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName -like "CodeGuard*" } |
-    ForEach-Object { Remove-Item $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue }
-foreach ($f in @("unins000.dat", "unins000.exe")) {
+# Limpieza de instalador grafico legacy (solo archivos, sin tocar registro)
+Step "Limpiando archivos de instalacion"
+foreach ($f in @("unins000.dat", "unins000.exe", "engines.ps1", "instalar-motores.ps1", "motores.json")) {
     $p = Join-Path $Root $f
     if (Test-Path $p) { Remove-Item -Force $p -ErrorAction SilentlyContinue }
 }
-Ok "sin entradas duplicadas en Apps instaladas"
+Ok "archivos del instalador removidos"
 
-Step "Quitando el arranque con la sesion"
+Step "Quitando el arranque con la sesion (carpeta Inicio)"
+$startupLnk = Join-Path ([Environment]::GetFolderPath("Startup")) "CodeGuard.lnk"
+if (Test-Path $startupLnk) {
+    Remove-Item -Force $startupLnk -ErrorAction SilentlyContinue
+    Ok "acceso directo de Inicio eliminado"
+}
+# Limpieza preventiva de residuo legacy en registro de versiones previas
 Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CodeGuard" -ErrorAction SilentlyContinue
-Ok "clave Run eliminada"
 
-Step "Limpiando el PATH de usuario"
-$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-if ($userPath) {
-    $limpio = ($userPath -split ';' | Where-Object { $_ -and $_ -notlike "*\CodeGuard\bin*" -and $_ -notlike "*\CodeGuard\engines*" }) -join ';'
-    [Environment]::SetEnvironmentVariable("PATH", $limpio, "User")
-    Ok "entradas de CodeGuard removidas"
+Step "Limpiando snippet de perfiles de PowerShell"
+$perfiles = @($PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost) | Select-Object -Unique
+foreach ($p in $perfiles) {
+    if ($p -and (Test-Path $p)) {
+        $c = Get-Content $p -Raw
+        if ($c -match '# >>> CodeGuard >>>') {
+            $c = $c -replace '(?s)\r?\n?# >>> CodeGuard >>>.*?# <<< CodeGuard <<<\r?\n?', "`n"
+            Set-Content -Path $p -Value $c.Trim() -Encoding UTF8
+            Ok "snippet removido de $p"
+        }
+    }
 }
 
 # CUIDADO: en Windows los nombres de carpeta no distinguen mayusculas, asi que
@@ -106,11 +108,22 @@ if ($userPath) {
 # script dijera que los conservaba. Por eso aqui se borra lo instalado pieza a
 # pieza y nunca la carpeta completa.
 Step "Borrando binarios y motores"
-foreach ($sub in @("bin", "engines", "rulepacks")) {
+# descargas\ es el cache de zips que crea engines.ps1 para reanudar instalaciones,
+# y semgrep\ el que el motor genera al correr: los dos son restos de la
+# instalacion —se regeneran solos—, NO datos del usuario, asi que se borran con o
+# sin -Datos. Dejarlos tenia dos efectos, y el segundo es el que importa: la
+# carpeta raiz nunca quedaba vacia (el paso final de borrarla era letra muerta) y
+# la instalacion siguiente arrancaba sobre restos de la anterior.
+foreach ($sub in @("bin", "engines", "rulepacks", "descargas", "semgrep")) {
     $p = Join-Path $Root $sub
     if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
 }
-Ok "$Root\{bin, engines, rulepacks}"
+Ok "$Root\{bin, engines, rulepacks, descargas, semgrep}"
+# Los motores de Python (semgrep, squawk, ruff, mypy) los instala pip a nivel de
+# USUARIO, fuera de $Root, y quedan fuera del alcance a proposito: pueden estar
+# ahi porque el usuario los usa para otra cosa, y borrarlos a ciegas seria
+# destructivo. Se dice en voz alta en vez de callarlo.
+Write-Host "    (los paquetes pip semgrep/squawk/ruff/mypy NO se desinstalan: son paquetes de usuario. 'pip uninstall' si no los quieres)" -ForegroundColor Yellow
 
 if ($Datos) {
     Step "Borrando datos locales (BD, log, registro de proyectos, config del modelo)"

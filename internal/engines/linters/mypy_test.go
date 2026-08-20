@@ -24,15 +24,15 @@ import (
 // raizMypy es el cwd real desde el que se capturó la salida. Hace falta para
 // comprobar la conversión de rutas: con --show-absolute-path mypy reporta
 // ABSOLUTO.
-const raizMypy = `C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\toy-mypy`
+const raizMypy = `C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\toy-mypy`
 
 // mypy 2.3.0: `mypy --no-error-summary --show-absolute-path --output=json
 // src/malo.py` con un mypy.ini que pone disallow_untyped_defs. Código 1.
 // JSON Lines: una línea por diagnóstico, NO un array.
-const salidaMypy = `{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\malo.py", "line": 5, "column": 17, "end_line": 5, "end_column": 27, "message": "Incompatible types in assignment (expression has type \"int\", variable has type \"str\")", "hint": null, "code": "assignment", "severity": "error"}
-{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\malo.py", "line": 6, "column": 5, "end_line": 6, "end_column": 10, "message": "Argument 1 to \"suma\" has incompatible type \"str\"; expected \"int\"", "hint": null, "code": "arg-type", "severity": "error"}
-{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\malo.py", "line": 9, "column": 0, "end_line": 10, "end_column": 12, "message": "Function is missing a type annotation", "hint": null, "code": "no-untyped-def", "severity": "error"}
-{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\malo.py", "line": 14, "column": 11, "end_line": 14, "end_column": 18, "message": "Incompatible return value type (got \"str\", expected \"int\")", "hint": null, "code": "return-value", "severity": "error"}`
+const salidaMypy = `{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\malo.py", "line": 5, "column": 17, "end_line": 5, "end_column": 27, "message": "Incompatible types in assignment (expression has type \"int\", variable has type \"str\")", "hint": null, "code": "assignment", "severity": "error"}
+{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\malo.py", "line": 6, "column": 5, "end_line": 6, "end_column": 10, "message": "Argument 1 to \"suma\" has incompatible type \"str\"; expected \"int\"", "hint": null, "code": "arg-type", "severity": "error"}
+{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\malo.py", "line": 9, "column": 0, "end_line": 10, "end_column": 12, "message": "Function is missing a type annotation", "hint": null, "code": "no-untyped-def", "severity": "error"}
+{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\malo.py", "line": 14, "column": 11, "end_line": 14, "end_column": 18, "message": "Incompatible return value type (got \"str\", expected \"int\")", "hint": null, "code": "return-value", "severity": "error"}`
 
 // La misma corrida sobre src/importa.py, que importa un paquete sin stubs
 // (yaml) y otro inexistente. Trae las cuatro cosas que dan forma al motor:
@@ -43,20 +43,20 @@ const salidaMypy = `{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Tem
 //     propio porque no correlaciona con ningún error
 //   - no-any-return: la CONSECUENCIA del import roto, que demuestra por qué los
 //     errores de import no se pueden callar — el análisis se vuelve hueco
-const salidaMypyImports = `{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\importa.py", "line": 1, "column": 0, "end_line": 1, "end_column": 1, "message": "Library stubs not installed for \"yaml\"", "hint": "Hint: \"python3 -m pip install types-PyYAML\"\n(or run \"mypy --install-types\" to install all missing stub packages)\nSee https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports", "code": "import-untyped", "severity": "error"}
-{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\importa.py", "line": 2, "column": 0, "end_line": 2, "end_column": 1, "message": "Cannot find implementation or library stub for module named \"paquete_que_no_existe\"", "hint": null, "code": "import-not-found", "severity": "error"}
-{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\importa.py", "line": 7, "column": 16, "end_line": 7, "end_column": 21, "message": "Revealed type is \"Any\"", "hint": null, "code": "misc", "severity": "note"}
-{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\importa.py", "line": 8, "column": 4, "end_line": 8, "end_column": 46, "message": "Returning Any from function declared to return \"int\"", "hint": null, "code": "no-any-return", "severity": "error"}`
+const salidaMypyImports = `{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\importa.py", "line": 1, "column": 0, "end_line": 1, "end_column": 1, "message": "Library stubs not installed for \"yaml\"", "hint": "Hint: \"python3 -m pip install types-PyYAML\"\n(or run \"mypy --install-types\" to install all missing stub packages)\nSee https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports", "code": "import-untyped", "severity": "error"}
+{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\importa.py", "line": 2, "column": 0, "end_line": 2, "end_column": 1, "message": "Cannot find implementation or library stub for module named \"paquete_que_no_existe\"", "hint": null, "code": "import-not-found", "severity": "error"}
+{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\importa.py", "line": 7, "column": 16, "end_line": 7, "end_column": 21, "message": "Revealed type is \"Any\"", "hint": null, "code": "misc", "severity": "note"}
+{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy\\src\\importa.py", "line": 8, "column": 4, "end_line": 8, "end_column": 46, "message": "Returning Any from function declared to return \"int\"", "hint": null, "code": "no-any-return", "severity": "error"}`
 
 // Un .py con `def roto(:`. mypy sale con código 2 —para él es un blocker, no
 // puede seguir— pero ESCRIBE su diagnóstico igual, con código de error y línea
 // buenos. Es el payload que prohíbe tratar el 2 como degradación a secas.
-const salidaMypySintaxis = `{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy-dup\\a\\sintaxis.py", "line": 1, "column": 10, "end_line": 1, "end_column": 11, "message": "Invalid syntax", "hint": null, "code": "syntax", "severity": "error"}`
+const salidaMypySintaxis = `{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy-dup\\a\\sintaxis.py", "line": 1, "column": 10, "end_line": 1, "end_column": 11, "message": "Invalid syntax", "hint": null, "code": "syntax", "severity": "error"}`
 
 // El otro código 2: dos archivos tocados con el mismo nombre de módulo y sin
 // __init__.py. line -1, code null y stderr VACÍO — el diagnóstico va en stdout
 // como cualquier otro. mypy no comprobó nada.
-const salidaMypyDuplicado = `{"file": "C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy-dup\\b\\util.py", "line": -1, "column": -1, "end_line": -1, "end_column": 0, "message": "Duplicate module named \"util\" (also at \"a\\util.py\")", "hint": "See https://mypy.readthedocs.io/en/stable/running_mypy.html#mapping-file-paths-to-modules for more info\nCommon resolutions include:\n    a) using ` + "`--exclude`" + ` to avoid checking one of them,\n    b) adding ` + "`__init__.py`" + ` somewhere,\n    c) using ` + "`--explicit-package-bases`" + ` or adjusting MYPYPATH", "code": null, "severity": "error"}`
+const salidaMypyDuplicado = `{"file": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-mypy-dup\\b\\util.py", "line": -1, "column": -1, "end_line": -1, "end_column": 0, "message": "Duplicate module named \"util\" (also at \"a\\util.py\")", "hint": "See https://mypy.readthedocs.io/en/stable/running_mypy.html#mapping-file-paths-to-modules for more info\nCommon resolutions include:\n    a) using ` + "`--exclude`" + ` to avoid checking one of them,\n    b) adding ` + "`__init__.py`" + ` somewhere,\n    c) using ` + "`--explicit-package-bases`" + ` or adjusting MYPYPATH", "code": null, "severity": "error"}`
 
 // ── parseo ──────────────────────────────────────────────────────────────────
 
@@ -233,6 +233,9 @@ func TestHallazgosMypyNoDuplicaElDirectorioDelProyecto(t *testing.T) {
 	fs, err := hallazgosMypy(raizRepo, "toy-mypy", []byte(salidaMypy))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(fs) == 0 {
+		t.Fatal("esperaba hallazgos de mypy, obtuvo 0")
 	}
 	if fs[0].File != "toy-mypy/src/malo.py" {
 		t.Fatalf("File = %q, esperaba toy-mypy/src/malo.py", fs[0].File)
@@ -635,9 +638,11 @@ func prepararProyectoMypy(t *testing.T) string {
 	t.Helper()
 	base := os.Getenv("CODEGUARD_TOY_PY")
 	if base == "" {
-		base = filepath.Join(os.TempDir(), "claude",
-			"C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal",
-			"21867769-946e-43a7-a2eb-657c824f2799", "scratchpad")
+		// t.TempDir da un directorio real, único y anónimo que se limpia solo:
+		// antes esto era una ruta hardcodeada con un nombre de usuario y un GUID
+		// de sesión reales, y además frágil (el prefijo que devuelve mypy tenía
+		// que coincidir con esa ruta a mano para que la relativización cuadrara).
+		base = t.TempDir()
 	}
 	root := filepath.Join(base, "toy-mypy")
 	if err := os.MkdirAll(root, 0o755); err != nil {

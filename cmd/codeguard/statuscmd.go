@@ -232,7 +232,7 @@ func revisarRepo(root string) int {
 	}
 
 	// 7. baseline
-	if n := len(baseline.Load(root)); n > 0 {
+	if n := len(baseline.LoadOrWarn(root)); n > 0 {
 		checks["baseline"] = chequeo{true, fmt.Sprintf("%d hallazgos preexistentes suprimidos", n)}
 	} else if cfg != nil {
 		checks["baseline"] = chequeo{false, "sin baseline → lo viejo bloqueará; corre `codeguard baseline`"}

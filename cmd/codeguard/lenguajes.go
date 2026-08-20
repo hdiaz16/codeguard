@@ -69,7 +69,7 @@ func DetectarLenguajes(rutas []string) []string {
 		// suelta: es el mismo criterio con el que `paths.migrations` decide qué
 		// vigila la compuerta de datos, así que un repo cuyo esquema SÍ se está
 		// analizando no puede salir en el panel diciendo que no hace SQL.
-		if migraciones.Parece(p) {
+		if migraciones.Parece(low) {
 			declarados["sql"] = true
 		}
 	}

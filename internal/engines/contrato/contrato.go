@@ -73,6 +73,16 @@ var (
 // por nombre: actualizar la herramienta cambia la clave y se vuelve a preguntar,
 // que es lo que hay que hacer. La memoria importa porque el daemon vive días.
 func Identidad(ctx context.Context, p Prueba) error {
+	if p.Espera == nil {
+		// Sin Espera, la comprobación de más abajo es inalcanzable y TODA
+		// respuesta cae en «contestó algo que no reconozco»: el motor acusaría
+		// de impostora a una herramienta correcta en cada análisis, y el dev
+		// saldría a reinstalar algo que funciona. Es un defecto del motor —los
+		// que construyen Prueba{} como literal pueden olvidarlo, Version() no
+		// deja— y se dice así, señalando dónde está el fallo.
+		return fmt.Errorf("contrato: la prueba de %s no define Espera, así que no hay "+
+			"forma de reconocer su respuesta; es un defecto del motor, no de la herramienta", p.Motor)
+	}
 	ruta, err := exec.LookPath(p.Bin)
 	if err != nil {
 		// Que el binario no esté es un asunto distinto —"falta el motor", no
@@ -80,10 +90,17 @@ func Identidad(ctx context.Context, p Prueba) error {
 		// Por eso el error viaja entero en vez de envolverse en un mensaje.
 		return err
 	}
-	clave := ruta + "\x00" + strings.Join(p.Args, " ")
-	if info, err := os.Stat(ruta); err == nil {
-		clave = fmt.Sprintf("%s\x00%d\x00%d", clave, info.Size(), info.ModTime().UnixNano())
+	info, err := os.Stat(ruta)
+	if err != nil {
+		// Sin tamaño ni fecha la clave no puede cumplir lo que promete: cambiar
+		// cuando cambia el binario. Memorizar con una clave degradada dejaría un
+		// veredicto viejo sobreviviendo a las actualizaciones durante toda la
+		// vida del daemon, que son días. Se pregunta SIN memoria, igual que con
+		// el plazo agotado de abajo: la próxima vez se vuelve a intentar.
+		return preguntar(ctx, ruta, p)
 	}
+	clave := fmt.Sprintf("%s\x00%s\x00%d\x00%d",
+		ruta, strings.Join(p.Args, " "), info.Size(), info.ModTime().UnixNano())
 
 	memoria.Lock()
 	previa, vista := hechas[clave]

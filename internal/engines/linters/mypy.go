@@ -73,7 +73,12 @@ type proyectoPy struct {
 func (Mypy) proyectos(in engines.Input) []proyectoPy {
 	idx := map[string]*proyectoPy{}
 	for _, f := range in.Files {
-		if f.Status == "D" || !strings.EqualFold(path.Ext(f.Path), ".py") {
+		// Los .pyi disparan igual que los .py: un stub ES tipado, y la huella
+		// del módulo (claveProyectoMypy) ya los cuenta, así que la clave de caché
+		// reconocía el cambio mientras el disparador lo ignoraba — un commit que
+		// sólo tocaba stubs se iba sin que mypy corriera.
+		ext := strings.ToLower(path.Ext(f.Path))
+		if f.Status == "D" || (ext != ".py" && ext != ".pyi") {
 			continue
 		}
 		dir, ok := configMypyDe(in.RepoRoot, f.Path)
@@ -380,7 +385,10 @@ func correrMypy(ctx context.Context, repoRoot, dir string, rutas []string) ([]fi
 	// salida. --show-absolute-path: mypy reporta relativo a SU cwd, y con la
 	// ruta absoluta la conversión a relativa-al-repo sale bien también en
 	// monorepos, sin concatenar el directorio del proyecto dos veces.
-	args := append([]string{"--no-error-summary", "--show-absolute-path", "--output=json"}, rutas...)
+	// El "--" separa banderas de operandos: sin él, un archivo cuyo nombre
+	// empiece por "-" (p. ej. "--config=x.py") se leería como bandera de
+	// mypy y no como dato. argparse lo consume como fin de opciones.
+	args := append([]string{"--no-error-summary", "--show-absolute-path", "--output=json", "--"}, rutas...)
 	cmd := exec.CommandContext(ctx, "mypy", args...)
 	// El cwd es el directorio de la configuración: mypy busca su mypy.ini /
 	// setup.cfg / pyproject.toml ahí, y así aplica la del proyecto y no la de
@@ -453,30 +461,11 @@ func correrMypy(ctx context.Context, repoRoot, dir string, rutas []string) ([]fi
 		}
 		return nil, nil
 	}
-	return hallazgosMypy(raizComparable(repoRoot), dir, out)
-}
-
-// raizComparable devuelve la raíz del repo en la misma forma en la que mypy
-// escribe sus rutas, para que restarlas dé la ruta relativa de verdad.
-//
-// Hace falta por una diferencia REAL entre ecosistemas que destapó la prueba de
-// integración: Python resuelve los nombres cortos 8.3 de Windows y los
-// symlinks antes de imprimir una ruta absoluta, y Node no. Con la raíz en
-// C:\Users\HECTOR~1.BOD\… y mypy respondiendo
-// C:\Users\hector.diaz.BODESA\…, filepath.Rel no falla —lo que sería fácil de
-// detectar— sino que devuelve alegremente una cadena de nueve "..\..". El
-// hallazgo salía entonces con un File que ningún editor abre, con un
-// fingerprint que jamás casaría con la baseline y, peor, sin coincidir con
-// ningún archivo del diff: desaparecería en silencio. eslint no lo sufre y por
-// eso su misma prueba pasa.
-//
-// Si la ruta no se puede resolver (no existe, permisos) se devuelve tal cual:
-// una raíz sin resolver es lo que había antes, no una regresión.
-func raizComparable(repoRoot string) string {
-	if r, err := filepath.EvalSymlinks(repoRoot); err == nil {
-		return r
-	}
-	return repoRoot
+	// La raíz se pasa CRUDA: adivinar de antemano en qué forma (corta 8.3 o
+	// larga) escribe mypy sus rutas fue justamente lo que creó el mismatch —
+	// esta máquina devuelve la corta. La conciliación de formas vive en
+	// relTo, que canonicaliza ambos lados y sirve igual a todos los motores.
+	return hallazgosMypy(repoRoot, dir, out)
 }
 
 func hallazgosMypy(repoRoot, dir string, raw []byte) ([]finding.Finding, error) {

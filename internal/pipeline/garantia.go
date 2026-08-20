@@ -28,16 +28,34 @@ import "strings"
 // promesa del producto es «si pasa aquí, pasa allá»; sin esto era «si pasa
 // aquí, quizá allá ni miraron».
 //
-// POR QUÉ ESTA LISTA Y NO «CUALQUIER DEGRADACIÓN». Romper el job por cualquier
-// cosa que ponga algo en Degraded pondría en rojo a repos que hoy funcionan
-// bien, y un CI que se pone rojo por motivos que el equipo no puede arreglar se
-// desactiva entero en una semana. La frontera es: ¿había algo que mirar y no se
-// miró?
+// LISTA NEGRA Y NO LISTA BLANCA, y esto es un cambio. Antes se rompía el job
+// sólo si la etiqueta casaba con cuatro patrones conocidos —«rulepack-ausente:»,
+// «falta:», «:error», «:plazo»— y TODO lo demás se descartaba en silencio. Eso
+// deja el default abierto: una degradación nueva que signifique «no se miró»
+// entra por el mismo agujero que este archivo existe para cerrar, con el job en
+// verde, y nadie se enteraría hasta repetir la medición de arriba. Así que el
+// criterio se invierte: lo degradado rompe el job, y la ÚNICA exención es estar
+// nombrada abajo. El desconocido cierra, no calla.
+//
+// El coste es real y deliberado: quien añada una degradación benigna verá el job
+// en rojo hasta registrarla. Ese rojo es la señal de que hay una etiqueta sin
+// clasificar — no una avería. Y la frontera para clasificarla sigue siendo la
+// misma: ¿había algo que mirar y no se miró?
+//
+// INVENTARIO de todo lo que hoy llega a Degraded (medido recorriendo los
+// emisores, no supuesto: pipeline.go 140/259/306/308/318/324/340 y daemon.go
+// 455/533/563):
 //
 //	rulepack-ausente:…  SÍ — las reglas de la casa no se aplicaron, ninguna
 //	falta:<motor>       SÍ — el motor no está en el runner; esa capa no corrió
 //	<motor>:error       SÍ — tenía que correr, falló
 //	<motor>:plazo       SÍ — no terminó; no miró todo lo que tenía que mirar
+//	config:unreadable   SÍ — y ANTES NO ROMPÍA. El config del repo no se pudo
+//	                    leer, así que el análisis corrió con el de por defecto:
+//	                    los motores que ese repo configuraba pueden no haber
+//	                    corrido. Es «no se miró» de manual.
+//	pipeline:<err>      SÍ — y ANTES TAMPOCO. El análisis falló entero; no hay
+//	                    nada que garantizar.
 //
 //	deterministic:diff_too_large   NO — política deliberada y ANUNCIADA: el diff
 //	                               pasó del tope y se revisan sólo secretos. Es
@@ -48,6 +66,17 @@ import "strings"
 //	                               (hay migraciones fuera de paths.migrations).
 //	                               Romper el job por esto contradice la decisión
 //	                               de N011: avisar, nunca decidir por el equipo.
+//	patron-invalido:<p>            NO — un patrón de exclusión que no compila
+//	                               hace que esa ruta NO se excluya (pipeline.go
+//	                               136: «el equipo cree que esa ruta está
+//	                               excluida y no lo está»), o sea que se analiza
+//	                               MÁS de lo previsto. El error va hacia el lado
+//	                               seguro y la etiqueta existe para que el typo
+//	                               se vea, no para frenar el job.
+//	demoted:unavailable            NO — no se pudieron leer las reglas que BAJAN
+//	                               severidad, así que los hallazgos salen con la
+//	                               suya original: más estricto, no menos. No hay
+//	                               agujero de cobertura que garantizar.
 //
 // La escotilla para quien necesite otra cosa ya existe y no hay que inventar
 // ninguna: `codeguard ci --shadow` registra todo y jamás falla el job.
@@ -60,26 +89,30 @@ func SinGarantia(degraded []string) []string {
 		if esPoliticaDeliberada(d) {
 			continue
 		}
-		if strings.HasPrefix(d, "rulepack-ausente:") ||
-			strings.HasPrefix(d, "falta:") ||
-			strings.HasSuffix(d, ":error") ||
-			strings.HasSuffix(d, ":plazo") {
-			rotas = append(rotas, d)
-		}
+		// Todo lo que no sea exención registrada es garantía rota. Una etiqueta
+		// desconocida no se descarta nunca en silencio.
+		rotas = append(rotas, d)
 	}
 	return rotas
 }
 
-// esPoliticaDeliberada nombra una por una las degradaciones que el producto
-// PRODUCE A PROPÓSITO. Se comprueban antes que los sufijos genéricos: si mañana
-// alguien inventa una etiqueta deliberada que acabe en ":error", esta lista
-// manda y el job no se rompe por una decisión de diseño.
+// esPoliticaDeliberada nombra una por una las degradaciones que NO significan
+// «no se miró»: las que el producto produce a propósito y las que se equivocan
+// hacia el lado seguro. Es la ÚNICA exención, así que quien añada una
+// degradación nueva tiene que pasar por aquí y decidir a conciencia de qué lado
+// cae — o el job se romperá, que es el default correcto.
+//
+// Sigue comprobándose antes que nada: si mañana una etiqueta deliberada acaba en
+// ":error", esta lista manda y el job no se rompe por una decisión de diseño.
 func esPoliticaDeliberada(d string) bool {
 	switch d {
 	case "deterministic:diff_too_large",
 		"daemon:offline",
-		"squawk:migracion-sin-vigilar":
+		"squawk:migracion-sin-vigilar",
+		"demoted:unavailable":
 		return true
 	}
-	return false
+	// patron-invalido: lleva el patrón pegado, así que va por prefijo y no por
+	// igualdad como los de arriba.
+	return strings.HasPrefix(d, "patron-invalido:")
 }

@@ -17,6 +17,7 @@ import (
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
 	"codeguard/internal/gitdiff"
+	"codeguard/internal/textutil"
 )
 
 // ESLint cubre el hueco de formato y estilo en TS/JS. Hasta aquí ese lado del
@@ -231,10 +232,6 @@ func (e ESLint) correrProyectoJS(ctx context.Context, repoRoot string, p proyect
 	}
 
 	// ── Aciertos de caché ──
-	// El caché está direccionado por CONTENIDO (la clave no lleva la ruta), así
-	// que dos archivos idénticos comparten entrada; al reproducir un acierto hay
-	// que reescribir la ruta y recalcular el fingerprint para el archivo de esta
-	// corrida. Mismo mecanismo que semgrep.
 	var findings []finding.Finding
 	if e.Cache != nil {
 		var claves []string
@@ -243,23 +240,7 @@ func (e ESLint) correrProyectoJS(ctx context.Context, repoRoot string, p proyect
 				claves = append(claves, o.clave)
 			}
 		}
-		aciertos := e.Cache.Leer(claves)
-		var quedan []objetivoJS
-		for _, o := range pendientes {
-			fs, ok := aciertos[o.clave]
-			if o.clave == "" || !ok {
-				quedan = append(quedan, o)
-				continue
-			}
-			for _, f := range fs {
-				if f.File != o.rel {
-					f.File = o.rel
-					f.ComputeFingerprint()
-				}
-				findings = append(findings, f)
-			}
-		}
-		pendientes = quedan
+		findings, pendientes = reproducirAciertosJS(e.Cache.Leer(claves), pendientes)
 	}
 	if len(pendientes) == 0 {
 		return findings, nil
@@ -282,6 +263,32 @@ func (e ESLint) correrProyectoJS(ctx context.Context, repoRoot string, p proyect
 		e.Cache.Guardar(cacheDeArchivosJS(nuevos, pendientes))
 	}
 	return append(findings, nuevos...), nil
+}
+
+// reproducirAciertosJS separa los objetivos servidos por caché de los que
+// quedan por analizar, y devuelve los hallazgos cacheados ya atribuidos al
+// archivo de ESTA corrida.
+//
+// El caché está direccionado por CONTENIDO (la clave no lleva la ruta), así
+// que dos archivos idénticos comparten entrada; al reproducir un acierto hay
+// que reescribir la ruta y recalcular el fingerprint, o el hallazgo saldría
+// atribuido al otro archivo. Mismo mecanismo que semgrep.
+func reproducirAciertosJS(aciertos map[string][]finding.Finding, pendientes []objetivoJS) (findings []finding.Finding, quedan []objetivoJS) {
+	for _, o := range pendientes {
+		fs, ok := aciertos[o.clave]
+		if o.clave == "" || !ok {
+			quedan = append(quedan, o)
+			continue
+		}
+		for _, f := range fs {
+			if f.File != o.rel {
+				f.File = o.rel
+				f.ComputeFingerprint()
+			}
+			findings = append(findings, f)
+		}
+	}
+	return findings, quedan
 }
 
 // claveDeArchivo compone la clave de caché de un archivo.
@@ -494,7 +501,8 @@ func truncarJS(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	// TruncarRunas evita partir una runa UTF-8 en el byte n (mojibake).
+	return textutil.TruncarRunas(s, n) + "…"
 }
 
 // ── eslint ──────────────────────────────────────────────────────────────────
@@ -849,7 +857,7 @@ func (m *mensajeBiome) UnmarshalJSON(b []byte) error {
 
 func recorteBiome(b []byte) string {
 	if len(b) > 120 {
-		return string(b[:117]) + "…"
+		return textutil.TruncarRunas(string(b), 117) + "…"
 	}
 	return string(b)
 }

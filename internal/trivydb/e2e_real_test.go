@@ -1,3 +1,5 @@
+//go:build e2ereal
+
 package trivydb
 
 // Prueba de integración contra el ghcr.io REAL. No corre en la suite normal:

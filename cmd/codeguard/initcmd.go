@@ -3,10 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,19 +45,33 @@ func initCmd() *cobra.Command {
 			// línea. `install` corre al final del enrolamiento: negarse allí
 			// dejaba una config generada sin ganchos, sin baseline y sin
 			// registrar — un repo que parece enrolado y no vigila nada.
-			if !sustituir {
-				ajeno, err := hooksPathAjeno(repoRoot)
-				if err != nil {
-					return err
-				}
-				if ajeno != nil {
-					return errors.New(ajeno.explicar("init"))
-				}
+			//
+			// El valor vigente se conserva aunque NO haya conflicto: es la única
+			// forma de devolver los ganchos a su sitio si el enrolamiento falla
+			// más abajo, porque después de `install` git config ya dice otra cosa.
+			prevHooks, err := hooksPathVigente(repoRoot)
+			if err != nil {
+				return err
+			}
+			if !sustituir && prevHooks != nil && !prevHooks.esNuestro(repoRoot) {
+				return errors.New(prevHooks.explicar("init"))
 			}
 			cfgPath := filepath.Join(repoRoot, filepath.FromSlash(config.RelPath))
-			if _, err := os.Stat(cfgPath); err == nil && !force {
+			// os.Stat tiene TRES respuestas, no dos: existe, no existe de verdad,
+			// y "no se pudo saber" (permisos, disco, red). La tercera no es
+			// ausencia: tratarla como tal haría que init regenerara y PISARA un
+			// config que quizá sí estaba, por un fallo transitorio. Ante la duda
+			// se frena y se dice por qué.
+			_, errStat := os.Stat(cfgPath)
+			switch {
+			case errStat == nil && !force:
 				return fmt.Errorf("el repo ya está enrolado (%s existe); usa --force para regenerar", config.RelPath)
+			case errStat != nil && !errors.Is(errStat, fs.ErrNotExist):
+				return fmt.Errorf("no se pudo comprobar si ya existe %s: %w", config.RelPath, errStat)
 			}
+			// Si la config ya existía (--force), un fallo más abajo NO la borra:
+			// este init pisó una del usuario y ésa no se puede reponer.
+			cfgExistia := errStat == nil
 
 			// ── detección sobre los archivos rastreados ──
 			rutas, err := gitdiff.Rastreados(repoRoot)
@@ -248,9 +264,30 @@ max_diff_lines: 2000
 			if err := instalar.RunE(cmd, nil); err != nil {
 				return err
 			}
-			fmt.Println("\ngenerando baseline (los hallazgos preexistentes no bloquearán)…")
-			if err := baselineCmd().RunE(cmd, nil); err != nil {
-				return err
+			bCmd := baselineCmd()
+			_ = bCmd.Flags().Set("si", "true")
+			if err := bCmd.RunE(cmd, nil); err != nil {
+				// La config ya está escrita y los ganchos instalados: dejarlo así es
+				// un repo A MEDIAS, y ése es el peor estado que conoce este producto
+				// — el próximo commit bloquea con TODA la deuda preexistente, y si
+				// la config se versiona sin baseline le pasa lo mismo a quien la
+				// reciba por git pull. Un enrolamiento o se completa o se deshace, y
+				// lo que este init cambió se sabe porque se miró antes de escribir.
+				errDesh := deshacerEnrolamiento(repoRoot, cfgPath, prevHooks, cfgExistia)
+				estado := "el enrolamiento se ha deshecho y el repo queda como estaba"
+				reintento := "vuelve a correr `codeguard init`"
+				if prevHooks != nil && prevHooks.esNuestro(repoRoot) {
+					// Re-init de un repo ya enrolado: los ganchos ya eran nuestros y
+					// la baseline anterior sigue intacta, porque baseline.Write es
+					// atómica y el fallo no la rozó. Nada que deshacer.
+					estado = "el repo sigue enrolado con su baseline ANTERIOR (la config sí se regeneró)"
+					reintento = "reintenta con `codeguard baseline`"
+				}
+				if errDesh != nil {
+					estado = "no pude deshacerlo del todo: " + errDesh.Error()
+				}
+				return fmt.Errorf("falló el baseline: %w\n%s. Resuelve la causa y %s.",
+					err, estado, reintento)
 			}
 			// registrar el proyecto: aparece en el panel y el explorador desde
 			// el momento del init, sin esperar al primer commit.
@@ -265,6 +302,60 @@ max_diff_lines: 2000
 	cmd.Flags().BoolVar(&sustituir, banderaSustituir, false,
 		"enrolar aunque el repo use otro gestor de ganchos (husky, lefthook…): los suyos dejan de correr")
 	return cmd
+}
+
+// deshacerEnrolamiento revierte lo que ESTE init ya escribió cuando el
+// enrolamiento falla a mitad (hoy sólo puede ser el baseline).
+//
+// Sólo se toca lo que este init cambió, y se sabe porque se miró antes de
+// escribir:
+//   - core.hooksPath vuelve al valor capturado al entrar (otro gestor, o
+//     ninguno). Si ya apuntaba a los nuestros —re-init de un repo enrolado— no se
+//     toca: esos ganchos no son de este init.
+//   - la config se borra SÓLO si no existía antes: con --force se pisó una del
+//     usuario, y borrarla destruiría trabajo que no se puede reponer.
+//   - el registro se limpia en ese mismo caso, porque un enrolamiento fallido no
+//     puede quedarse en el panel como un proyecto más.
+//
+// Los archivos de .githooks/ y la regla de .gitattributes se quedan: sin
+// core.hooksPath apuntándoles son inertes, y el reintento los reaprovecha.
+//
+// Nada se traga: cada paso que falla vuelve en el error con la orden para hacerlo
+// a mano, y el llamador lo dice en su mensaje.
+func deshacerEnrolamiento(repoRoot, cfgPath string, prevHooks *gestorDeGanchos, cfgExistia bool) error {
+	var fallos []error
+	switch {
+	case prevHooks == nil:
+		// No había ganchos antes de este init: desarmar los nuestros.
+		for _, k := range []string{"core.hooksPath", "codeguard.binpath"} {
+			if out, err := gitCmd("-C", repoRoot, "config", "--unset", k).CombinedOutput(); err != nil {
+				fallos = append(fallos, fmt.Errorf("quitar %s: %v: %s (a mano: git config --unset %s)",
+					k, err, strings.TrimSpace(string(out)), k))
+			}
+		}
+	case prevHooks.esNuestro(repoRoot):
+		// Re-init: los ganchos ya eran nuestros. Nada que deshacer.
+	default:
+		// --sustituir-hooks: devolver el mando al gestor que había. Misma lógica
+		// que comoVolver(): un valor local o de worktree se reescribe; uno global
+		// o de system vuelve solo al quitar el override local que pusimos.
+		if prevHooks.Ambito == "local" || prevHooks.Ambito == "worktree" || prevHooks.Ambito == "" {
+			if out, err := gitCmd("-C", repoRoot, "config", "core.hooksPath", prevHooks.Valor).CombinedOutput(); err != nil {
+				fallos = append(fallos, fmt.Errorf("devolver core.hooksPath a %q: %v: %s (a mano: git config core.hooksPath %s)",
+					prevHooks.Valor, err, strings.TrimSpace(string(out)), prevHooks.Valor))
+			}
+		} else if out, err := gitCmd("-C", repoRoot, "config", "--unset", "core.hooksPath").CombinedOutput(); err != nil {
+			fallos = append(fallos, fmt.Errorf("quitar el core.hooksPath local: %v: %s (a mano: git config --unset core.hooksPath)",
+				err, strings.TrimSpace(string(out))))
+		}
+	}
+	if !cfgExistia {
+		if err := os.Remove(cfgPath); err != nil {
+			fallos = append(fallos, fmt.Errorf("borrar %s: %w (bórralo a mano si no vas a reintentar)", cfgPath, err))
+		}
+		registry.Remove(repoRoot)
+	}
+	return errors.Join(fallos...)
 }
 
 // avisarAlAgente le dice al agente que acaba de entrar un repo al registro,
@@ -386,10 +477,16 @@ func leerMigraciones(repoRoot string, globs, rutas []string) (archivos, textos [
 	return archivos, textos
 }
 
+// quoteList escapa con strconv.Quote en vez de pegar comillas a mano. Hoy los
+// globs salen de rutas de git (siempre con «/») y Windows no admite `"` ni `\`
+// en un nombre, así que el YAML roto no es alcanzable — pero serializar a mano
+// lo vuelve alcanzable en cuanto cambie el origen de los globs, y este archivo
+// se versiona: un config.yaml inválido rompe el enrolamiento del equipo entero.
+// La salida de Quote (\", \\, \xNN, \uNNNN) es un escalar YAML válido.
 func quoteList(items []string) string {
 	quoted := make([]string, len(items))
 	for i, s := range items {
-		quoted[i] = `"` + s + `"`
+		quoted[i] = strconv.Quote(s)
 	}
 	return strings.Join(quoted, ", ")
 }

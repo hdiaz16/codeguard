@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,11 +116,24 @@ func (e JavaLint) Run(ctx context.Context, in engines.Input) ([]finding.Finding,
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		fs, err := e.correrProyectoPMD(ctx, in.RepoRoot, p, home, version)
+		hallazgos, err := e.correrProyectoPMD(ctx, in.RepoRoot, p, home, version)
 		if err != nil {
-			return nil, err
+			// La cancelación y la falta de la herramienta son del motor ENTERO,
+			// no de este proyecto: ahí abortar sigue siendo lo correcto, porque
+			// el orquestador se apoya en esos centinelas (ctx.Err() y el
+			// fs.ErrNotExist que se traduce a "falta: pmd").
+			if ctx.Err() != nil || errors.Is(err, fs.ErrNotExist) || errors.Is(err, exec.ErrNotFound) {
+				return nil, err
+			}
+			// Un fallo acotado a ESTE proyecto no puede tirar los hallazgos de
+			// los demás ni los ya acumulados: es el mismo criterio que unas
+			// líneas más abajo se aplica archivo por archivo con
+			// ProcessingErrors. Queda constancia bloqueante de que el proyecto
+			// no se revisó, y se sigue con el resto.
+			out = append(out, falloProyectoPMD(p.dir, err))
+			continue
 		}
-		out = append(out, fs...)
+		out = append(out, hallazgos...)
 	}
 	return out, nil
 }
@@ -182,8 +196,20 @@ func (e JavaLint) correrProyectoPMD(ctx context.Context, repoRoot string, p proy
 	// fallo de ejecución, así que se perdería el lote entero.
 	var vivos []objetivoJava
 	for _, o := range pendientes {
-		if st, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(o.rel))); err == nil && !st.IsDir() {
+		st, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(o.rel)))
+		switch {
+		case err == nil && !st.IsDir():
 			vivos = append(vivos, o)
+		case err == nil, errors.Is(err, fs.ErrNotExist):
+			// Directorio, o desapareció de verdad entre el diff y el análisis:
+			// se quita, como siempre.
+		default:
+			// El archivo está en el diff pero no se puede consultar (permisos,
+			// disco, red). Quitarlo callando sería perder cobertura sin avisar
+			// —la enfermedad de siempre—, y pasárselo a PMD mataría el lote
+			// entero con un "código 1" que no diría la causa real. Se falla
+			// nombrando el archivo: el error es información, no silencio.
+			return nil, fmt.Errorf("no se pudo consultar %s antes de analizarlo: %w", o.rel, err)
 		}
 	}
 	if len(vivos) == 0 {
@@ -236,7 +262,17 @@ func correrPMD(ctx context.Context, repoRoot, absProyecto, dirProyecto, home str
 	}
 	var exitErr *exec.ExitError
 	if runErr != nil && !errors.As(runErr, &exitErr) {
-		// No arrancó: java ausente, permisos, plazo agotado. %w conserva el
+		// Cancelación y plazo agotado NO son «no arrancó»: el motor está sano,
+		// la corrida se interrumpió. Reportarlos como «falta: pmd» mandaría a
+		// reinstalar lo que funciona — el consejo equivocado en el panel. La
+		// capa sigue degradada (PMD no corrió); lo que cambia es el porqué.
+		switch {
+		case errors.Is(runErr, context.Canceled):
+			return nil, fmt.Errorf("pmd cancelado en %s (la operación se abortó; no es un fallo del motor): %w", dirProyecto, runErr)
+		case errors.Is(runErr, context.DeadlineExceeded):
+			return nil, fmt.Errorf("pmd no terminó a tiempo en %s (está lento, no roto: antivirus, disco de red o un lote enorme): %w", dirProyecto, runErr)
+		}
+		// No arrancó: java ausente, permisos. %w conserva el
 		// centinela para que el orquestador diga "falta: pmd" y no "pmd:error".
 		return nil, fmt.Errorf("pmd no corrió en %s: %w", dirProyecto, runErr)
 	}
@@ -374,6 +410,31 @@ func hallazgosPMD(repoRoot, dirProyecto string, raw []byte) ([]finding.Finding, 
 		findings = append(findings, f)
 	}
 	return findings, nil
+}
+
+// falloProyectoPMD convierte el fallo acotado de UN proyecto en un hallazgo
+// bloqueante: ese proyecto quedó sin revisar y el informe tiene que decirlo, ni
+// salir en verde ni tirar los proyectos que sí se analizaron. Es el equivalente
+// por proyecto del processing-error por archivo.
+func falloProyectoPMD(dir string, err error) finding.Finding {
+	msg := jRecortar(colapsar(err.Error()), 300)
+	f := finding.Finding{
+		Engine:      "pmd",
+		RuleKey:     "project-error",
+		Pillar:      finding.Quality,
+		Severity:    finding.Error,
+		Blocking:    true,
+		File:        dir,
+		Line:        1,
+		Message:     "PMD no pudo analizar este proyecto: " + msg,
+		Why:         "Este proyecto quedó SIN revisar; los demás sí se analizaron y sus hallazgos son válidos.",
+		FixHint:     "Corrige la causa que señala el mensaje y el proyecto vuelve a entrar en el análisis.",
+		Verified:    true,
+		Source:      finding.Deterministic,
+		LineContent: "project-error " + msg,
+	}
+	f.ComputeFingerprint()
+	return f
 }
 
 // severidadPMD traduce la prioridad de PMD a la política §7.

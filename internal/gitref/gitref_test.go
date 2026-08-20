@@ -44,7 +44,7 @@ func TestAceptaLasReferenciasDeVerdad(t *testing.T) {
 // compuesto: así nadie lo "arregla" sin darse cuenta y deja la prueba
 // comprobando lo mismo dos veces.
 func TestAceptaAcentoDescompuesto(t *testing.T) {
-	const nfd = "corrección-h009"
+	const nfd = "correccio\u0301n-h009"
 	if err := Validar("head", nfd); err != nil {
 		t.Errorf("la forma descompuesta de %q se rechazó: %v", nfd, err)
 	}

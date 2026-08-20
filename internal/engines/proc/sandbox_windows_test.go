@@ -77,7 +77,14 @@ func TestDentroDelSandboxTodaviaSePuedeLeerElDisco(t *testing.T) {
 	defer cancel()
 
 	dir := t.TempDir()
-	salida, err := Correr(ctx, exec.CommandContext(ctx, "cmd", "/c", "dir", dir), MaxSalida)
+	// La ruta NO viaja por la línea de comandos: cmd /c recompone los argumentos
+	// y, si el nombre de usuario lleva espacios (t.TempDir cuelga de
+	// C:\Users\<usuario>\...), partiría la ruta y dir listaría otra cosa o
+	// fallaría por quoting — no por el sandbox, que es lo que se mide. Se fija
+	// como directorio de trabajo, que CreateProcess pasa por un canal aparte.
+	comando := exec.CommandContext(ctx, "cmd", "/c", "dir")
+	comando.Dir = dir
+	salida, err := Correr(ctx, comando, MaxSalida)
 	if err != nil {
 		t.Fatalf("dentro del sandbox no se pudo listar un directorio: %v", err)
 	}
@@ -107,8 +114,24 @@ func TestElJobObjectMataALosNietos(t *testing.T) {
 
 	// `start /b` desliga al nieto del hijo: cmd sale enseguida y el nieto queda
 	// suelto. Sin job object, nadie lo vuelve a mirar.
-	orden := "start /b cmd /c \"ping -n 6 127.0.0.1 >nul & echo vivo > \"" + marca + "\"\""
-	if _, err := Correr(ctx, exec.CommandContext(ctx, "cmd", "/c", orden), MaxSalida); err != nil {
+	//
+	// Las marcas se nombran RELATIVAS y el cwd se fija abajo: así ninguna ruta
+	// absoluta atraviesa la línea de comandos, donde el quoting anidado de cmd /c
+	// es frágil —con un nombre de usuario con espacios la partía, y el test
+	// habría fallado por comillas y no por la contención, que es lo que mide—.
+	// Se probó también sacar el nieto a un .bat y hacía que las tuberías
+	// siguieran abiertas hasta agotar el WaitDelay de Correr.
+	// Se auditó añadir un segundo testigo (una marca de «arranqué» antes del
+	// ping) para distinguir «el job lo mató» de «nunca llegó a ejecutarse», y SE
+	// MIDIÓ que no sirve: el job cierra tan rápido que el nieto no alcanza a
+	// escribir ni esa primera línea, así que la ausencia de marca es justo lo que
+	// prueba la contención. Cualquier testigo entra en carrera con lo que se está
+	// midiendo. Sacar el nieto a un .bat también se probó: dejaba las tuberías
+	// abiertas hasta agotar el WaitDelay de Correr.
+	orden := "start /b cmd /c \"ping -n 6 127.0.0.1 >nul & echo vivo > el-nieto-sobrevivio.txt\""
+	comando := exec.CommandContext(ctx, "cmd", "/c", orden)
+	comando.Dir = dir
+	if _, err := Correr(ctx, comando, MaxSalida); err != nil {
 		t.Fatalf("no se pudo lanzar el árbol de prueba: %v", err)
 	}
 

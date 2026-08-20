@@ -60,7 +60,10 @@ func TestSoloCuentaLaHuellaQueEscribioElGenerador(t *testing.T) {
 	if err := os.WriteFile(ruta, []byte(md), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	leidas := leerFingerprintsPrevios(ruta)
+	leidas, err := leerFingerprintsPrevios(ruta)
+	if err != nil {
+		t.Fatalf("no se pudo leer el informe de prueba: %v", err)
+	}
 
 	// Los dos formatos REALES siguen leyéndose. Si esto se rompe, un hallazgo
 	// corregido deja de aparecer en «Resueltos» y el informe pierde la mitad

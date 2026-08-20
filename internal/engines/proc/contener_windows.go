@@ -62,10 +62,12 @@ var (
 	procCreateRestrictedToken = advapi32.NewProc("CreateRestrictedToken")
 
 	// El token se crea una vez y se reutiliza: derivarlo en cada commit
-	// costaba una llamada al sistema por motor sin ganar nada.
-	tokenUnaVez sync.Once
-	tokenCache  windows.Token
-	tokenErr    error
+	// costaba una llamada al sistema por motor sin ganar nada. Pero sólo se
+	// cachea el éxito —ver tokenRestringido—, así que es un candado y no un
+	// sync.Once: aquel fijaba también el fallo, y con él el sandbox quedaba
+	// apagado hasta reiniciar el daemon.
+	tokenMu    sync.Mutex
+	tokenCache windows.Token
 )
 
 // creationNoWindow (CREATE_NO_WINDOW) impide que un proceso de consola abra
@@ -118,35 +120,42 @@ func SandboxActivo() (bool, error) {
 // hace falta para recorrer directorios. No toca los SIDs ni los permisos de
 // archivos: el motor sigue pudiendo leer el repositorio, que es su trabajo.
 func tokenRestringido() (windows.Token, error) {
-	tokenUnaVez.Do(func() {
-		var actual windows.Token
-		err := windows.OpenProcessToken(
-			windows.CurrentProcess(),
-			windows.TOKEN_DUPLICATE|windows.TOKEN_ASSIGN_PRIMARY|windows.TOKEN_QUERY,
-			&actual,
-		)
-		if err != nil {
-			tokenErr = fmt.Errorf("no se pudo abrir el token del proceso: %w", err)
-			return
-		}
-		defer actual.Close()
+	// Sólo se cachea el ÉXITO. Con sync.Once, un fallo transitorio de
+	// OpenProcessToken o CreateRestrictedToken quedaba fijado de por vida y el
+	// sandbox se apagaba hasta reiniciar el daemon, que vive días. El candado
+	// además serializa los reintentos, para no derivar dos tokens si dos motores
+	// arrancan a la vez justo después de un fallo.
+	tokenMu.Lock()
+	defer tokenMu.Unlock()
+	if tokenCache != 0 {
+		return tokenCache, nil
+	}
 
-		var restringido windows.Token
-		r, _, e := procCreateRestrictedToken.Call(
-			uintptr(actual),
-			uintptr(disableMaxPrivilege),
-			0, 0, // SIDs a deshabilitar
-			0, 0, // privilegios a borrar (los cubre DISABLE_MAX_PRIVILEGE)
-			0, 0, // SIDs restrictivos: ninguno, romperían el acceso al repo
-			uintptr(unsafe.Pointer(&restringido)),
-		)
-		if r == 0 {
-			tokenErr = fmt.Errorf("CreateRestrictedToken falló: %w", e)
-			return
-		}
-		tokenCache = restringido
-	})
-	return tokenCache, tokenErr
+	var actual windows.Token
+	err := windows.OpenProcessToken(
+		windows.CurrentProcess(),
+		windows.TOKEN_DUPLICATE|windows.TOKEN_ASSIGN_PRIMARY|windows.TOKEN_QUERY,
+		&actual,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("no se pudo abrir el token del proceso: %w", err)
+	}
+	defer actual.Close()
+
+	var restringido windows.Token
+	r, _, e := procCreateRestrictedToken.Call(
+		uintptr(actual),
+		uintptr(disableMaxPrivilege),
+		0, 0, // SIDs a deshabilitar
+		0, 0, // privilegios a borrar (los cubre DISABLE_MAX_PRIVILEGE)
+		0, 0, // SIDs restrictivos: ninguno, romperían el acceso al repo
+		uintptr(unsafe.Pointer(&restringido)),
+	)
+	if r == 0 {
+		return 0, fmt.Errorf("CreateRestrictedToken falló: %w", e)
+	}
+	tokenCache = restringido
+	return tokenCache, nil
 }
 
 // contener mete el proceso recién arrancado en un Job Object con límites.
@@ -211,6 +220,12 @@ func contener(c *exec.Cmd) (func(), error) {
 		uint32(unsafe.Sizeof(ui)),
 	)
 
+	// Se auditó reusar el handle que os/exec ya mantiene abierto —sería inmune a
+	// que Windows recicle el PID entre el Start y este OpenProcess— y NO se puede:
+	// os.Process guarda ese handle en un campo privado y no expone forma de
+	// leerlo. Así que se abre por PID, que es la única vía de la biblioteca
+	// estándar; la ventana es del mismo orden que la que el comentario de arriba
+	// ya documenta entre Start y la asignación.
 	h, err := windows.OpenProcess(
 		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE,
 		false,

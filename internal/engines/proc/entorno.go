@@ -3,6 +3,7 @@ package proc
 import (
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -88,14 +89,36 @@ func RefrescarPATH() {
 		return
 	}
 	actual := os.Getenv("PATH")
-	// Se antepone lo del registro sin tirar lo heredado: así se suma lo que el
-	// instalador añadió sin perder lo propio de esta sesión (un venv activo,
-	// una cadena de herramientas puesta a mano).
 	if actual == "" {
 		_ = os.Setenv("PATH", vigente)
 		return
 	}
-	_ = os.Setenv("PATH", vigente+string(os.PathListSeparator)+actual)
+	_ = os.Setenv("PATH", fusionarPATH(actual, vigente))
+}
+
+// fusionarPATH une el PATH actual con el vigente anteponiendo los nuevos segmentos
+// y deduplicando sin repeticiones preservando el orden de prioridad de forma idempotente.
+func fusionarPATH(actual, vigente string) string {
+	var partes []string
+	vistos := map[string]bool{}
+
+	agregar := func(lista string) {
+		for _, seg := range filepath.SplitList(lista) {
+			seg = strings.TrimSpace(seg)
+			if seg == "" {
+				continue
+			}
+			norm := strings.ToLower(filepath.Clean(seg))
+			if !vistos[norm] {
+				vistos[norm] = true
+				partes = append(partes, seg)
+			}
+		}
+	}
+
+	agregar(vigente)
+	agregar(actual)
+	return strings.Join(partes, string(os.PathListSeparator))
 }
 
 // RefrescarVariables trae del registro las variables de usuario que ESTE

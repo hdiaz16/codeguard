@@ -155,8 +155,26 @@ func preCommitCmd() *cobra.Command {
 // correr, o que no se pueda saber QUÉ tiene que revisar. Las dos son
 // fail-closed, porque las dos acaban en un commit sin revisar.
 func runPreCommit() error {
+	// El recover de abajo aplica P4 tal cual está escrito: la compuerta de
+	// secretos es fail-closed y todo lo demás no. Un pánico ANTES de que la
+	// etapa 1 emita su veredicto es "la compuerta no pudo correr" —lo mismo
+	// que un error de gitdiff.Staged o que glengine.ErrUnavailable, unas
+	// líneas más abajo— y se trata igual: se cierra. Un pánico DESPUÉS
+	// (etapa 2, telemetría, trailer, avisos) sigue la política de siempre:
+	// el hook no falla por sí mismo y el commit pasa. La marca se pone en el
+	// punto exacto en que la etapa 1 terminó de decidir.
+	compuertaSecretosCumplida := false
 	defer func() {
 		if r := recover(); r != nil {
+			if !compuertaSecretosCumplida {
+				// El pánico se imprime: cerrar no es callar. Y se nombra
+				// --no-verify porque aquí el usuario se queda atascado,
+				// igual que en las otras ramas fail-closed de este archivo.
+				fmt.Fprintln(os.Stderr, "CodeGuard  BLOQUEADO: error interno antes de que la compuerta de secretos diera su veredicto (fail-closed):", r)
+				fmt.Fprintln(os.Stderr, "CodeGuard  si necesitas commitear ya, `git commit --no-verify` salta la revisión — "+
+					"queda constancia de que este commit no se revisó")
+				os.Exit(1)
+			}
 			fmt.Fprintln(os.Stderr, "CodeGuard  error interno (se permite el commit):", r)
 			os.Exit(0)
 		}
@@ -264,12 +282,43 @@ func runPreCommit() error {
 	secretFindings, err := secretsEng.Run(ctxSecretos, engines.Input{RepoRoot: repoRoot, Files: diff.Files})
 	cancelSecretos()
 	if err != nil {
+		// CUALQUIER error de la etapa 1 es fail-closed, no sólo ErrUnavailable
+		// (§14: la promesa no es «busqué», es «nada sale sin escanear»). Un
+		// error aquí significa "no pude escanear", y un commit que sale sin
+		// escanear es exactamente lo que esta compuerta existe para impedir.
+		// Antes el resto de errores —el timeout de plazoSecretos incluido,
+		// cuyo comentario promete BLOQUEO unas líneas arriba— caía en un
+		// "error no fatal" y el commit pasaba con secretFindings vacío: la
+		// única compuerta bloqueante del producto se volvía una nota
+		// informativa justo cuando no había podido mirar.
 		if errors.Is(err, glengine.ErrUnavailable) {
 			progress("BLOQUEADO: la compuerta de secretos no pudo correr (fail-closed)")
 			progress("repara con: codeguard repair   —   detalle: " + err.Error())
 			os.Exit(1)
 		}
-		progress("secretos ✗ (error no fatal: " + err.Error() + ")")
+		if errors.Is(err, context.DeadlineExceeded) {
+			// El plazo se agotó: gitleaks no terminó y no se sabe qué había
+			// en lo preparado. Los sospechosos son los mismos que documenta
+			// MEDIDO el comentario de hookDeadline en máquinas corporativas:
+			// el EDR escaneando el binario de gitleaks, un antivirus a medio
+			// actualizar, un disco de red. Suele ser transitorio, así que el
+			// primer remedio es reintentar — no `codeguard repair`, que aquí
+			// no arregla nada.
+			progress("BLOQUEADO: la compuerta de secretos no terminó dentro de su plazo (fail-closed)")
+			progress("suele ser el EDR/antivirus escaneando el binario de gitleaks o un disco lento: " +
+				"reintenta el commit; si se repite, revisa las exclusiones del antivirus")
+			progress("si necesitas commitear ya, `git commit --no-verify` salta la revisión — " +
+				"queda constancia de que este commit no se revisó")
+			os.Exit(1)
+		}
+		// Cualquier otro fallo de ejecución (salida ilegible, gitleaks roto,
+		// disco): el mismo criterio — no se escaneó, no sale. Aplanado: el
+		// texto del error arrastra salida del motor, que no es nuestra.
+		progress("BLOQUEADO: la compuerta de secretos falló al ejecutarse (fail-closed)")
+		progress("detalle: " + unaSolaLinea(err.Error()))
+		progress("si necesitas commitear ya, `git commit --no-verify` salta la revisión — " +
+			"queda constancia de que este commit no se revisó")
+		os.Exit(1)
 	}
 	if len(secretFindings) > 0 {
 		progress(fmt.Sprintf("secretos ✗  BLOQUEADO: %d secreto(s) en el diff — NADA salió a la red", len(secretFindings)))
@@ -343,6 +392,14 @@ func runPreCommit() error {
 		os.Exit(1)
 	}
 	progress("secretos ✓")
+	// A partir de aquí la compuerta de secretos ya cumplió su trabajo: corrió
+	// y emitió su veredicto. La marca NO se pone antes de la rama de bloqueo
+	// a propósito: un pánico dentro de ella (persistRun, ipc.Call) caería en
+	// el recover con hallazgos de secretos ya detectados, y salir por
+	// "se permite el commit" dejaría pasar una credencial frenada. Ahí la
+	// salida prudente también es cerrar. La rama de bloqueo normal sale por
+	// os.Exit, que no pasa por ningún defer, así que esto no le cambia nada.
+	compuertaSecretosCumplida = true
 
 	// ── Run id para el trailer (prepare-commit-msg) ──
 	runID := store.NewULID()
@@ -408,26 +465,36 @@ func runPreCommit() error {
 		}
 	} else {
 		degraded = append(degraded, "daemon:offline")
-		ctx, cancel := context.WithTimeout(context.Background(), hookDeadline)
-		defer cancel()
-		cache, cerrarCache := abrirCache(repoRoot, cfg)
-		defer cerrarCache()
-		// La ruta local no pasa por el daemon, así que el aviso de reglas
-		// vendoreadas se da aquí: si no, por este camino se aplicarían las
-		// reglas del repo sin que nadie lo dijera.
-		if daemon.RulepackEsDelRepo(repoRoot, cfg.Rulepack) {
-			progress("aviso: las reglas salieron del rulepack vendoreado en este repo " +
-				"(rulepacks/" + unaSolaLinea(cfg.Rulepack) + "), no del instalado")
-		}
-		res, err = pipeline.Run(ctx, pipeline.Options{
-			Config:       cfg,
-			Diff:         diff,
-			Secrets:      nil, // ya corrió arriba
-			Engines:      daemon.Engines(cfg, false, cache),
-			Rulepack:     daemon.RulepackDir(repoRoot, cfg.Rulepack),
-			Timeout:      hookDeadline,
-			Suppressions: baseline.Load(repoRoot),
-		})
+		// La corrida local va dentro de una función porque el camino de bloqueo
+		// de más abajo sale por os.Exit, que NO ejecuta ningún defer: con cancel
+		// y cerrarCache diferidos aquí, un commit BLOQUEADO se llevaba el
+		// proceso sin cerrar el caché, y se perdía justo la escritura que deja
+		// el caché tibio para que el commit siguiente sí revise lo que esta
+		// corrida no alcanzó — que es lo que el mensaje de las capas lentas
+		// promete. Dentro de la función los defers corren al volver, antes de
+		// cualquier os.Exit, y también si pipeline.Run entra en pánico.
+		res, err = func() (*pipeline.Result, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), hookDeadline)
+			defer cancel()
+			cache, cerrarCache := abrirCache(repoRoot, cfg)
+			defer cerrarCache()
+			// La ruta local no pasa por el daemon, así que el aviso de reglas
+			// vendoreadas se da aquí: si no, por este camino se aplicarían las
+			// reglas del repo sin que nadie lo dijera.
+			if daemon.RulepackEsDelRepo(repoRoot, cfg.Rulepack) {
+				progress("aviso: las reglas salieron del rulepack vendoreado en este repo " +
+					"(rulepacks/" + unaSolaLinea(cfg.Rulepack) + "), no del instalado")
+			}
+			return pipeline.Run(ctx, pipeline.Options{
+				Config:       cfg,
+				Diff:         diff,
+				Secrets:      nil, // ya corrió arriba
+				Engines:      daemon.Engines(cfg, false, cache),
+				Rulepack:     daemon.RulepackDir(repoRoot, cfg.Rulepack),
+				Timeout:      hookDeadline,
+				Suppressions: baseline.LoadOrWarn(repoRoot),
+			})
+		}()
 		if err != nil {
 			progress("análisis local falló (se permite el commit): " + err.Error())
 			return nil
@@ -437,7 +504,19 @@ func runPreCommit() error {
 
 	// ── Veredicto en la terminal (§12.1.1) ──
 	gates := "formato/lint/tipos/reglas/migraciones"
-	if res.BlockingFindings > 0 {
+	// El veredicto lo decide el pipeline y viaja en res.Verdict: un Block por
+	// AVERÍA de la compuerta de secretos (timeout, ErrUnavailable, ...) llega
+	// con BlockingFindings == 0, porque no hay hallazgos que contar — hay una
+	// compuerta que no llegó a mirar. Decidir sólo por el contador dejaba ese
+	// Block caer en el `else` final: "✓ listo — commit permitido" y salida 0
+	// sobre un Result que decía Block. El fail-closed se construía en
+	// pipeline.Run y se perdía al cruzar el pipe. La fuente de verdad es el
+	// Verdict; el contador sólo cubre el caso con hallazgos.
+	//
+	// Va ANTES de Skipped/Degraded/✓ a propósito: un Block con capas
+	// degradadas tiene que bloquear, no anunciarse como PARCIAL.
+	bloquea := res.BlockingFindings > 0 || res.Verdict == pipeline.Block
+	if bloquea {
 		progress(gates + " ✗")
 		for _, f := range res.Findings {
 			if f.Blocking {
@@ -449,8 +528,21 @@ func runPreCommit() error {
 					f.RuleKey, f.File, f.Line, mensajeDeHallazgo(f.Message)))
 			}
 		}
-		progress(fmt.Sprintf("BLOQUEADO: %d problema(s) que el CI también rechazaría  (%.1f s)",
-			res.BlockingFindings, time.Since(start).Seconds()))
+		if res.BlockingFindings > 0 {
+			progress(fmt.Sprintf("BLOQUEADO: %d problema(s) que el CI también rechazaría  (%.1f s)",
+				res.BlockingFindings, time.Since(start).Seconds()))
+		} else {
+			// Block sin hallazgos: es la avería de la compuerta, y quien la
+			// explica es res.Reason ("la compuerta de secretos no terminó
+			// dentro de su plazo (fail-closed): ..."), no "0 problema(s)".
+			// Aplanado: el Reason arrastra el error del motor, que no es
+			// texto nuestro. Y se nombra --no-verify como en toda rama
+			// fail-closed de este archivo: aquí el usuario se queda atascado.
+			progress("BLOQUEADO: " + unaSolaLinea(res.Reason) +
+				fmt.Sprintf("  (%.1f s)", time.Since(start).Seconds()))
+			progress("si necesitas commitear ya, `git commit --no-verify` salta la revisión — " +
+				"queda constancia de que este commit no se revisó")
+		}
 	} else if res.Verdict == pipeline.Skipped {
 		// Un análisis OMITIDO no es una revisión, ni completa ni parcial: el
 		// embudo se paró en la etapa 0 y ninguna compuerta llegó a mirar nada.
@@ -576,7 +668,12 @@ func runPreCommit() error {
 	if err := persistRun(repoRoot, cfg, res, len(diff.Files), false, runID); err != nil {
 		fmt.Fprintln(os.Stderr, "CodeGuard  aviso: no se pudo registrar el run:", err)
 	}
-	if res.BlockingFindings > 0 {
+	// La MISMA condición que el mensaje de arriba: si el veredicto es Block
+	// —con hallazgos o por avería de la compuerta— el commit no sale. Con
+	// dos condiciones escritas a los dos lados, la primera que se editara
+	// distinta dejaría la terminal diciendo BLOQUEADO mientras el hook
+	// devolvía 0 (o al revés), y el dev sin forma de saber cuál miente.
+	if bloquea {
 		// Sin run id pendiente: si el dev reintenta con --no-verify,
 		// prepare-commit-msg (que --no-verify NO salta) no debe pegar un
 		// trailer viejo que camufle el bypass.

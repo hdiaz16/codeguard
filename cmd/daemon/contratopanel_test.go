@@ -57,13 +57,14 @@ func TestElPanelNoLeeCamposQueGoNoManda(t *testing.T) {
 	capa := primerElemento(t, payload["capas"])
 
 	for _, c := range []struct {
-		nombre string
-		re     *regexp.Regexp
-		campos map[string]any
+		nombre   string
+		variable string
+		re       *regexp.Regexp
+		campos   map[string]any
 	}{
-		{"payload", regexp.MustCompile(`\bp\.([a-z_][a-z_0-9]*)`), payload},
-		{"proyecto de la lista", regexp.MustCompile(`\br\.([a-z_][a-z_0-9]*)`), repo},
-		{"capa", regexp.MustCompile(`\bc\.([a-z_][a-z_0-9]*)`), capa},
+		{"payload", "p", regexp.MustCompile(`\bp\.([a-z_][a-z_0-9]*)`), payload},
+		{"proyecto de la lista", "r", regexp.MustCompile(`\br\.([a-z_][a-z_0-9]*)`), repo},
+		{"capa", "c", regexp.MustCompile(`\bc\.([a-z_][a-z_0-9]*)`), capa},
 	} {
 		vistos := map[string]bool{}
 		for _, m := range c.re.FindAllStringSubmatch(string(html), -1) {
@@ -76,7 +77,7 @@ func TestElPanelNoLeeCamposQueGoNoManda(t *testing.T) {
 				t.Errorf("index.html lee %s.%s y ese campo NO viaja en el JSON del %s.\n"+
 					"  El panel pintaría «undefined» o se quedaría mudo, que es peor.\n"+
 					"  campos que sí manda Go: %v",
-					string(c.nombre[0]), campo, c.nombre, claves(c.campos))
+					c.variable, campo, c.nombre, claves(c.campos))
 			}
 		}
 		if len(vistos) == 0 {

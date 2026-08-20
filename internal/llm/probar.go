@@ -35,8 +35,31 @@ func Probar(cfg config.LLM, clavePegada string) (string, error) {
 	}
 	c := NewConClave(cfg, clave)
 	if c == nil {
-		prov, _ := BuscarProveedor(cfg.Provider)
-		if prov.NecesitaKey || cfg.Provider == "" {
+		// El constructor también devuelve nil cuando se NIEGA a armar un
+		// cliente que mandaría la clave por HTTP en claro. Es el caso que el
+		// usuario está configurando AHORA MISMO en esta pantalla, así que se
+		// distingue del genérico "configuración incompleta" y se dice cómo
+		// arreglarlo; sin esta rama, el cierre de seguridad se disfrazaría
+		// de "revisa el endpoint", que manda a buscar donde no está el fallo.
+		// Mismo orden que NewConClave, que mira el nombre del proveedor
+		// (llm.go:181) ANTES del endpoint inseguro (llm.go:199): si el
+		// diagnóstico los invirtiera, con las dos causas presentes nombraría la
+		// que no cerró el cliente. Y el bool se descartaba, así que un typo caía
+		// en el Proveedor de relleno —NecesitaKey en false— y el usuario recibía
+		// "revisa el endpoint": el mismo síntoma de mandar a buscar donde no
+		// está el fallo, con otro disfraz.
+		prov, conocido := BuscarProveedor(cfg.Provider)
+		if cfg.Provider != "" && !conocido {
+			return "", fmt.Errorf("proveedor desconocido: %q. Revisa el nombre en la "+
+				"configuración, o deja el proveedor vacío si el endpoint va escrito a mano",
+				cfg.Provider)
+		}
+		if clave != "" && !endpointSeguroParaClave(cfg.Endpoint) {
+			return "", fmt.Errorf("el endpoint %q no es HTTPS ni apunta a esta máquina: "+
+				"no se envía la clave por HTTP en claro. Usa https:// o un modelo local "+
+				"(Ollama, LM Studio)", cfg.Endpoint)
+		}
+		if (conocido && prov.NecesitaKey) || (cfg.Provider == "" && requiereKey(cfg, prov)) {
 			nombre := cfg.APIKeyEnv
 			if nombre == "" {
 				nombre = "(ninguna variable configurada)"

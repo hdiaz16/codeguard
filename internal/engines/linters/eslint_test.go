@@ -21,26 +21,26 @@ import (
 
 // raizESLint es el cwd real desde el que se capturó la salida de eslint. Hace
 // falta para comprobar la conversión de rutas: eslint reporta ABSOLUTO.
-const raizESLint = `C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\toy-eslint`
+const raizESLint = `C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\toy-eslint`
 
 // eslint 10.8.1: `eslint --format json src/malo.js`, código de salida 1.
 // Trae los cuatro casos que importan: error con `fix` (auto-corregible), aviso
 // con `suggestions` (que --fix NO aplica), error con suggestions y error pelado.
-const salidaESLint10 = `[{"filePath":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint\\src\\malo.js","messages":[{"ruleId":"prefer-const","severity":2,"message":"'noReasignada' is never reassigned. Use 'const' instead.","line":1,"column":5,"messageId":"useConst","endLine":1,"endColumn":17,"fix":{"range":[0,21],"text":"const noReasignada = 1;"}},{"ruleId":"no-unused-vars","severity":1,"message":"'sinUsar' is assigned a value but never used.","line":4,"column":9,"messageId":"unusedVar","endLine":4,"endColumn":16,"suggestions":[{"messageId":"removeVar","data":{"varName":"sinUsar"},"fix":{"range":[58,77],"text":""},"desc":"Remove unused variable 'sinUsar'."}]},{"ruleId":"eqeqeq","severity":2,"message":"Expected '===' and instead saw '=='.","line":5,"column":9,"messageId":"unexpected","endLine":5,"endColumn":11,"suggestions":[{"messageId":"replaceOperator","data":{"expectedOperator":"===","actualOperator":"=="},"fix":{"range":[86,88],"text":"==="},"desc":"Use '===' instead of '=='."}]},{"ruleId":"no-undef","severity":2,"message":"'desconocida' is not defined.","line":8,"column":10,"messageId":"undef","endLine":8,"endColumn":21}],"suppressedMessages":[],"errorCount":3,"fatalErrorCount":0,"warningCount":1,"fixableErrorCount":1,"fixableWarningCount":0,"source":"let noReasignada = 1;\n\nexport function comparar(a, b) {\n  const sinUsar = 42;\n  if (a == b) {\n    return noReasignada;\n  }\n  return desconocida;\n}\n","usedDeprecatedRules":[]}]`
+const salidaESLint10 = `[{"filePath":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint\\src\\malo.js","messages":[{"ruleId":"prefer-const","severity":2,"message":"'noReasignada' is never reassigned. Use 'const' instead.","line":1,"column":5,"messageId":"useConst","endLine":1,"endColumn":17,"fix":{"range":[0,21],"text":"const noReasignada = 1;"}},{"ruleId":"no-unused-vars","severity":1,"message":"'sinUsar' is assigned a value but never used.","line":4,"column":9,"messageId":"unusedVar","endLine":4,"endColumn":16,"suggestions":[{"messageId":"removeVar","data":{"varName":"sinUsar"},"fix":{"range":[58,77],"text":""},"desc":"Remove unused variable 'sinUsar'."}]},{"ruleId":"eqeqeq","severity":2,"message":"Expected '===' and instead saw '=='.","line":5,"column":9,"messageId":"unexpected","endLine":5,"endColumn":11,"suggestions":[{"messageId":"replaceOperator","data":{"expectedOperator":"===","actualOperator":"=="},"fix":{"range":[86,88],"text":"==="},"desc":"Use '===' instead of '=='."}]},{"ruleId":"no-undef","severity":2,"message":"'desconocida' is not defined.","line":8,"column":10,"messageId":"undef","endLine":8,"endColumn":21}],"suppressedMessages":[],"errorCount":3,"fatalErrorCount":0,"warningCount":1,"fixableErrorCount":1,"fixableWarningCount":0,"source":"let noReasignada = 1;\n\nexport function comparar(a, b) {\n  const sinUsar = 42;\n  if (a == b) {\n    return noReasignada;\n  }\n  return desconocida;\n}\n","usedDeprecatedRules":[]}]`
 
 // eslint 10.8.1 sobre `export const roto = (`: error de parseo. ruleId es null
 // y fatal true — de ahí que el campo sea puntero.
-const salidaESLintParseo = `[{"filePath":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint\\src\\roto.js","messages":[{"ruleId":null,"fatal":true,"severity":2,"message":"Parsing error: Unexpected token","line":2,"column":1}],"suppressedMessages":[],"errorCount":1,"fatalErrorCount":1,"warningCount":0,"fixableErrorCount":0,"fixableWarningCount":0,"source":"export const roto = (\n","usedDeprecatedRules":[]}]`
+const salidaESLintParseo = `[{"filePath":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint\\src\\roto.js","messages":[{"ruleId":null,"fatal":true,"severity":2,"message":"Parsing error: Unexpected token","line":2,"column":1}],"suppressedMessages":[],"errorCount":1,"fatalErrorCount":1,"warningCount":0,"fixableErrorCount":0,"fixableWarningCount":0,"source":"export const roto = (\n","usedDeprecatedRules":[]}]`
 
 // eslint 10.8.1 al pasarle un .ts a una config que sólo cubre .js, y un archivo
 // bajo `ignores`. Los dos casos son ruleId null + fatal ausente, SIN línea, y
 // los dos hablan del archivo y no del código: no son hallazgos.
-const salidaESLintIgnorados = `[{"filePath":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint\\src\\tipos.ts","messages":[{"ruleId":null,"fatal":false,"severity":1,"message":"File ignored because no matching configuration was supplied."}],"suppressedMessages":[],"errorCount":0,"warningCount":1,"fatalErrorCount":0,"fixableErrorCount":0,"fixableWarningCount":0,"usedDeprecatedRules":[]},{"filePath":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint\\dist\\build.js","messages":[{"ruleId":null,"fatal":false,"severity":1,"message":"File ignored because of a matching ignore pattern. Use \"--no-ignore\" to disable file ignore settings or use \"--no-warn-ignored\" to suppress this warning."}],"suppressedMessages":[],"errorCount":0,"warningCount":1,"fatalErrorCount":0,"fixableErrorCount":0,"fixableWarningCount":0,"usedDeprecatedRules":[]}]`
+const salidaESLintIgnorados = `[{"filePath":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint\\src\\tipos.ts","messages":[{"ruleId":null,"fatal":false,"severity":1,"message":"File ignored because no matching configuration was supplied."}],"suppressedMessages":[],"errorCount":0,"warningCount":1,"fatalErrorCount":0,"fixableErrorCount":0,"fixableWarningCount":0,"usedDeprecatedRules":[]},{"filePath":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint\\dist\\build.js","messages":[{"ruleId":null,"fatal":false,"severity":1,"message":"File ignored because of a matching ignore pattern. Use \"--no-ignore\" to disable file ignore settings or use \"--no-warn-ignored\" to suppress this warning."}],"suppressedMessages":[],"errorCount":0,"warningCount":1,"fatalErrorCount":0,"fixableErrorCount":0,"fixableWarningCount":0,"usedDeprecatedRules":[]}]`
 
 // eslint 8.57.1 con .eslintrc.json heredado. Misma forma que la de eslint 10
 // más un `nodeType` que no usamos: un solo struct sirve para las dos mayores,
 // que es lo que permite soportar los repos que aún no migraron a flat config.
-const salidaESLint8 = `[{"filePath":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint8\\src\\legacy.js","messages":[{"ruleId":"no-unused-vars","severity":1,"message":"'sinUsar' is assigned a value but never used.","line":1,"column":7,"nodeType":"Identifier","messageId":"unusedVar","endLine":1,"endColumn":14},{"ruleId":"eqeqeq","severity":2,"message":"Expected '===' and instead saw '=='.","line":2,"column":36,"nodeType":"BinaryExpression","messageId":"unexpected","endLine":2,"endColumn":38}],"suppressedMessages":[],"errorCount":1,"fatalErrorCount":0,"warningCount":1,"fixableErrorCount":0,"fixableWarningCount":0,"source":"const sinUsar = 1;\nexport function f(a, b) { return a == b; }\n","usedDeprecatedRules":[]}]`
+const salidaESLint8 = `[{"filePath":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-eslint8\\src\\legacy.js","messages":[{"ruleId":"no-unused-vars","severity":1,"message":"'sinUsar' is assigned a value but never used.","line":1,"column":7,"nodeType":"Identifier","messageId":"unusedVar","endLine":1,"endColumn":14},{"ruleId":"eqeqeq","severity":2,"message":"Expected '===' and instead saw '=='.","line":2,"column":36,"nodeType":"BinaryExpression","messageId":"unexpected","endLine":2,"endColumn":38}],"suppressedMessages":[],"errorCount":1,"fatalErrorCount":0,"warningCount":1,"fixableErrorCount":0,"fixableWarningCount":0,"source":"const sinUsar = 1;\nexport function f(a, b) { return a == b; }\n","usedDeprecatedRules":[]}]`
 
 // biome 2.5.8: `biome check --reporter=json src/malo.ts`, código de salida 1.
 // Rutas RELATIVAS con barra invertida, tres warnings del preset recommended,
@@ -54,7 +54,7 @@ const salidaBiomeFixable = `{"summary":{"changed":0,"unchanged":1,"matches":0,"d
 // biome 2.5.8 con un archivo que no existe: código de salida 1 y un
 // diagnóstico internalError/io con ruta ABSOLUTA y línea 0. Es el caso que no
 // se puede confundir con un hallazgo — biome no analizó nada.
-const salidaBiomeInternalError = `{"summary":{"changed":0,"unchanged":0,"matches":0,"duration":112900,"errors":0,"warnings":0,"infos":0,"skipped":0,"suggestedFixesSkipped":0,"diagnosticsNotPrinted":0,"scannerDuration":1907600},"diagnostics":[{"severity":"error","message":"The system cannot find the file specified. (os error 2)","category":"internalError/io","location":{"path":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-biome\\src\\no-existe.ts","start":{"line":0,"column":0},"end":{"line":0,"column":0}},"advices":[]}],"command":"check"}`
+const salidaBiomeInternalError = `{"summary":{"changed":0,"unchanged":0,"matches":0,"duration":112900,"errors":0,"warnings":0,"infos":0,"skipped":0,"suggestedFixesSkipped":0,"diagnosticsNotPrinted":0,"scannerDuration":1907600},"diagnostics":[{"severity":"error","message":"The system cannot find the file specified. (os error 2)","category":"internalError/io","location":{"path":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toy-biome\\src\\no-existe.ts","start":{"line":0,"column":0},"end":{"line":0,"column":0}},"advices":[]}],"command":"check"}`
 
 // Forma de biome 2.x —path como objeto, mensaje troceado, span de bytes y el
 // código fuente adjunto— con un span NEGATIVO en el desplazamiento inicial.
@@ -560,15 +560,11 @@ func TestCacheReescribeLaRutaAlReproducirUnAcierto(t *testing.T) {
 	c := &cacheFalso{datos: map[string][]finding.Finding{clave: {guardado}}}
 
 	pendientes := []objetivoJS{{rel: "src/copia.js", enPry: "src/copia.js", clave: clave}}
-	var out []finding.Finding
-	for _, o := range pendientes {
-		for _, f := range c.Leer([]string{o.clave})[o.clave] {
-			if f.File != o.rel {
-				f.File = o.rel
-				f.ComputeFingerprint()
-			}
-			out = append(out, f)
-		}
+	// Se ejercita la función REAL del motor, no una copia inline: si producción
+	// deja de reescribir la ruta o de recalcular el fingerprint, este test cae.
+	out, quedan := reproducirAciertosJS(c.Leer([]string{clave}), pendientes)
+	if len(quedan) != 0 {
+		t.Fatalf("la clave estaba en caché: no debe quedar nada por analizar, quedan %+v", quedan)
 	}
 	if len(out) != 1 {
 		t.Fatalf("esperaba 1 hallazgo del caché, obtuve %d", len(out))
@@ -847,16 +843,16 @@ func prepararProyectoBiome(t *testing.T) string {
 	return root
 }
 
-// proyectoDeJuguete localiza el proyecto con node_modules ya instalado. Se puede
-// apuntar con CODEGUARD_TOY_JS; si no existe, la prueba se salta sola en
-// cualquier máquina que no sea la que instaló las dependencias.
+// proyectoDeJuguete localiza el proyecto con node_modules ya instalado. Hay que
+// apuntarlo con CODEGUARD_TOY_JS; sin la variable la prueba se salta y lo dice.
+// No hay ruta por defecto a propósito: la que había era el directorio temporal
+// de una sesión concreta, así que en cualquier otra máquina —y tras cualquier
+// limpieza del temporal— era un skip disfrazado de configuración.
 func proyectoDeJuguete(t *testing.T, nombre string) string {
 	t.Helper()
 	base := os.Getenv("CODEGUARD_TOY_JS")
 	if base == "" {
-		base = filepath.Join(os.TempDir(), "claude",
-			"C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal",
-			"21867769-946e-43a7-a2eb-657c824f2799", "scratchpad")
+		t.Skip("CODEGUARD_TOY_JS no está definida: apúntala al directorio que contiene los proyectos de juguete con node_modules instalado")
 	}
 	root := filepath.Join(base, nombre)
 	if _, err := os.Stat(filepath.Join(root, "node_modules")); err != nil {

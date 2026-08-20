@@ -78,7 +78,11 @@ func TestElInformeNoTomaElTituloDeUnResueltoDelTextoDeUnaRegla(t *testing.T) {
 	if err := os.WriteFile(ruta, []byte(md), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for huella, titulo := range leerFingerprintsPrevios(ruta) {
+	previas, err := leerFingerprintsPrevios(ruta)
+	if err != nil {
+		t.Fatalf("no se pudo leer el informe de prueba: %v", err)
+	}
+	for huella, titulo := range previas {
 		if strings.Contains(titulo, "todo en orden") {
 			t.Errorf("el mensaje de una regla escribió el título con el que %s se listaría "+
 				"como resuelto: %q", huella[:8], titulo)

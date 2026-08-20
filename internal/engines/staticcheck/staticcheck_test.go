@@ -17,27 +17,27 @@ import (
 // los payloads de abajo. Los paths de location llegan ABSOLUTOS, en la forma
 // que tuviera el directorio de trabajo (aquí la larga, porque PowerShell
 // canonicaliza el cwd); interpretar los recorta contra las bases que reciba.
-const dirCaptura = `C:\Users\hector.diaz.BODESA\AppData\Local\Temp\claude\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\toymod`
+const dirCaptura = `C:\Users\dev\AppData\Local\Temp\claude\C--Users-dev-proyecto\21867769-946e-43a7-a2eb-657c824f2799\scratchpad\toymod`
 
 // Capturado de staticcheck 2026.1 (v0.7.0) con `staticcheck -f json ./ ./sub`
 // sobre un módulo de juguete, tal cual: un objeto por línea, con la severidad
 // por defecto ("error" para todo problema real) y el path absoluto repetido en
 // location y end. SA4006 y S1002 viven en main.go; S1003 en el subpaquete
 // sub/ — ese es el que prueba que el recorte conserva la ruta interna.
-const capturaReal = `{"code":"SA4006","severity":"error","location":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":6,"column":2},"end":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":6,"column":13},"message":"this value of x is never used"}
-{"code":"S1002","severity":"error","location":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":10,"column":5},"end":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":10,"column":15},"message":"should omit comparison to bool constant, can be simplified to ok"}
-{"code":"S1003","severity":"error","location":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\sub\\sub.go","line":7,"column":9},"end":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\sub\\sub.go","line":7,"column":35},"message":"should use strings.Contains(s, \"x\") instead"}
+const capturaReal = `{"code":"SA4006","severity":"error","location":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":6,"column":2},"end":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":6,"column":13},"message":"this value of x is never used"}
+{"code":"S1002","severity":"error","location":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":10,"column":5},"end":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":10,"column":15},"message":"should omit comparison to bool constant, can be simplified to ok"}
+{"code":"S1003","severity":"error","location":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\sub\\sub.go","line":7,"column":9},"end":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\sub\\sub.go","line":7,"column":35},"message":"should use strings.Contains(s, \"x\") instead"}
 `
 
 // Capturado con `-fail SA` en la misma corrida: lo que queda fuera del
 // conjunto -fail baja a "warning". La invocación del motor no usa -fail, pero
 // la forma es real y el mapeo tiene que respetarla.
-const capturaWarning = `{"code":"SA4006","severity":"warning","location":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":6,"column":2},"end":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":6,"column":13},"message":"this value of x is never used"}
+const capturaWarning = `{"code":"SA4006","severity":"warning","location":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":6,"column":2},"end":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":6,"column":13},"message":"this value of x is never used"}
 `
 
 // Capturado con //lint:ignore en el código y `-show-ignored`: la supresión
 // del propio desarrollador se respeta descartando el problema.
-const capturaIgnorada = `{"code":"S1002","severity":"ignored","location":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":8,"column":5},"end":{"file":"C:\\Users\\hector.diaz.BODESA\\AppData\\Local\\Temp\\claude\\C--Users-hector-diaz-BODESA-Desktop-01-Proyectos-GitHub-Personal\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":8,"column":15},"message":"should omit comparison to bool constant, can be simplified to ok"}
+const capturaIgnorada = `{"code":"S1002","severity":"ignored","location":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":8,"column":5},"end":{"file":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-proyecto\\21867769-946e-43a7-a2eb-657c824f2799\\scratchpad\\toymod\\main.go","line":8,"column":15},"message":"should omit comparison to bool constant, can be simplified to ok"}
 `
 
 // Capturado sobre un módulo con un error de sintaxis: el fallo de compilación

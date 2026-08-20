@@ -129,14 +129,26 @@ func TestCorrerMataElArbolYNoSeCuelga(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("la prueba usa cmd.exe")
 	}
-	vivos := func() int {
-		out, _ := exec.Command("powershell", "-NoProfile", "-Command",
+	// Devuelve error en vez de tragárselo: «no pude contar» y «conté cero»
+	// compartían el mismo 0, así que un PowerShell ausente o una salida rara
+	// hacían pasar en falso tanto el guard de abajo como la comprobación final
+	// de huérfanos — el entorno roto se leía como escenario limpio.
+	vivos := func() (int, error) {
+		out, err := exec.Command("powershell", "-NoProfile", "-Command",
 			"(Get-Process waitfor -ErrorAction SilentlyContinue | Measure-Object).Count").Output()
+		if err != nil {
+			return 0, err
+		}
 		n := 0
-		fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &n)
-		return n
+		if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &n); err != nil {
+			return 0, fmt.Errorf("conteo de waitfor no parseable (%q): %w",
+				strings.TrimSpace(string(out)), err)
+		}
+		return n, nil
 	}
-	if vivos() != 0 {
+	if n, err := vivos(); err != nil {
+		t.Skipf("no se pudo contar procesos waitfor (%v); la prueba sería ambigua", err)
+	} else if n != 0 {
 		t.Skip("ya había procesos waitfor de otra cosa; la prueba sería ambigua")
 	}
 
@@ -145,13 +157,23 @@ func TestCorrerMataElArbolYNoSeCuelga(t *testing.T) {
 
 	inicio := time.Now()
 	cmd := exec.CommandContext(ctx, "cmd", "/c", "start /b waitfor /t 120 nadie & waitfor /t 120 nadie")
-	Correr(ctx, cmd, MaxSalida)
+	_, err := Correr(ctx, cmd, MaxSalida)
 
+	// Lo que se mide es el plazo venciendo CON un nieto vivo. Si el comando ni
+	// arrancó, la duración corta y la ausencia de huérfanos no prueban nada, y
+	// el test pasaba en verde sin haber ejercitado el cuelgue. Se exige el plazo
+	// por identidad, igual que TestCorrerNoDisfrazaElPlazoDeRecorte.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Correr devolvió %v: esta prueba mide el árbol muerto por plazo, "+
+			"no un fallo de arranque", err)
+	}
 	if d := time.Since(inicio); d > 8*time.Second {
 		t.Errorf("Correr tardó %v: se quedó esperando al nieto", d)
 	}
 	time.Sleep(700 * time.Millisecond) // que Windows procese las muertes
-	if n := vivos(); n != 0 {
+	if n, err := vivos(); err != nil {
+		t.Fatalf("no se pudo verificar si quedaron huérfanos: %v", err)
+	} else if n != 0 {
 		t.Errorf("quedaron %d procesos huérfanos", n)
 	}
 }

@@ -88,7 +88,7 @@ func TestRuffCacheNoCruzaRutas(t *testing.T) {
 	// El caché ya vio tests/dup.py y lo anotó limpio —lo está—, bajo la clave
 	// de sólo-contenido que usaba el motor.
 	cache := &cacheDeMemoria{datos: map[string][]finding.Finding{
-		"ruff:" + huellaConfigRuff(root) + ":" + sha: {},
+		"ruff:" + huellaConfigRuff(root, []gitdiff.ChangedFile{{Path: "src/dup.py", Status: "M", SHA256: sha}}) + ":" + sha: {},
 	}}
 
 	in := engines.Input{RepoRoot: root, Files: []gitdiff.ChangedFile{

@@ -12,6 +12,7 @@ import (
 	"codeguard/internal/engines"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/instalacion"
+	"codeguard/internal/textutil"
 )
 
 // Piezas que comparten los dos motores de Java: javafmt (google-java-format) y
@@ -245,7 +246,7 @@ func jRecortar(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return textutil.TruncarRunas(s, n) + "…"
 }
 
 // jErrorDeJVM detecta que la máquina virtual ni llegó a ejecutar la herramienta.

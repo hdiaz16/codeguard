@@ -239,6 +239,14 @@ func Call(req *Request, timeout time.Duration) (*Response, error) {
 
 // ReadRequest y WriteResponse son el lado servidor.
 func ReadRequest(conn net.Conn) (*Request, error) {
+	// La DACL admite a cualquier proceso del mismo usuario, y basta con que uno
+	// conecte y no mande nada para dejar colgada en Scan a la goroutine que lo
+	// atiende: repetido, es fuga de goroutines y un daemon inservible justo
+	// cuando hace falta, antes de un commit. Acota SOLO la lectura de la
+	// petición; la respuesta puede tardar lo que tarde el análisis.
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return nil, fmt.Errorf("no se pudo acotar la lectura de la petición: %w", err)
+	}
 	sc := bufio.NewScanner(conn)
 	sc.Buffer(make([]byte, 0, 1<<20), 16<<20)
 	if !sc.Scan() {
@@ -256,6 +264,15 @@ func WriteResponse(conn net.Conn, resp *Response) error {
 	payload, err := json.Marshal(resp)
 	if err != nil {
 		return err
+	}
+	// La escritura también se puede colgar: si el hook murió a media espera
+	// (un Ctrl-C) y el búfer del pipe se llena, este Write bloquea para siempre
+	// y la goroutine que atiende la conexión se fuga — en un daemon que vive
+	// días y acepta en bucle, esas fugas se acumulan. Va aquí y no en el
+	// llamador para cubrir por igual la respuesta del análisis y el ack de los
+	// comandos. La respuesta es un JSON pequeño: diez segundos son de sobra.
+	if err := conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return fmt.Errorf("no se pudo acotar la escritura de la respuesta: %w", err)
 	}
 	_, err = conn.Write(append(payload, '\n'))
 	return err

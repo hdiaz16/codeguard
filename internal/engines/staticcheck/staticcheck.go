@@ -32,11 +32,13 @@ import (
 	"codeguard/internal/engines/contrato"
 	"codeguard/internal/engines/proc"
 	"codeguard/internal/finding"
+	"codeguard/internal/textutil"
 )
 
 type Engine struct {
 	Binary string
-	// Cache: módulo sin cambios + mismos paquetes pedidos = mismos hallazgos.
+	// Cache: módulo sin cambios (incluido staticcheck.conf) + mismos paquetes
+	// pedidos + mismo binario = mismos hallazgos.
 	// La clave lleva la lista de paquetes porque el análisis es del
 	// subconjunto tocado, no de ./... — otro subconjunto es otro resultado.
 	Cache engines.Cache
@@ -144,9 +146,12 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 		dirs = append(dirs, d)
 	}
 	sort.Strings(dirs)
+	// Se resuelve UNA vez por corrida, no por módulo: es un Stat, pero no hay
+	// razón para repetirlo por cada go.mod del repo.
+	idBinario := identidadBinario(bin)
 	var out []finding.Finding
 	for _, dir := range dirs {
-		clave := claveModulo(in.RepoRoot, dir, mods[dir])
+		clave := claveModulo(in.RepoRoot, dir, mods[dir], idBinario)
 		if e.Cache != nil && clave != "" {
 			if fs, ok := e.Cache.Leer([]string{clave})[clave]; ok {
 				out = append(out, fs...)
@@ -165,18 +170,62 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	return out, nil
 }
 
+// identidadBinario devuelve algo que cambia cuando cambia el binario, para que
+// entre en la clave del caché.
+//
+// Hace falta porque staticcheck estrena y retira comprobaciones entre versiones:
+// servir el resultado guardado tras un `go install -u` sería reportar los
+// hallazgos del analizador anterior, que es el mismo fallo que java.go describe
+// para PMD y google-java-format. Pero ahí la versión se lee del NOMBRE de la
+// herramienta y aquí el binario se resuelve del PATH sin versión en la ruta, así
+// que se usa la identidad del archivo —ruta, tamaño y fecha— en vez de invocar
+// `-version`: java.go:134 rechaza expresamente pagar «un proceso extra por
+// informe sólo para preguntarla», y este es el motor más lento del conjunto.
+// Es el mismo recurso que usa contrato.go:102 para su memoria de veredictos.
+//
+// Vacía si no se puede determinar, y entonces no se cachea: una clave sin tamaño
+// ni fecha no puede cumplir lo que promete —cambiar cuando cambia el binario—, y
+// preferimos analizar de nuevo antes que servir lo guardado a ciegas. El fallo
+// real de un binario ausente o roto lo reporta correrModulo con su centinela;
+// aquí sólo se decide no fiarse del caché.
+func identidadBinario(bin string) string {
+	ruta := bin
+	if !filepath.IsAbs(ruta) {
+		p, err := exec.LookPath(bin)
+		if err != nil {
+			return ""
+		}
+		ruta = p
+	}
+	info, err := os.Stat(ruta)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s\x00%d\x00%d", ruta, info.Size(), info.ModTime().UnixNano())
+}
+
 // claveModulo identifica un análisis: el contenido del módulo (los .go y
 // manifiestos rastreados — la compilación depende de todos, no solo de los
-// tocados) más los paquetes pedidos. Vacía = no cacheable.
-func claveModulo(repoRoot, dir string, paquetes []string) string {
+// tocados), los paquetes pedidos y el binario que va a analizarlos. Vacía = no
+// cacheable.
+func claveModulo(repoRoot, dir string, paquetes []string, idBinario string) string {
+	if idBinario == "" {
+		return ""
+	}
 	huella := engines.HuellaModulo(repoRoot, dir, func(rel string) bool {
 		base := strings.ToLower(path.Base(rel))
-		return base == "go.mod" || base == "go.sum" || strings.HasSuffix(base, ".go")
+		// staticcheck.conf entra como un manifiesto más: decide QUÉ
+		// comprobaciones corren, así que el mismo código con otra config es
+		// otro análisis. Sin él en la huella, activar o desactivar una
+		// comprobación no invalidaba nada y el caché seguía sirviendo el
+		// resultado de la configuración anterior.
+		return base == "go.mod" || base == "go.sum" || base == "staticcheck.conf" ||
+			strings.HasSuffix(base, ".go")
 	})
 	if huella == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(huella + "|" + strings.Join(paquetes, ",")))
+	sum := sha256.Sum256([]byte(huella + "|" + idBinario + "|" + strings.Join(paquetes, ",")))
 	return "staticcheck:" + hex.EncodeToString(sum[:])
 }
 
@@ -350,7 +399,7 @@ func relativizar(file string, bases []string, dir string) string {
 func recorte(b []byte) string {
 	s := strings.Join(strings.Fields(string(b)), " ")
 	if len(s) > 300 {
-		s = s[:300] + "…"
+		s = textutil.TruncarRunas(s, 300) + "…"
 	}
 	return s
 }

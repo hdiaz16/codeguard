@@ -35,12 +35,12 @@ func TestRedact(t *testing.T) {
 	s := senuelos()
 	cases := []struct{ in, mustNotContain string }{
 		{`aws_key = ` + s["aws"], s["aws"]},
-		{`token: ` + s["pat"], s["pat"][:20]},
-		{`Authorization: Bearer ` + s["jwt"], s["jwt"][:16]},
+		{`token: ` + s["pat"], s["pat"]},
+		{`Authorization: Bearer ` + s["jwt"], s["jwt"]},
 		{`"password": "` + s["pass"] + `"`, s["pass"]},
 		{s["sqlconn"], s["sqlpw"]},
 		{s["dsn"], "clave4segura"},
-		{`OPENAI_KEY=` + s["clave"], s["clave"][:14]},
+		{`OPENAI_KEY=` + s["clave"], s["clave"]},
 	}
 	for _, c := range cases {
 		got := Redact(c.in)

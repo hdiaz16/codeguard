@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -20,6 +22,7 @@ import (
 
 	"codeguard/internal/config"
 	"codeguard/internal/secreto"
+	"codeguard/internal/textutil"
 )
 
 type Client struct {
@@ -28,6 +31,22 @@ type Client struct {
 	dialecto Dialecto
 	http     *http.Client
 }
+
+// maxRespuestaLLM topa los cuerpos que se leen enteros a memoria (respuestas
+// de Complete y cuerpos de error). El endpoint lo configura el usuario y puede
+// ser cualquiera: sin tope, un endpoint roto o hostil que devuelva un cuerpo
+// gigante tumba el daemon por memoria.
+//
+// 32 MB es ~100x lo que una respuesta legítima puede ocupar (el techo de
+// salida más alto del paquete es 64000 tokens ≈ unos cientos de KB de JSON) y
+// la mitad del proc.MaxSalida (64 MB) que el repo ya usa como referencia de
+// "tope de salida". Si el corte llega a morder, el JSON truncado falla el
+// Unmarshal con "respuesta ilegible: unexpected end of JSON input", que ya
+// dice lo que pasó — no hace falta detectar el truncamiento aparte.
+//
+// El streaming NO pasa por aquí: usa bufio.Scanner línea a línea, y limitarlo
+// rompería respuestas largas legítimas.
+const maxRespuestaLLM = 32 << 20
 
 // leerSecreto es el punto de sustitución de las pruebas.
 //
@@ -150,8 +169,37 @@ func NewConClave(cfg config.LLM, key string) *Client {
 	if cfg.Endpoint == "" {
 		return nil
 	}
-	prov, _ := BuscarProveedor(cfg.Provider)
+	prov, conocido := BuscarProveedor(cfg.Provider)
+	// Un nombre de proveedor desconocido NO se traga: con el Proveedor en su
+	// valor cero, NecesitaKey queda en false, requiereKey dice que no hace falta
+	// clave y se construye un cliente SIN ella contra un servicio que la exige —
+	// todas las llamadas fallarían con 401 y sin una pista de que el nombre
+	// estaba mal escrito. Se cierra con aviso, igual que el endpoint inseguro de
+	// abajo: la capa degrada (P2, nunca rompe el commit) pero el log dice qué
+	// está mal. El endpoint escrito a mano (Provider vacío) no pasa por aquí: no
+	// hay nombre que buscar y requiereKey lo deduce del loopback, como siempre.
+	if cfg.Provider != "" && !conocido {
+		log.Printf("capa de consejo apagada: proveedor %q desconocido. Revisa el nombre en la "+
+			"configuración, o deja el proveedor vacío si el endpoint va escrito a mano",
+			cfg.Provider)
+		return nil
+	}
 	if key == "" && requiereKey(cfg, prov) {
+		return nil
+	}
+	// Un cliente con clave es un cliente que la VA A ENVIAR: si el endpoint no
+	// puede recibirla sin exponerla, no se construye. Validar aquí —y no en
+	// cada request— cubre Complete y CompleteStream por construcción: si el
+	// Client existe, su endpoint ya es seguro para llevar la clave.
+	//
+	// Se registra y no se calla: devolver nil degrada la capa (P2, nunca
+	// rompe el commit), pero un nil mudo aquí sería el mismo síntoma de
+	// siempre —"capa apagada" sin motivo— para una decisión de seguridad
+	// deliberada. El log dice QUÉ se cerró y CÓMO se arregla.
+	if key != "" && !endpointSeguroParaClave(cfg.Endpoint) {
+		log.Printf("capa de consejo apagada: el endpoint %q no es HTTPS ni apunta a esta "+
+			"máquina, y enviar la clave por HTTP en claro la expondría. Usa https:// o un "+
+			"modelo local (Ollama, LM Studio)", cfg.Endpoint)
 		return nil
 	}
 
@@ -194,8 +242,45 @@ func requiereKey(cfg config.LLM, prov Proveedor) bool {
 	if cfg.Provider != "" {
 		return prov.NecesitaKey
 	}
-	e := strings.ToLower(cfg.Endpoint)
-	return !strings.Contains(e, "localhost") && !strings.Contains(e, "127.0.0.1")
+	return !esLoopback(cfg.Endpoint)
+}
+
+// esLoopback dice si el endpoint apunta a la propia máquina, caso en el que
+// el tráfico no sale de ella y HTTP en claro es aceptable (Ollama, LM Studio).
+//
+// Se parsea el host de verdad —net/url + net.ParseIP— y no con
+// strings.Contains como antes: un host como "localhost.evil.com" CONTIENE
+// "localhost" y colaba como local. IsLoopback cubre todo 127.0.0.0/8 y ::1,
+// no sólo 127.0.0.1.
+func esLoopback(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "unix" {
+		return true
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// endpointSeguroParaClave es la ÚNICA fuente de la política "¿puede este
+// endpoint llevar la API key?": sí si es HTTPS (la clave viaja cifrada a
+// cualquier host), o si apunta a loopback (la clave no sale de la máquina).
+// Un http:// a un host remoto con clave es el caso que se cierra.
+func endpointSeguroParaClave(endpoint string) bool {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "https" {
+		return true
+	}
+	return esLoopback(endpoint)
 }
 
 // Dialecto dice con qué API se está hablando. Sirve para mostrarlo en la
@@ -315,7 +400,7 @@ func (c *Client) Complete(ctx context.Context, model, system, user string, timeo
 			return nil, nil, err
 		}
 		defer resp.Body.Close()
-		raw, err := io.ReadAll(resp.Body)
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, maxRespuestaLLM))
 		return resp, raw, err
 	}
 
@@ -405,7 +490,7 @@ func (c *Client) CompleteStream(ctx context.Context, model, system, user string,
 		return nil, err
 	}
 	if resp.StatusCode == 400 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespuestaLLM))
 		_ = resp.Body.Close() // se reintenta con otro cuerpo; este ya se leyó entero
 		if !strings.Contains(string(raw), "max_completion_tokens") {
 			return nil, fmt.Errorf("HTTP 400: %s%s", truncate(string(raw), 300), pistaDeError(string(raw)))
@@ -416,7 +501,7 @@ func (c *Client) CompleteStream(ctx context.Context, model, system, user string,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		raw, _ := io.ReadAll(resp.Body)
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespuestaLLM))
 		return nil, fmt.Errorf("HTTP %d: %s%s", resp.StatusCode, truncate(string(raw), 300), pistaDeError(string(raw)))
 	}
 
@@ -480,5 +565,5 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return textutil.TruncarRunas(s, n) + "…"
 }

@@ -42,6 +42,7 @@ var (
 	procEnumWindows        = user32.NewProc("EnumWindows")
 	procGetWindowTextW     = user32.NewProc("GetWindowTextW")
 	procGetWindowThreadPID = user32.NewProc("GetWindowThreadProcessId")
+	procIsWindow           = user32.NewProc("IsWindow")
 	procSetWindowRgn       = user32.NewProc("SetWindowRgn")
 	procCreateRoundRect    = gdi32.NewProc("CreateRoundRectRgn")
 	procCreateRectRgn      = gdi32.NewProc("CreateRectRgn")
@@ -65,10 +66,23 @@ var (
 func buscarVentana(titulo string) uintptr {
 	hwndMu.Lock()
 	defer hwndMu.Unlock()
-	if h, ok := hwndCache[titulo]; ok && h != 0 {
-		return h
-	}
 	pidPropio, _, _ := procGetCurrentPID.Call()
+	if h, ok := hwndCache[titulo]; ok && h != 0 {
+		// Windows REUTILIZA los HWND: un handle cacheado puede seguir vivo y
+		// pertenecer ya a otra ventana, incluso de otro proceso — y entonces se
+		// le recortaría la forma a una ventana ajena. OlvidarVentanas cubre el
+		// caso en que se recrea la nuestra, pero no el cierre inesperado, así
+		// que aquí se comprueba que existe (IsWindow) y que sigue siendo de
+		// ESTE proceso, el mismo filtro que aplica la enumeración de abajo.
+		if r, _, _ := procIsWindow.Call(h); r != 0 {
+			var pid uint32
+			procGetWindowThreadPID.Call(h, uintptr(unsafe.Pointer(&pid)))
+			if uintptr(pid) == pidPropio {
+				return h
+			}
+		}
+		delete(hwndCache, titulo)
+	}
 	// UTF16FromString y no StringToUTF16: la segunda está obsoleta desde Go 1.1
 	// porque entra en pánico si la cadena trae un NUL, y aquí el título viene
 	// de la configuración de la ventana. Devolver el error es lo correcto.
@@ -139,7 +153,22 @@ func RecortarA(titulo string, zonas []Rect) {
 		}
 		// RGN_OR = 2: la forma final es la unión de todas las zonas.
 		destino, _, _ := procCreateRectRgn.Call(0, 0, 1, 1)
-		procCombineRgn.Call(destino, total, r, 2)
+		if destino == 0 {
+			procDeleteObject.Call(r)
+			continue
+		}
+		// CombineRgn devuelve el tipo de región resultante: 0 es error y 1 es
+		// NULLREGION (imposible aquí: la unión de dos zonas no vacías nunca es
+		// vacía). En ambos casos «destino» sigue siendo el rectángulo de 1x1 con
+		// el que se creó, y sustituir «total» por él dejaría la ventana recortada
+		// a un píxel — el orbe invisible que esta función existe para evitar. Se
+		// conserva el «total» acumulado hasta ahora.
+		if res, _, _ := procCombineRgn.Call(destino, total, r, 2); res <= 1 {
+			log.Printf("recorte: CombineRgn falló (resultado %d); se conserva la región anterior", res)
+			procDeleteObject.Call(destino)
+			procDeleteObject.Call(r)
+			continue
+		}
 		procDeleteObject.Call(total)
 		procDeleteObject.Call(r)
 		total = destino
@@ -147,8 +176,14 @@ func RecortarA(titulo string, zonas []Rect) {
 	if total == 0 {
 		return
 	}
-	// SetWindowRgn se queda con la propiedad de la región: no se libera aquí.
-	procSetWindowRgn.Call(hwnd, total, 1)
+	// SetWindowRgn se queda con la propiedad de la región SÓLO si tiene éxito.
+	// Si falla (la ventana se cerró entre buscarVentana y aquí), la región sigue
+	// siendo de este proceso y hay que liberarla: RecortarA se llama en cada
+	// medición de la página, así que cada fallo fugaría un objeto GDI.
+	if r, _, _ := procSetWindowRgn.Call(hwnd, total, 1); r == 0 {
+		procDeleteObject.Call(total)
+		log.Printf("recorte: SetWindowRgn falló para %q (la ventana pudo cerrarse); región liberada", titulo)
+	}
 }
 
 // OlvidarVentanas limpia el caché de handles. Se llama cuando una ventana se

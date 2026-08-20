@@ -47,6 +47,13 @@ var (
 	cache   = map[string][]byte{}
 )
 
+// maxEntradasCache acota la MEMORIA del cache. Acotar el tamaño limitó el
+// espacio de claves, pero ese espacio sigue siendo grande (tamanoMaximo tamaños
+// × estados) y cada PNG pesa cientos de KB: sin tope de entradas, un flujo de
+// tamaños variables por el IPC infla el proceso de forma monótona. Los usos
+// reales son un puñado de tamaños de bandeja, así que 64 sobra.
+const maxEntradasCache = 64
+
 // clave identifica una entrada del cache. Se construye con Sprintf y no
 // concatenando string(rune(tamano)): esa conversión no distingue tamaños
 // —cualquiera que no sea un punto de código válido acaba en U+FFFD, así que
@@ -56,11 +63,56 @@ func clave(tamano int, estado string) string {
 	return fmt.Sprintf("%s:%d", estado, tamano)
 }
 
+// tamanoMaximo acota defensivamente el lado de la imagen: la asignación crece
+// con tamano²*4 bytes y el muestreo 3x3 con tamano² de CPU, así que un tamaño
+// absurdo tumbaría el proceso por memoria. Los íconos reales llegan a 256;
+// 1024 deja holgura para cualquier uso legítimo futuro y corta cualquier
+// disparate muy por debajo de un OOM (1024²*4 ≈ 4 MB). Es robustez de la
+// primitiva, no respuesta a un vector confirmado: hoy los llamadores usan
+// constantes, pero el invariante es de la función, no de quien la llama.
+const tamanoMaximo = 1024
+
+// acotarTamano clampa el tamaño pedido al rango dibujable [1, tamanoMaximo].
+// Es clamp y no error ni panic porque el ícono es decorativo: la función debe
+// seguir devolviendo algo dibujable aunque le pidan un tamaño sin sentido.
+func acotarTamano(tamano int) int {
+	if tamano < 1 {
+		return 1
+	}
+	if tamano > tamanoMaximo {
+		return tamanoMaximo
+	}
+	return tamano
+}
+
+// tamanoMaximoICO es el techo del FORMATO .ico: ancho y alto se declaran en un
+// solo byte, donde 0 significa 256, así que nada por encima de 256 se puede
+// declarar. Es más estricto que tamanoMaximo porque aquí el límite no lo pone la
+// memoria sino el formato.
+const tamanoMaximoICO = 256
+
+// acotarTamanoICO clampa a lo representable en un .ico. Clamp y no error por lo
+// mismo que acotarTamano: el ícono es decorativo. Lo inaceptable no es pedir 512,
+// es declarar en la cabecera un tamaño distinto del que se dibujó — con el clamp
+// general a 1024, byte(300) da 44 y byte(512) da 0, y Windows se encuentra un
+// ícono que no cuadra con su propia cabecera.
+func acotarTamanoICO(tamano int) int {
+	if t := acotarTamano(tamano); t <= tamanoMaximoICO {
+		return t
+	}
+	return tamanoMaximoICO
+}
+
 // PNG devuelve el orbe del estado pedido, al tamaño pedido, ya codificado.
 // Es seguro llamarlo desde varias goroutines a la vez. El slice que devuelve
 // es el del cache y lo comparten todos los llamadores: hay que tratarlo como
 // de sólo lectura.
 func PNG(tamano int, estado string) []byte {
+	// Se acota ANTES de construir la clave: la clave debe reflejar el tamaño
+	// efectivo, no el pedido. Si no, PNG(50000) y PNG(60000) dibujarían lo
+	// mismo (ambos clampean a tamanoMaximo) pero ocuparían dos entradas del
+	// cache, y peor: una clave pedida podría no corresponder al contenido.
+	tamano = acotarTamano(tamano)
 	k := clave(tamano, estado)
 
 	cacheMu.RLock()
@@ -87,6 +139,13 @@ func PNG(tamano int, estado string) []byte {
 	if b, ok := cache[k]; ok {
 		return b
 	}
+	// Cache lleno: se devuelve el PNG recién dibujado pero NO se guarda. Se
+	// prefiere «servir sin guardar» a vaciar el cache, para que un flujo de
+	// tamaños raros no expulse las entradas legítimas ya calientes: lo único que
+	// paga es el redibujado, que es caro pero correcto y visible en CPU.
+	if len(cache) >= maxEntradasCache {
+		return nuevo
+	}
 	cache[k] = nuevo
 	return nuevo
 }
@@ -100,6 +159,10 @@ func Dibujar(tamano int, estado string) image.Image {
 	if !ok {
 		p = paletas["idle"]
 	}
+	// El clamp vive aquí, donde nace la imagen, para que TODOS los caminos
+	// queden cubiertos por construcción: PNG, los llamadores directos como
+	// genicono y ConstruirICO pasan por este punto.
+	tamano = acotarTamano(tamano)
 	img := image.NewNRGBA(image.Rect(0, 0, tamano, tamano))
 	t := float64(tamano)
 	cx, cy := t/2, t/2
@@ -200,6 +263,12 @@ func ConstruirICO(tamanos []int, estado string) ([]byte, error) {
 	}
 	imgs := make([]entrada, 0, len(tamanos))
 	for _, s := range tamanos {
+		// Se acota aquí también, no sólo dentro de Dibujar: la cabecera del
+		// .ico declara el tamaño de cada imagen y debe coincidir con lo que
+		// realmente se dibujó, no con lo que se pidió. Y se acota al límite del
+		// FORMATO, no al de memoria: con el clamp general a 1024, un 300 acabaría
+		// declarando byte(300)=44 sobre un PNG de 300.
+		s = acotarTamanoICO(s)
 		var buf bytes.Buffer
 		if err := png.Encode(&buf, Dibujar(s, estado)); err != nil {
 			return nil, err

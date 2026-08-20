@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -61,14 +62,28 @@ func (s *Store) ExportarRuns(destino string, f FiltroExport) (int, error) {
 	}
 	defer filas.Close()
 
-	out, err := os.Create(destino)
+	// Se escribe a un temporal EN EL MISMO DIRECTORIO y se renombra al
+	// final: os.Create(destino) trunca el CSV anterior antes de escribir
+	// nada, y un crash a media exportación dejaba un archivo a medias
+	// pisando al bueno. Con temp+rename el destino es siempre el CSV viejo
+	// completo o el nuevo completo; nunca uno truncado. El temporal tiene
+	// que estar en el mismo directorio porque os.Rename sólo es atómico
+	// dentro del mismo filesystem.
+	tmp, err := os.CreateTemp(filepath.Dir(destino), ".codeguard-runs-*.tmp")
 	if err != nil {
 		return 0, err
 	}
+	// Ante cualquier fallo a mitad, el temporal se cierra y se borra SIN
+	// tocar el destino: una exportación fallida no deja basura .tmp ni un
+	// CSV a medias reemplazando al anterior.
+	descartar := func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}
 
-	w := csv.NewWriter(out)
+	w := csv.NewWriter(tmp)
 	if err := w.Write([]string{"id", "repo", "rama", "veredicto", "bloqueantes", "avisos", "fecha"}); err != nil {
-		out.Close()
+		descartar()
 		return 0, err
 	}
 
@@ -78,38 +93,67 @@ func (s *Store) ExportarRuns(destino string, f FiltroExport) (int, error) {
 		var bloq, avisos int
 		// Una fila ilegible es un dato corrupto, no un CSV a medias sin avisar.
 		if err := filas.Scan(&id, &repo, &rama, &veredicto, &bloq, &avisos, &fecha); err != nil {
-			out.Close()
+			descartar()
 			return n, fmt.Errorf("fila %d ilegible: %w", n+1, err)
 		}
-		if err := w.Write([]string{id, repo, rama, veredicto,
-			strconv.Itoa(bloq), strconv.Itoa(avisos), fecha}); err != nil {
-			out.Close()
+		if err := w.Write([]string{celdaSegura(id), celdaSegura(repo), celdaSegura(rama),
+			celdaSegura(veredicto), strconv.Itoa(bloq), strconv.Itoa(avisos),
+			celdaSegura(fecha)}); err != nil {
+			descartar()
 			return n, err
 		}
 		n++
 	}
 	if err := filas.Err(); err != nil {
-		out.Close()
+		descartar()
 		return n, err
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
-		out.Close()
+		descartar()
 		return n, err
 	}
 	// Cerrar es donde afloran los errores de escritura diferidos: un CSV
 	// truncado que se anuncia como completo es peor que no tenerlo.
-	if err := out.Close(); err != nil {
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
 		return n, fmt.Errorf("el CSV quedó incompleto: %w", err)
 	}
+	// Sólo con TODO escrito y cerrado se reemplaza el destino. En Windows
+	// os.Rename usa MoveFileEx con REPLACE_EXISTING, así que pisa un CSV
+	// anterior igual que en POSIX.
+	if err := os.Rename(tmp.Name(), destino); err != nil {
+		os.Remove(tmp.Name())
+		return n, fmt.Errorf("no se pudo reemplazar %s: %w", destino, err)
+	}
 	return n, nil
+}
+
+// celdaSegura neutraliza la inyección de fórmulas en el CSV: Excel y
+// LibreOffice interpretan como fórmula toda celda que empieza por =, +, -, @ o
+// tabulación, y el nombre de una rama o de un repo puede empezar así — sale de
+// un remote o de un `git branch`, no lo teclea quien abre el archivo. El
+// apóstrofo delante fuerza texto literal sin perder el dato.
+func celdaSegura(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t':
+		return "'" + s
+	}
+	return s
 }
 
 // ResumenSemanal describe la salud del repo en la última semana.
 func (s *Store) ResumenSemanal(repoID string) (string, error) {
 	desde := time.Now().AddDate(0, 0, -7).Format(time.RFC3339)
+	// Se traen los DOS conteos, igual que en ExportarRuns: bloqueantes y avisos
+	// son cosas distintas. Decidir «con avisos» mirando los BLOQUEANTES hacía
+	// que un pass con avisos de verdad se contara como limpio.
 	filas, err := s.db.Query(`SELECT r.verdict,
-	       (SELECT COUNT(*) FROM findings f WHERE f.run_id = r.id AND f.blocking = 1)
+	       (SELECT COUNT(*) FROM findings f WHERE f.run_id = r.id AND f.blocking = 1),
+	       (SELECT COUNT(*) FROM findings f WHERE f.run_id = r.id AND f.blocking = 0)
 	  FROM runs r WHERE r.repo_id = ? AND r.started_at >= ?`, repoID, desde)
 	if err != nil {
 		return "", err
@@ -119,10 +163,10 @@ func (s *Store) ResumenSemanal(repoID string) (string, error) {
 	var total, bloqueados, limpios, conAvisos, muyMalos, sinNada int
 	for filas.Next() {
 		var v string
-		var b int
+		var b, avisos int
 		// Misma regla que el CSV: una fila ilegible es dato corrupto, no un
 		// resumen que cuenta de menos sin avisar.
-		if err := filas.Scan(&v, &b); err != nil {
+		if err := filas.Scan(&v, &b, &avisos); err != nil {
 			return "", fmt.Errorf("run ilegible en el resumen semanal: %w", err)
 		}
 		total++
@@ -133,10 +177,17 @@ func (s *Store) ResumenSemanal(repoID string) (string, error) {
 				muyMalos++
 			}
 		case "pass":
-			if b == 0 {
-				limpios++
-			} else {
+			switch {
+			case avisos > 0:
 				conAvisos++
+			case b == 0:
+				limpios++
+			default:
+				// pass CON bloqueantes y sin avisos: dato incoherente (si hay
+				// bloqueantes el veredicto tendría que ser block). No se cuenta
+				// como limpio, que maquillaría el resumen, ni como «con
+				// avisos», que no tiene: va con los omitidos.
+				sinNada++
 			}
 		default: // skipped, degraded, vacío: no cuentan como limpio ni bloqueado
 			sinNada++

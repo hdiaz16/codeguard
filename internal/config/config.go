@@ -130,9 +130,14 @@ const (
 )
 
 // CostoMicros convierte un consumo de tokens a millonésimas de dólar.
-// Devuelve 0 y false cuando no hay tarifas configuradas.
+// Devuelve 0 y false cuando las tarifas no están completas.
 func (l LLM) CostoMicros(c ConsumoTokens) (int64, bool) {
-	if l.PriceInPerMTok <= 0 && l.PriceOutPerMTok <= 0 {
+	// Basta que falte UNA de las dos tarifas: la mitad sin precio computa a
+	// cero y el costo sale sistemáticamente corto: el mismo sesgo a la baja
+	// que math.Round evita más abajo, pero de otra magnitud, y justo en la
+	// cifra que se compara con el tope mensual. Con datos incompletos el tope
+	// no se puede evaluar, y ok=false es cómo se dice eso.
+	if l.PriceInPerMTok <= 0 || l.PriceOutPerMTok <= 0 {
 		return 0, false
 	}
 	entrada := float64(c.PromptTokens) +
@@ -250,6 +255,18 @@ func Load(repoRoot string) (*Config, error) {
 	cfg.RepoRoot = repoRoot
 	if cfg.Rulepack == "" {
 		return nil, fmt.Errorf("config.yaml sin 'rulepack': la paridad exige pinnearlo")
+	}
+	// Un dialecto fuera del conjunto conocido no es "no es postgres": es casi
+	// siempre un typo (postgre, posgres). Como MigracionesEnPostgres compara
+	// contra "postgres", ese typo apagaba el pilar datos sin decir nada — la
+	// cobertura perdida en silencio que el default de DialectoMigraciones
+	// existe para evitar. Se rechaza la config y el autor corrige el nombre.
+	// Si se añade un dialecto aquí, añadirlo también en DialectoMigraciones.
+	switch cfg.Paths.DialectoMigraciones() {
+	case "postgres", "sqlite", "mysql", "sqlserver", "oracle":
+	default:
+		return nil, fmt.Errorf("config.yaml: paths.migrations_dialect %q no es un dialecto conocido "+
+			"(postgres, sqlite, mysql, sqlserver, oracle)", cfg.Paths.MigrationsDialect)
 	}
 	// La anulación local se aplica DESPUÉS del hash: el hash es el contrato de
 	// paridad con el CI y sólo cubre lo que está versionado en el repo. Cambiar

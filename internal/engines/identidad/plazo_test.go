@@ -3,6 +3,7 @@ package identidad
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -25,6 +26,16 @@ import (
 // bucle, pmd salía "no-arranca" de forma intermitente aunque en 12 intentos
 // sueltos no falle ni uno.
 func TestUnMotorQueTardaNoSeAcusaDeNoArrancar(t *testing.T) {
+	// La regresión que se mide aquí es específica de exec en Windows: al vencer
+	// el plazo, Wait devuelve "exit status 1", que ES un ExitError. Fuera de
+	// Windows el skip era implícito —no existe pmd.bat— y con un mensaje que
+	// apuntaba a PMD en vez de al sistema: la restricción de plataforma queda
+	// dicha, en vez de disfrazada de «falta una herramienta».
+	if runtime.GOOS != "windows" {
+		t.Skip("la regresión medida es específica de exec en Windows; " +
+			"la distinción plazo-agotado vs no-arranca no tiene cobertura fuera de él")
+	}
+
 	pmd := filepath.Join(instalacion.DirMotores(), "pmd-bin-7.26.0")
 	if _, err := os.Stat(filepath.Join(pmd, "bin", "pmd.bat")); err != nil {
 		t.Skip("sin PMD instalado no hay nada que medir")
@@ -36,6 +47,12 @@ func TestUnMotorQueTardaNoSeAcusaDeNoArrancar(t *testing.T) {
 	}
 
 	// Y ahora un plazo imposible: la JVM no llega ni a empezar.
+	//
+	// OJO: esto muta la global plazoArranque, que noArranca lee sin
+	// sincronización. Mientras el plazo sea una global y no un parámetro, NINGÚN
+	// test de este paquete puede usar t.Parallel(): la carrera sería sobre el
+	// plazo y el fallo saldría intermitente en otro test que no tiene la culpa.
+	// Si algún día se paraleliza, primero hay que pasar el plazo por parámetro.
 	original := plazoArranque
 	plazoArranque = 120 * time.Millisecond
 	defer func() { plazoArranque = original }()

@@ -117,7 +117,7 @@ func ciCmd() *cobra.Command {
 				Engines:      daemon.Engines(cfg, inCI, nil),
 				Rulepack:     rulepack,
 				Timeout:      5 * time.Minute,
-				Suppressions: baseline.Load(repoRoot),
+				Suppressions: baseline.LoadOrWarn(repoRoot),
 			})
 			if err != nil {
 				return err

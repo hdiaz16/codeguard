@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path"
@@ -96,7 +97,19 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	if e.Cache != nil {
 		if clave = e.clave(in.RepoRoot); clave != "" {
 			if fs, ok := e.Cache.Leer([]string{clave})[clave]; ok {
-				return fs, nil
+				// El caché guarda HECHOS (qué CVEs hay), no política: Blocking
+				// se recalcula aquí con el BlockCritical de ESTE proceso. Si se
+				// sirviera tal cual, un acierto guardado en local permisivo
+				// dejaría pasar CVEs críticos en CI (misma clave, mismo día).
+				// La huella no incluye Blocking, así que la identidad del
+				// hallazgo frente a baselines no cambia al recalcular.
+				// Se copia para no mutar la memoria que devuelve el caché.
+				out := make([]finding.Finding, len(fs))
+				copy(out, fs)
+				for i := range out {
+					out[i].Blocking = out[i].Severity == finding.Error && e.BlockCritical
+				}
+				return out, nil
 			}
 		}
 	}
@@ -107,14 +120,26 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	// CodeGuard con su propio cliente OCI (internal/trivydb), que verifica cada
 	// digest antes de abrir nada.
 	if !e.SkipDBUpdate {
-		if err := trivydb.Actualizar(ctx, dirCacheTrivy()); err != nil {
+		dir, errDir := dirCacheTrivy()
+		if errDir != nil {
+			// Sin ruta de caché no se puede ni bajar ni comprobar la base, y
+			// seguir con una relativa rompería el invariante de que CodeGuard y
+			// trivy miran EXACTAMENTE el mismo sitio.
+			return nil, errDir
+		}
+		if err := trivydb.Actualizar(ctx, dir); err != nil {
 			// Sin base no hay escaneo posible: trivy fallaría con un mensaje
 			// ajeno ("--skip-db-update cannot be specified on the first run").
 			// Con base vieja se sigue: detectar con la base de ayer gana por
 			// mucho a no detectar, y el fallo queda dicho en vez de callado.
-			if _, statErr := os.Stat(filepath.Join(dirCacheTrivy(), "db", "metadata.json")); statErr != nil {
+			if _, statErr := os.Stat(filepath.Join(dir, "db", "metadata.json")); statErr != nil {
 				return nil, fmt.Errorf("no hay base de vulnerabilidades y no se pudo bajar: %w", err)
 			}
+			// «Queda dicho» lo prometía el comentario y el código lo callaba: el
+			// error se evaporaba en esta rama, así que una base semanas sin
+			// refrescar por un fallo de red persistente no se notaba.
+			log.Printf("trivy: no se pudo actualizar la base de vulnerabilidades, "+
+				"se escanea con la copia local (puede estar desactualizada): %v", err)
 		}
 	}
 	args := []string{"fs", "--scanners", "vuln", "--format", "json", "--quiet", "--skip-db-update"}
@@ -175,7 +200,17 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 		}
 	}
 	if e.Cache != nil && clave != "" {
-		e.Cache.Guardar(map[string][]finding.Finding{clave: findings})
+		// Se persisten hechos puros (Blocking en falso): la política depende
+		// de e.BlockCritical, que la clave no incluye y cambia entre local y
+		// CI. Quien lee recalcula (ver arriba); guardar la decisión tomada
+		// aquí sería congelar política dentro de datos cacheados. Se copia
+		// para no tocar los findings que se devuelven a este llamante.
+		hechos := make([]finding.Finding, len(findings))
+		copy(hechos, findings)
+		for i := range hechos {
+			hechos[i].Blocking = false
+		}
+		e.Cache.Guardar(map[string][]finding.Finding{clave: hechos})
 	}
 	return findings, nil
 }
@@ -183,10 +218,18 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 // dirCacheTrivy es donde trivy espera su base: %LOCALAPPDATA%/trivy en
 // Windows. Se calcula aquí y no se recibe por configuración porque tiene que
 // coincidir EXACTAMENTE con donde trivy la va a leer.
-func dirCacheTrivy() string {
+func dirCacheTrivy() (string, error) {
 	if base := os.Getenv("LOCALAPPDATA"); base != "" {
-		return filepath.Join(base, "trivy")
+		return filepath.Join(base, "trivy"), nil
 	}
-	home, _ := os.UserCacheDir()
-	return filepath.Join(home, "trivy")
+	home, err := os.UserCacheDir()
+	if err != nil {
+		// El `_` de antes dejaba pasar una ruta RELATIVA: Join("", "trivy") da
+		// "trivy", que se resuelve contra el directorio de trabajo, así que la
+		// base se bajaba y se comprobaba en un sitio distinto del que trivy lee
+		// — justo el invariante que el comentario de arriba declara no
+		// negociable. Se falla explícito en vez de operar sobre una ruta ambigua.
+		return "", fmt.Errorf("no se pudo resolver el directorio de caché del usuario: %w", err)
+	}
+	return filepath.Join(home, "trivy"), nil
 }
