@@ -78,15 +78,18 @@ func (e Excepcion) vigente(ahora time.Time) (bool, string) {
 }
 
 func (e Excepcion) cubre(r Riesgo) bool {
-	if strings.TrimSpace(e.Artefacto) == "" {
+	eArt := strings.ToLower(strings.TrimSpace(e.Artefacto))
+	rArt := strings.ToLower(strings.TrimSpace(r.Artefacto))
+	if eArt == "" {
 		return false
 	}
 	// El artefacto llega como "gitleaks" o como "pmd 7.26.0" según si la ruta
-	// instalada lleva versión; se compara con coincidencia exacta o delimitada.
-	if e.Artefacto != r.Artefacto &&
-		!strings.HasPrefix(r.Artefacto, e.Artefacto+" ") &&
-		!strings.HasPrefix(r.Artefacto, e.Artefacto+"/") &&
-		!strings.HasPrefix(r.Artefacto, e.Artefacto+":") {
+	// instalada lleva versión; se compara con coincidencia exacta o delimitada insensible a mayúsculas.
+	if eArt != rArt &&
+		!strings.HasPrefix(rArt, eArt+" ") &&
+		!strings.HasPrefix(rArt, eArt+"/") &&
+		!strings.HasPrefix(rArt, eArt+"\\") &&
+		!strings.HasPrefix(rArt, eArt+":") {
 		return false
 	}
 	if e.Version != "" && !strings.EqualFold(e.Version, r.Version) {

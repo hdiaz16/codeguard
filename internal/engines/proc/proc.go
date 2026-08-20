@@ -120,7 +120,7 @@ func Correr(ctx context.Context, c *exec.Cmd, tope int64) (Salida, error) {
 	// ya está matando. El error resultante era "canceling Cmd: TerminateProcess:
 	// Access is denied" — ruido que enmascaraba la única causa que importa: se
 	// agotó el tiempo. Aquí se dice eso.
-	if ctx.Err() != nil && err != nil {
+	if ctx.Err() != nil {
 		// %w y no %v: el motivo tiene que viajar ENVUELTO para que el
 		// orquestador lo distinga con errors.Is en vez de comparar textos.
 		// Con %v el context.DeadlineExceeded se perdía y un motor que

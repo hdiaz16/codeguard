@@ -24,6 +24,9 @@ func runTool(ctx context.Context, dir, bin string, args ...string) (string, erro
 	// y rompen los acentos (mismo fix que en el adaptador de semgrep).
 	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 	salida, err := proc.Correr(ctx, cmd, topeSalida)
+	if ctx.Err() != nil {
+		return "", err
+	}
 	var exitErr *exec.ExitError
 	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, proc.ErrRecortada) {
 		return "", err // no arrancó (binario ausente, permisos...) o venció el plazo

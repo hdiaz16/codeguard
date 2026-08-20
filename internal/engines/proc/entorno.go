@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -108,9 +109,13 @@ func fusionarPATH(actual, vigente string) string {
 			if seg == "" {
 				continue
 			}
-			norm := strings.ToLower(filepath.Clean(seg))
-			if !vistos[norm] {
-				vistos[norm] = true
+			limpio := filepath.Clean(seg)
+			clave := limpio
+			if runtime.GOOS == "windows" {
+				clave = strings.ToLower(limpio)
+			}
+			if !vistos[clave] {
+				vistos[clave] = true
 				partes = append(partes, seg)
 			}
 		}
