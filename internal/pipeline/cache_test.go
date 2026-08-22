@@ -398,6 +398,13 @@ func copiarRulepackComo(t *testing.T, repo, version string) {
 		t.Skipf("no encuentro el rulepack en el árbol: %v", err)
 	}
 	destino := filepath.Join(repo, "rulepacks", version, "semgrep")
+	// Idempotente a propósito: montarRepo ya vendorea el rulepack, y las
+	// pruebas que además lo copian explícitamente (daemon, ejes del caché)
+	// chocaban con "The file exists" de os.CopyFS. Recopiar el mismo pack no
+	// es un error: es un no-op con derecho a serlo.
+	if err := os.RemoveAll(destino); err != nil {
+		t.Fatalf("no se pudo limpiar el destino del rulepack: %v", err)
+	}
 	if err := os.CopyFS(destino, os.DirFS(origen)); err != nil {
 		t.Fatalf("no se pudo copiar el rulepack como %s: %v", version, err)
 	}
