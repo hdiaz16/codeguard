@@ -302,6 +302,16 @@ func entornoConPipe(t *testing.T, datos, pipe string) []string {
 		if strings.HasPrefix(u, "LOCALAPPDATA=") || strings.HasPrefix(u, "CODEGUARD_PIPE=") {
 			continue
 		}
+		// GITHUB_ACTIONS y CI fuera SIEMPRE: el producto clasifica el run como
+		// "ci" al verlas, y en el runner de GitHub están en el entorno GLOBAL —
+		// se colaban a la ruta del GANCHO, que registraba sus hallazgos como
+		// "ci", y la paridad encontraba cero filas "local" que comparar. En una
+		// máquina de desarrollo no existen y el fallo era invisible; se
+		// reprodujo en local exportándolas (GITHUB_ACTIONS=true → rojo).
+		// correrComoCI las vuelve a poner a propósito para SU ruta.
+		if strings.HasPrefix(u, "GITHUB_ACTIONS=") || strings.HasPrefix(u, "CI=") {
+			continue
+		}
 		out = append(out, e)
 	}
 	return append(out, "LOCALAPPDATA="+datos, "CODEGUARD_PIPE="+pipe)

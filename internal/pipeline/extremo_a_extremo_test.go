@@ -651,6 +651,13 @@ func montarRepo(t *testing.T) string {
 		dotnetRestaurado = false
 	})
 	repo := repoBase(t)
+	// El rulepack va DENTRO del repo de juguete, igual que en la prueba de
+	// paridad y por el mismo motivo: sin él, en una máquina sin rulepack
+	// INSTALADO (el runner del CI, una instalación fresca) semgrep salía
+	// «0 hallazgo(s) en 0ms» —ni corrió— y la tabla lo acusaba de no ver la
+	// violación. En la máquina del desarrollador el rulepack instalado tapaba
+	// el hueco y el fallo era invisible.
+	copiarRulepack(t, repo)
 	for _, v := range violaciones() {
 		escribir(t, repo, v.archivo, v.contenido)
 	}
