@@ -6,7 +6,14 @@
 # - Un solo job windows-latest con -race sobre TODO: el runner trae mingw/gcc
 #   (el paso `gcc --version` lo confirma en cada corrida, no lo asume), y las
 #   carreras que importan viven en daemon/ipc — separar "paquetes portables"
-#   habría corrido race justo donde NO están.
+#   habría corrido race justo donde NO están las carreras.
+# - Los motores se aprovisionan con la MISMA receta medida de codeguard.yml
+#   (versiones y hashes de motores.json — los mismos bytes que las máquinas):
+#   la primera corrida sin motores enrojeció 20+ tests e2e de pipeline/daemon
+#   porque la compuerta hizo fail-closed sin gitleaks. Ese es el producto
+#   comportándose bien en un entorno cojo; los tests e2e son los valiosos y
+#   se corren de verdad, no se saltan. (Deduplicar esta receta en una acción
+#   compuesta queda anotado en W6 del plan.)
 # - Las pruebas de integración que necesitan proyectos de juguete se saltan
 #   solas sin CODEGUARD_TOY_* (comportamiento diseñado, ver README).
 # - Sin continue-on-error: un fallo ambiental se clasifica (fix o skip con
@@ -17,6 +24,7 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -32,8 +40,50 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
       - name: gcc presente (requisito de -race en windows)
         run: gcc --version
+
+      - name: Instalar motores (versiones fijadas en motores.json)
+        shell: pwsh
+        run: |
+          $m = Get-Content internal/engines/identidad/motores.json -Raw | ConvertFrom-Json
+          $engines = "$env:LOCALAPPDATA\CodeGuard\engines"
+          New-Item -ItemType Directory -Force $engines | Out-Null
+
+          foreach ($n in @("gitleaks", "trivy")) {
+            $v = $m.motores.$n.versiones | Select-Object -Last 1
+            Write-Host "descargando $n $($v.version)"
+            Invoke-WebRequest -Uri $v.url -OutFile "$env:TEMP\$n.zip" -UseBasicParsing
+            $h = (Get-FileHash "$env:TEMP\$n.zip" -Algorithm SHA256).Hash.ToLower()
+            if ($h -ne $v.sha256_zip) {
+              Write-Host "::error::el zip de $n no coincide con el checksum fijado ($h)"
+              exit 1
+            }
+            Expand-Archive "$env:TEMP\$n.zip" "$env:TEMP\$n" -Force
+            Copy-Item "$env:TEMP\$n\$n.exe" $engines -Force
+          }
+
+          foreach ($n in @("govulncheck", "staticcheck")) {
+            $spec = $m.paquetes.go.$n
+            Write-Host "go install $($spec.modulo)@$($spec.version)"
+            go install "$($spec.modulo)@$($spec.version)"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          Copy-Item "$(go env GOPATH)\bin\govulncheck.exe" $engines -Force
+          Copy-Item "$(go env GOPATH)\bin\staticcheck.exe" $engines -Force
+
+          $pins = @()
+          foreach ($q in $m.paquetes.pip.PSObject.Properties) { $pins += "$($q.Name)==$($q.Value)" }
+          Write-Host "pip install $($pins -join ' ')"
+          pip install @pins
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          echo "$(go env GOPATH)/bin" >> $env:GITHUB_PATH
+          echo "$engines" >> $env:GITHUB_PATH
+
       - name: go test -race
         env:
           CGO_ENABLED: "1"

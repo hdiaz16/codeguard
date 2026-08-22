@@ -1,0 +1,37 @@
+# Vigilancia de fondo (decisión firmada del plan, punto 7): lo que es valioso
+# pero no determinista o no barato no bloquea PRs — corre cada noche.
+#
+# - mutantes: cada invariante curado en tests/mutantes.json DEBE seguir
+#   protegido por su test (la mutación lo pone rojo). Un sobreviviente = un
+#   test que dejó de vigilar.
+# - suite: la misma matriz de tests del push, con OTRA semilla de -shuffle
+#   (radar de acoplamiento entre tests: el primer flake se investiga como
+#   defecto, no se reintenta a ciegas).
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # 08:00 UTC (02:00 CST; 03:00 en horario de verano)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutantes:
+    name: mutantes curados
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: campaña de mutantes
+        shell: pwsh
+        run: ./tests/mutantes.ps1
+
+  suite:
+    name: suite con otra semilla
+    uses: ./.github/workflows/test.yml

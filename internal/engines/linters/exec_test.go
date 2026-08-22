@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codeguard/internal/engines/proc"
 )
 
 // topeChico baja el tope de salida de runTool durante una prueba, para poder
@@ -51,9 +53,11 @@ func TestRunToolPropagaTimeoutAunqueRecorte(t *testing.T) {
 
 	inicio := time.Now()
 	// Escupe de inmediato más de lo que cabe y se queda colgado: el plazo lo
-	// corta con la salida ya recortada.
+	// corta con la salida ya recortada. El cuelgue es ping y no waitfor:
+	// waitfor falla intermitente («Cannot wait for the specified signal») y
+	// muere al instante con exit 1 — el test se quedaba sin proceso que matar.
 	out, err := runTool(ctx, t.TempDir(), "cmd", "/c",
-		"echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa & waitfor /t 10 nadie")
+		"echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa & ping 127.0.0.1 -n 30 >nul")
 
 	if d := time.Since(inicio); d > 8*time.Second {
 		t.Fatalf("runTool tardó %v: el plazo no cortó el proceso", d)
@@ -86,6 +90,67 @@ func TestRunToolToleraRecortePuro(t *testing.T) {
 	if int64(len(out)) > 16 {
 		t.Errorf("devolvió %d bytes pese al tope de 16", len(out))
 	}
+}
+
+// ejecutar es el contrato tipado sobre el que se apoyan las tres cáscaras:
+// estos son los HECHOS que promete en cada situación, medidos con procesos
+// reales. Si un campo miente aquí, mienten todos los adaptadores a la vez.
+func TestEjecutarEntregaLosHechos(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("la prueba usa cmd.exe")
+	}
+	ctx := context.Background()
+
+	t.Run("exito con salida", func(t *testing.T) {
+		r := ejecutar(ctx, t.TempDir(), "cmd", "/c", "echo hola")
+		if !r.Started || r.ExitCode != 0 || r.TimedOut || r.Truncated || r.Err != nil {
+			t.Fatalf("hechos equivocados: %+v", r)
+		}
+		if !strings.Contains(string(r.Stdout), "hola") {
+			t.Errorf("stdout = %q, se esperaba el eco", r.Stdout)
+		}
+	})
+	t.Run("exit 3 mudo", func(t *testing.T) {
+		r := ejecutar(ctx, t.TempDir(), "cmd", "/c", "exit /b 3")
+		if !r.Started || r.ExitCode != 3 {
+			t.Fatalf("hechos equivocados: %+v", r)
+		}
+	})
+	t.Run("binario ausente", func(t *testing.T) {
+		r := ejecutar(ctx, t.TempDir(), "no-existe-esta-herramienta-cg")
+		if r.Started || r.ExitCode != -1 || r.Err == nil {
+			t.Fatalf("un binario ausente tiene que decir Started=false y ExitCode=-1: %+v", r)
+		}
+	})
+	t.Run("plazo vencido", func(t *testing.T) {
+		corto, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+		defer cancel()
+		// ping y no waitfor: waitfor falla intermitente y muere al instante,
+		// dejando al plazo sin proceso colgado que cortar.
+		r := ejecutar(corto, t.TempDir(), "cmd", "/c", "ping 127.0.0.1 -n 30 >nul")
+		if !r.TimedOut || r.ExitCode != -1 {
+			t.Fatalf("un plazo agotado tiene que decir TimedOut y ExitCode=-1: %+v", r)
+		}
+	})
+	t.Run("contexto cancelado antes de arrancar", func(t *testing.T) {
+		muerto, cancel := context.WithCancel(ctx)
+		cancel()
+		r := ejecutar(muerto, t.TempDir(), "cmd", "/c", "echo hola")
+		if r.Started || !r.TimedOut || r.ExitCode != -1 {
+			t.Fatalf("sin proceso no puede haber Started=true ni código legible: %+v", r)
+		}
+	})
+	t.Run("recorte puro", func(t *testing.T) {
+		topeChico(t, 16)
+		r := ejecutar(ctx, t.TempDir(), "cmd", "/c",
+			"echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		if !r.Truncated || !r.Started || r.ExitCode != 0 {
+			t.Fatalf("hechos equivocados: %+v", r)
+		}
+		if !errors.Is(r.Err, proc.ErrRecortada) {
+			t.Errorf("Err = %v; el recorte tiene que viajar por identidad", r.Err)
+		}
+	})
 }
 
 // La otra mitad del contrato: el exit != 0 se tolera PORQUE hay salida que

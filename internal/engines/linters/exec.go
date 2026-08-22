@@ -15,38 +15,107 @@ import (
 // que las pruebas puedan provocar un recorte sin generar 64 MB.
 var topeSalida int64 = proc.MaxSalida
 
-// runTool ejecuta una herramienta y devuelve stdout+stderr combinados.
-// Un exit code != 0 NO es error si hubo salida (los linters salen con 1
-// cuando encuentran problemas); sin salida sí es fallo de ejecución.
-func runTool(ctx context.Context, dir, bin string, args ...string) (string, error) {
+// ExecResult es el contrato tipado de ejecución de una herramienta externa:
+// TODOS los hechos del transporte, sin una gota de política. Qué código de
+// salida significa «hallazgos», qué silencio es avería y qué recorte se
+// tolera lo decide cada adaptador leyendo estos campos — nunca el transporte
+// por él.
+//
+// Es el contrato definitivo: runTool, runToolConSalida y runToolSeparado
+// quedan como cáscaras de compatibilidad encima de ejecutar() y se migran
+// por tandas. NO añadas llamadores nuevos a esas tres; consume ejecutar().
+type ExecResult struct {
+	Stdout, Stderr []byte
+	// ExitCode es 0 si terminó bien; el del proceso si terminó con error;
+	// -1 si no arrancó, murió por señal o lo mató el plazo.
+	ExitCode int
+	// Started es false cuando no hubo proceso que interpretar: binario
+	// ausente, permisos, contexto ya cancelado antes de arrancar. Es el hecho
+	// Salida.Arranco del transporte, no una inferencia sobre el error. Un
+	// adaptador jamás convierte Started=false en «limpio».
+	Started bool
+	// TimedOut: el error ES un vencimiento o cancelación del context (por
+	// identidad, no por mirar el reloj: un proceso que terminó limpio justo
+	// antes de vencer el plazo NO está aquí). La salida puede estar a medias
+	// y el ExitCode no significa nada.
+	TimedOut bool
+	// Truncated describe el ESTADO de la salida (algún flujo superó el tope,
+	// está incompleta), no la causa: también vale true cuando al proceso lo
+	// mataron a media escritura. La causa se distingue por identidad en Err
+	// (proc.ErrRecortada = terminó solo y no cupo; TimedOut = lo mataron).
+	Truncated bool
+	// Err es el error crudo de proc.Correr, para errors.Is/errors.As.
+	Err error
+}
+
+// Combinada devuelve stdout seguido de stderr (el mismo contrato que
+// proc.Salida.Combinada), para adaptadores que leen diagnóstico como texto.
+func (r ExecResult) Combinada() string {
+	if len(r.Stderr) == 0 {
+		return string(r.Stdout)
+	}
+	return string(r.Stdout) + string(r.Stderr)
+}
+
+// ejecutar corre una herramienta y devuelve los hechos completos.
+func ejecutar(ctx context.Context, dir, bin string, args ...string) ExecResult {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	// Herramientas Python en Windows: sin esto leen/escriben en cp1252
 	// y rompen los acentos (mismo fix que en el adaptador de semgrep).
 	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
 	salida, err := proc.Correr(ctx, cmd, topeSalida)
-	if ctx.Err() != nil {
-		return "", err
+	r := ExecResult{
+		Stdout:    salida.Stdout,
+		Stderr:    salida.Stderr,
+		Started:   salida.Arranco,
+		TimedOut:  errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled),
+		Truncated: salida.Recortada,
+		Err:       err,
 	}
 	var exitErr *exec.ExitError
-	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, proc.ErrRecortada) {
-		return "", err // no arrancó (binario ausente, permisos...) o venció el plazo
+	switch {
+	case errors.As(err, &exitErr):
+		r.ExitCode = exitErr.ExitCode() // -1 si murió por señal
+	case err == nil || errors.Is(err, proc.ErrRecortada):
+		// terminó con código 0, con o sin recorte
+	default:
+		r.ExitCode = -1 // no arrancó, o lo mató el plazo: no hay código que leer
+	}
+	return r
+}
+
+// runTool ejecuta una herramienta y devuelve stdout+stderr combinados.
+// Un exit code != 0 NO es error si hubo salida (los linters salen con 1
+// cuando encuentran problemas); sin salida sí es fallo de ejecución.
+//
+// Cáscara de compatibilidad sobre ejecutar(); no añadas llamadores nuevos.
+func runTool(ctx context.Context, dir, bin string, args ...string) (string, error) {
+	r := ejecutar(ctx, dir, bin, args...)
+	// Por identidad del error y no por ctx.Err(): un proceso que terminó
+	// limpio justo antes de vencer el reloj es un análisis completo, y
+	// descartarlo aquí lo convertía en ("", nil) — un verde silencioso.
+	if r.TimedOut {
+		return "", r.Err
+	}
+	var exitErr *exec.ExitError
+	if r.Err != nil && !errors.As(r.Err, &exitErr) && !errors.Is(r.Err, proc.ErrRecortada) {
+		return "", r.Err // no arrancó (binario ausente, permisos...)
 	}
 	// El recorte se tolera por la IDENTIDAD del error y no por la bandera
-	// salida.Recortada: la bandera también vale true cuando al motor lo mataron
+	// Truncated: la bandera también vale true cuando al motor lo mataron
 	// a media escritura, y mirarla ahí devolvía la salida parcial con err nil.
-	// El daño no era el mensaje perdido — govet cachea lo que devolvamos bajo la
-	// clave de contenido, así que el análisis a medias se congelaba y se servía
-	// en las corridas siguientes como si estuviera completo.
+	// El daño no era el mensaje perdido — govet cachea lo que devolvamos bajo
+	// la clave de contenido, así que el análisis a medias se congelaba y se
+	// servía en las corridas siguientes como si estuviera completo.
 	//
 	// Los linters se leen línea por línea: un texto recortado sigue siendo
 	// útil, a diferencia de un JSON a medias.
-	combinada := string(salida.Combinada())
+	combinada := r.Combinada()
 	// La segunda mitad del contrato de arriba: el exit != 0 se tolera PORQUE
 	// hay diagnósticos que leer. Con cero bytes no hay análisis que defender —
-	// devolver ("", nil) convertía la avería en «corrió y no encontró nada»,
-	// el mismo verde silencioso que runToolConSalida cierra más abajo.
-	// %v y no ExitCode(): con muerte por señal ExitCode() es -1 y «salió con
+	// devolver ("", nil) convertía la avería en «corrió y no encontró nada».
+	// %v y no ExitCode: con muerte por señal el código es -1 y «salió con
 	// código -1» confunde; el Error() de ExitError distingue ambos casos.
 	if exitErr != nil && strings.TrimSpace(combinada) == "" {
 		return "", fmt.Errorf("%s salió con %v sin escribir nada: avería de ejecución, no un análisis limpio",
@@ -77,14 +146,12 @@ func runTool(ctx context.Context, dir, bin string, args ...string) (string, erro
 //
 // El tercer caso es el que este producto no se puede permitir callar, porque
 // su silencio es idéntico al del primero.
+// Cáscara de compatibilidad sobre ejecutar(); no añadas llamadores nuevos.
 func runToolConSalida(ctx context.Context, dir, bin string, args ...string) (texto string, fallo bool, err error) {
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Dir = dir
-	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
-	salida, err := proc.Correr(ctx, cmd, topeSalida)
+	r := ejecutar(ctx, dir, bin, args...)
 	var exitErr *exec.ExitError
-	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, proc.ErrRecortada) {
-		return "", true, err // no arrancó, o venció el plazo
+	if r.Err != nil && !errors.As(r.Err, &exitErr) && !errors.Is(r.Err, proc.ErrRecortada) {
+		return "", true, r.Err // no arrancó, o venció el plazo
 	}
 	// El RECORTE también cuenta como fallo, y es la cuarta situación que faltaba
 	// en la tabla de arriba: el proceso superó el tope y se le mató a media
@@ -95,7 +162,7 @@ func runToolConSalida(ctx context.Context, dir, bin string, args ...string) (tex
 	// esta función nació para cerrar, por otra puerta. El texto parcial se sigue
 	// devolviendo —sus diagnósticos son válidos, se leen línea a línea—; lo que
 	// cambia es que ya no viaja con el sello de «limpio de verdad».
-	return string(salida.Combinada()), errors.As(err, &exitErr) || errors.Is(err, proc.ErrRecortada), nil
+	return r.Combinada(), exitErr != nil || errors.Is(r.Err, proc.ErrRecortada), nil
 }
 
 // runToolSeparado devuelve stdout y stderr SIN MEZCLAR.
@@ -121,16 +188,14 @@ func runToolConSalida(ctx context.Context, dir, bin string, args ...string) (tex
 // El código de salida NO se devuelve, y no es un olvido: con -json vet sale con
 // 0 aunque encuentre cosas, así que aquí el código no distingue nada que los
 // canales no digan mejor.
+// Cáscara de compatibilidad sobre ejecutar(); no añadas llamadores nuevos.
 func runToolSeparado(ctx context.Context, dir, bin string, args ...string) (stdout, stderr string, err error) {
-	cmd := exec.CommandContext(ctx, bin, args...)
-	cmd.Dir = dir
-	cmd.Env = proc.Entorno("PYTHONUTF8=1", "PYTHONIOENCODING=utf-8")
-	salida, err := proc.Correr(ctx, cmd, topeSalida)
+	r := ejecutar(ctx, dir, bin, args...)
 	var exitErr *exec.ExitError
-	if err != nil && !errors.As(err, &exitErr) && !errors.Is(err, proc.ErrRecortada) {
-		return "", "", err // no arrancó (binario ausente, permisos...) o venció el plazo
+	if r.Err != nil && !errors.As(r.Err, &exitErr) && !errors.Is(r.Err, proc.ErrRecortada) {
+		return "", "", r.Err // no arrancó (binario ausente, permisos...) o venció el plazo
 	}
-	return string(salida.Stdout), string(salida.Stderr), nil
+	return string(r.Stdout), string(r.Stderr), nil
 }
 
 // (runToolStdin vivió aquí para preguntarle a gofmt por stdin; se fue cuando

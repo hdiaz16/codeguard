@@ -44,6 +44,12 @@ type Salida struct {
 	Stdout    []byte
 	Stderr    []byte
 	Recortada bool // se alcanzó el tope; la salida está incompleta
+	// Arranco: c.Start() tuvo éxito — hubo un proceso, terminara como
+	// terminara. false = no hubo ejecución que interpretar (binario ausente,
+	// permisos, contexto ya cancelado antes de arrancar). Es un HECHO del
+	// transporte, no una inferencia: los adaptadores no pueden adivinarlo
+	// desde el error sin acoplarse a los internos de os/exec.
+	Arranco bool
 }
 
 // Combinada devuelve stdout seguido de stderr, para los motores que sólo
@@ -120,7 +126,11 @@ func Correr(ctx context.Context, c *exec.Cmd, tope int64) (Salida, error) {
 	// ya está matando. El error resultante era "canceling Cmd: TerminateProcess:
 	// Access is denied" — ruido que enmascaraba la única causa que importa: se
 	// agotó el tiempo. Aquí se dice eso.
-	if ctx.Err() != nil {
+	// err != nil ADEMÁS del ctx: si el proceso terminó limpio (Wait nil) y el
+	// reloj venció un instante después, el análisis SÍ se completó — reescribir
+	// ese éxito como «plazo agotado» convertía una corrida válida en una capa
+	// degradada por una carrera de microsegundos entre Wait y esta línea.
+	if ctx.Err() != nil && err != nil {
 		// %w y no %v: el motivo tiene que viajar ENVUELTO para que el
 		// orquestador lo distinga con errors.Is en vez de comparar textos.
 		// Con %v el context.DeadlineExceeded se perdía y un motor que
@@ -130,7 +140,8 @@ func Correr(ctx context.Context, c *exec.Cmd, tope int64) (Salida, error) {
 		// en el presupuesto y la siguiente irá con caché.
 		err = fmt.Errorf("plazo agotado: el motor no terminó a tiempo: %w", ctx.Err())
 	}
-	s := Salida{Stdout: so.buf.Bytes(), Stderr: se.buf.Bytes(), Recortada: so.recortada || se.recortada}
+	s := Salida{Stdout: so.buf.Bytes(), Stderr: se.buf.Bytes(),
+		Recortada: so.recortada || se.recortada, Arranco: true}
 	// Sólo cuando no hubo ningún otro fallo: si el motor murió por plazo o por
 	// un error de Wait, ESA es la causa y el recorte es una consecuencia. Sobre-
 	// escribirla aquí sería borrar el motivo que el orquestador necesita.

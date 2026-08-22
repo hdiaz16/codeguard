@@ -1,0 +1,29 @@
+[
+  {
+    "id": "runTool-verde-silencioso",
+    "porque": "La guarda ExitError+0bytes de runTool es el cierre de [21]; si un refactor la desactiva, un linter averiado vuelve a reportarse como analisis limpio.",
+    "archivo": "internal/engines/linters/exec.go",
+    "busca": "if exitErr != nil && strings.TrimSpace(combinada) == \"\" {",
+    "reemplaza": "if false && exitErr != nil && strings.TrimSpace(combinada) == \"\" {",
+    "paquete": "./internal/engines/linters/",
+    "test": "TestRunToolExitSinSalidaEsAveria"
+  },
+  {
+    "id": "runToolConSalida-fallo-mudo",
+    "porque": "La bandera fallo es lo unico que separa 'salio 0 limpio' de 'salio !=0 sin diagnosticos' en tsc/bandit/gosec; apagarla revive el verde silencioso original de tsc.",
+    "archivo": "internal/engines/linters/exec.go",
+    "busca": "return r.Combinada(), exitErr != nil || errors.Is(r.Err, proc.ErrRecortada), nil",
+    "reemplaza": "return r.Combinada(), false, nil",
+    "paquete": "./internal/daemon/",
+    "test": "TestNingunMotorPuedeDecirLimpioSinHaberMirado"
+  },
+  {
+    "id": "ejecutar-started-asumido",
+    "porque": "Started debe ser el hecho Salida.Arranco del transporte; asumirlo true convierte 'no hubo ejecucion' (binario ausente, ctx pre-cancelado) en un proceso que existio.",
+    "archivo": "internal/engines/linters/exec.go",
+    "busca": "Started:   salida.Arranco,",
+    "reemplaza": "Started:   true,",
+    "paquete": "./internal/engines/linters/",
+    "test": "TestEjecutarEntregaLosHechos"
+  }
+]
