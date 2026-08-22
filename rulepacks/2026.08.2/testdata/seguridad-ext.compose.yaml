@@ -1,0 +1,12 @@
+# Fixture de semgrep --test — no es código del producto.
+# Casos de las reglas compose-* de seguridad-ext.yaml.
+services:
+  agente:
+    image: registro.invalido/agente:1.2.3
+    # ruleid: compose-privileged-true
+    privileged: true
+    # ruleid: compose-network-mode-host
+    network_mode: "host"
+    volumes:
+      # ruleid: compose-docker-socket-mounted
+      - /var/run/docker.sock:/var/run/docker.sock

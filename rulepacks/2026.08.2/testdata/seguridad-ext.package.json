@@ -1,0 +1,11 @@
+// Fixture de semgrep --test — no es código del producto (el // rompería un
+// JSON real; semgrep generic solo ve texto).
+{
+  "name": "fixture-no-producto",
+  "dependencies": {
+    // ruleid: npm-typosquatting-dependency
+    "lodahs": "1.0.0",
+    // ruleid: npm-vulnerable-lodash-cve
+    "lodash": "4.17.15"
+  }
+}

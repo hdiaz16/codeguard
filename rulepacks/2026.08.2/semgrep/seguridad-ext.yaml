@@ -693,7 +693,16 @@ rules:
       why: "Ejecutar procesos dentro de un contenedor como root facilita escapes y ataques al host."
       fix_hint: "Declara un usuario no privilegiado con 'USER <usuario>' antes del ENTRYPOINT/CMD."
     patterns:
-      - pattern-regex: '(?is)\bFROM\b(?!.*?\bUSER\s+[a-zA-Z0-9_\-]+)'
+      # Anclado a inicio de línea en AMBOS lados y SENSIBLE a mayúsculas: la
+      # instrucción FROM de un Dockerfile empieza la línea y por convención va
+      # en mayúsculas. Un \bFROM\b suelto con (?i) cazaba el FROM de cualquier
+      # SQL y el `from x import y` de Python — y semgrep --test ignora el
+      # filtro paths:, así que la regla disparaba sobre los testdata de los
+      # demás lenguajes y el corpus entero salía rojo (medido: era la única
+      # regla generic del pack sin anclar). Un Dockerfile con `from` en
+      # minúsculas es legal y se escapa: el precio de no marcar cada import
+      # de Python del planeta; el filtro paths sigue siendo la guarda real.
+      - pattern-regex: '(?ms)^\s*FROM\b(?!.*^\s*USER\s+[a-zA-Z0-9_\-]+)'
 
   - id: dockerfile-mutable-latest-tag
     languages: [generic]

@@ -117,3 +117,41 @@ function politicasCors(app, cors) {
   // ok: cors-wildcard-con-credenciales
   app.use(cors({ origin: "https://app.ejemplo.com", credentials: true }));
 }
+
+function evaluacionDinamica(expresion: string) {
+  // ruleid: ts-new-function-eval
+  const evaluar = new Function("return " + expresion);
+  return evaluar();
+}
+
+function mensajeria(ventana: Window, datos: object) {
+  // ruleid: ts-postmessage-wildcard
+  ventana.postMessage(datos, '*');
+  // ok: ts-postmessage-wildcard
+  ventana.postMessage(datos, 'https://app.ejemplo.com');
+}
+
+function sesion(token: string) {
+  // ruleid: ts-localstorage-token
+  localStorage.setItem("authToken", token);
+  // ok: ts-localstorage-token
+  localStorage.setItem("preferencias-tema", "oscuro");
+}
+
+function fusionar(destino: Record<string, unknown>, origen: Record<string, unknown>) {
+  // ruleid: ts-prototype-pollution-merge
+  for (const clave in origen) {
+    destino[clave] = origen[clave];
+  }
+}
+
+function redirigir(destino: string) {
+  // ruleid: ts-open-redirect-location
+  window.location.href = destino;
+}
+
+function validarEntrada(texto: string) {
+  // ruleid: ts-redos-nested-quantifiers
+  const patron = /^(a+)+$/;
+  return patron.test(texto);
+}
