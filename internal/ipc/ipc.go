@@ -207,16 +207,23 @@ func Listen() (net.Listener, error) {
 // Call conecta con el daemon, manda la petición y espera la respuesta.
 // La conexión debe ser inmediata (el daemon está o no está: 2 s); la
 // respuesta puede tardar hasta timeout + margen, porque el daemon corta
-// sus motores antes del deadline y siempre alcanza a responder.
 func Call(req *Request, timeout time.Duration) (*Response, error) {
 	name, err := PipeName()
 	if err != nil {
 		return nil, err
 	}
-	dial := 2 * time.Second
-	conn, err := winio.DialPipe(name, &dial)
-	if err != nil {
-		return nil, err
+	var conn net.Conn
+	limite := time.Now().Add(2 * time.Second)
+	for {
+		dial := 500 * time.Millisecond
+		conn, err = winio.DialPipe(name, &dial)
+		if err == nil {
+			break
+		}
+		if time.Now().After(limite) {
+			return nil, err
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout + 3*time.Second))

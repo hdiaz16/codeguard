@@ -32,20 +32,27 @@ var (
 	ErrPolicyMismatch     = errors.New("attest: discrepancia en PolicyHash (posible ataque de downgrade)")
 	ErrExpired            = errors.New("attest: atestación expirada")
 	ErrNotYetValid        = errors.New("attest: timestamp de atestación en el futuro")
+	ErrAmbiguousTrailer   = errors.New("attest: múltiples trailers CodeGuard-Attestation contradictorios en el bloque final")
+	ErrNoAttestation      = errors.New("attest: commit no contiene atestación CodeGuard")
+	ErrParentMismatch     = errors.New("attest: discrepancia en commits padres (posible trasplante de grafo o cherry-pick no autorizado)")
+	ErrAuthorMismatch     = errors.New("attest: discrepancia en autor/identidad del commit")
+	ErrRefMismatch        = errors.New("attest: discrepancia en rama/ref de destino")
 )
 
-// Claims contiene los datos de procedencia firmados.
-// No usa omitempty para garantizar determinismo estricto en la serialización.
+// Claims contiene los datos de procedencia y linaje firmados.
 type Claims struct {
-	Version    int    `json:"v"`
-	TreeSHA    string `json:"tree"`
-	CommitSHA  string `json:"commit"`
-	ParentSHA  string `json:"parent"`
-	RepoID     string `json:"repo"`
-	PolicyHash string `json:"policy"`
-	KeyID      string `json:"kid"`
-	Nonce      string `json:"nonce"`
-	Timestamp  int64  `json:"ts"`
+	Version        int      `json:"v"`
+	TreeSHA        string   `json:"tree"`
+	CommitSHA      string   `json:"commit"`
+	ParentSHAs     []string `json:"parents"` // Orden significativo (p1, p2 para merges; [] para root)
+	AuthorEmail    string   `json:"author"`
+	CommitterEmail string   `json:"committer"`
+	TargetRef      string   `json:"ref"`
+	RepoID         string   `json:"repo"`
+	PolicyHash     string   `json:"policy"`
+	KeyID          string   `json:"kid"`
+	Nonce          string   `json:"nonce"`
+	Timestamp      int64    `json:"ts"`
 }
 
 // Attestation empaqueta los claims con su firma Ed25519 en base64url.
@@ -71,8 +78,15 @@ func validGitSHA(s string) bool {
 	return (len(s) == 40 || len(s) == 64) && isHex(s)
 }
 
+func (c *Claims) normalize() {
+	if c.ParentSHAs == nil {
+		c.ParentSHAs = []string{}
+	}
+}
+
 // Validate comprueba que los campos esenciales de Claims sean válidos.
-func (c Claims) Validate() error {
+func (c *Claims) Validate() error {
+	c.normalize()
 	if c.Version != Version {
 		return fmt.Errorf("%w: versión %d", ErrUnsupportedVersion, c.Version)
 	}
@@ -82,8 +96,10 @@ func (c Claims) Validate() error {
 	if c.CommitSHA != "" && !validGitSHA(c.CommitSHA) {
 		return fmt.Errorf("%w: commit_sha inválido", ErrMalformed)
 	}
-	if c.ParentSHA != "" && !validGitSHA(c.ParentSHA) {
-		return fmt.Errorf("%w: parent_sha inválido", ErrMalformed)
+	for i, p := range c.ParentSHAs {
+		if !validGitSHA(p) {
+			return fmt.Errorf("%w: parent_sha[%d] inválido", ErrMalformed, i)
+		}
 	}
 	if c.PolicyHash == "" || !isHex(c.PolicyHash) {
 		return fmt.Errorf("%w: policy_hash inválido", ErrMalformed)
@@ -101,7 +117,7 @@ func (c Claims) Validate() error {
 }
 
 // CanonicalBytes produce la carga de bytes determinista sobre la que se calcula la firma.
-func (c Claims) CanonicalBytes() ([]byte, error) {
+func (c *Claims) CanonicalBytes() ([]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}

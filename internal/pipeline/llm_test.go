@@ -149,6 +149,9 @@ func configConModelo(rulepack string, urlModelo string) string {
 
 func TestLaCapaLLMNoBloqueaAunqueElModeloInsista(t *testing.T) {
 	bin, binDaemon, repo, datos, pipe := prepararLLM(t)
+	copiarRulepack(t, repo)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "añadir rulepack", "--no-verify")
 	modelo := levantarModelo(t, "app/tocado.py", 1)
 	escribir(t, repo, ".codeguard/config.yaml", configConModelo("2026.08.2", modelo.URL))
 	escribir(t, repo, "app/tocado.py", "def suma(a: int, b: int) -> int:\n    return a + b\n")
@@ -170,7 +173,7 @@ func TestLaCapaLLMNoBloqueaAunqueElModeloInsista(t *testing.T) {
 	// esperado al modelo, la primera llamada sería anterior a la respuesta.
 	if !modelo.esperarLlamada(60 * time.Second) {
 		t.Fatalf("el modelo no recibió ninguna llamada: la capa LLM no se encendió y "+
-			"esta prueba no ha medido nada.\n%s", salida)
+			"esta prueba no ha medido nada.\n%s\n--- LOG DAEMON ---\n%s", salida, colaDelLog(t, datos))
 	}
 	if modelo.primera.Before(inicio.Add(tardo)) {
 		t.Errorf("el modelo recibió la llamada ANTES de que el gancho terminara: "+
@@ -220,6 +223,9 @@ func TestLaCapaLLMNoBloqueaAunqueElModeloInsista(t *testing.T) {
 
 func TestLoQueViajaAlModeloVaRedactado(t *testing.T) {
 	bin, binDaemon, repo, datos, pipe := prepararLLM(t)
+	copiarRulepack(t, repo)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "añadir rulepack", "--no-verify")
 	modelo := levantarModelo(t, "app/conexion.py", 1)
 	escribir(t, repo, ".codeguard/config.yaml", configConModelo("2026.08.2", modelo.URL))
 

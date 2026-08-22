@@ -298,7 +298,8 @@ func entornoConPipe(t *testing.T, datos, pipe string) []string {
 	t.Helper()
 	var out []string
 	for _, e := range sinGOROOT(os.Environ()) {
-		if strings.HasPrefix(strings.ToUpper(e), "LOCALAPPDATA=") {
+		u := strings.ToUpper(e)
+		if strings.HasPrefix(u, "LOCALAPPDATA=") || strings.HasPrefix(u, "CODEGUARD_PIPE=") {
 			continue
 		}
 		out = append(out, e)

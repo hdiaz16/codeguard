@@ -34,8 +34,9 @@ func splitTrailer(line string) (string, string) {
 	return strings.TrimSpace(line[:idx]), strings.TrimSpace(line[idx+1:])
 }
 
-// ExtractTrailer extrae el valor del trailer CodeGuard-Attestation del mensaje de commit.
-func ExtractTrailer(message string) (string, bool) {
+// ExtractTrailer extrae el valor del trailer CodeGuard-Attestation del bloque final de trailers.
+// Retorna ErrNoAttestation si no existe, o ErrAmbiguousTrailer si existen múltiples trailers contradictorios.
+func ExtractTrailer(message string) (string, error) {
 	message = NormalizeNewlines(message)
 	lines := strings.Split(message, "\n")
 
@@ -45,29 +46,34 @@ func ExtractTrailer(message string) (string, bool) {
 		end--
 	}
 	if end == 0 {
-		return "", false
+		return "", ErrNoAttestation
 	}
 
-	// Retroceder en el bloque contiguo de trailers
+	// Retroceder en el bloque contiguo de trailers al final del mensaje
 	start := end
 	for start > 0 && isTrailerLine(lines[start-1]) {
 		start--
 	}
 	if start == end {
-		return "", false
+		return "", ErrNoAttestation
 	}
 
-	var found string
+	var found []string
 	for i := start; i < end; i++ {
 		k, v := splitTrailer(lines[i])
 		if strings.EqualFold(k, TrailerKey) {
-			found = v
+			found = append(found, v)
 		}
 	}
-	if found == "" {
-		return "", false
+
+	switch len(found) {
+	case 0:
+		return "", ErrNoAttestation
+	case 1:
+		return found[0], nil
+	default:
+		return "", fmt.Errorf("%w: encontrados %d trailers", ErrAmbiguousTrailer, len(found))
 	}
-	return found, true
 }
 
 // InjectTrailer inserta o actualiza de forma idempotente el trailer CodeGuard-Attestation.

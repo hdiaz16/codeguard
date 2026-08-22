@@ -18,6 +18,9 @@ const (
 // VerifyOptions define los criterios de aceptación deterministas del verificador.
 type VerifyOptions struct {
 	ExpectedTreeSHA    string        // Hash del árbol Git del commit (Anti-Replay)
+	ExpectedParentSHAs []string      // Hashes de los commits padres (Binding de Grafo e Historia)
+	ExpectedAuthor     string        // Correo del autor del commit (Binding de Identidad)
+	ExpectedRef        string        // Rama destino requerida (Context Binding)
 	ExpectedPolicyHash string        // Hash de la política vigente (Anti-Downgrade)
 	MaxAge             time.Duration // Antigüedad máxima permitida (0 = ilimitada)
 	MaxClockSkew       time.Duration // Tolerancia para timestamps en el futuro
@@ -93,14 +96,44 @@ func (v *Ed25519Verifier) Verify(a *Attestation, opts VerifyOptions) error {
 		}
 	}
 
-	// 2. Anti-Downgrade: binding a PolicyHash
+	// 2. Binding de Grafo e Historia: ParentSHAs
+	if len(opts.ExpectedParentSHAs) > 0 || len(a.Claims.ParentSHAs) > 0 {
+		if len(a.Claims.ParentSHAs) != len(opts.ExpectedParentSHAs) {
+			return fmt.Errorf("%w: cantidad de padres (%d) != esperado (%d)",
+				ErrParentMismatch, len(a.Claims.ParentSHAs), len(opts.ExpectedParentSHAs))
+		}
+		for i := range opts.ExpectedParentSHAs {
+			if subtle.ConstantTimeCompare([]byte(strings.ToLower(a.Claims.ParentSHAs[i])), []byte(strings.ToLower(opts.ExpectedParentSHAs[i]))) != 1 {
+				return fmt.Errorf("%w: padre[%d] %s != esperado %s",
+					ErrParentMismatch, i, a.Claims.ParentSHAs[i], opts.ExpectedParentSHAs[i])
+			}
+		}
+	}
+
+	// 3. Binding de Identidad de Autor
+	if opts.ExpectedAuthor != "" && a.Claims.AuthorEmail != "" {
+		if !strings.EqualFold(a.Claims.AuthorEmail, opts.ExpectedAuthor) {
+			return fmt.Errorf("%w: autor firmado %s != esperado %s",
+				ErrAuthorMismatch, a.Claims.AuthorEmail, opts.ExpectedAuthor)
+		}
+	}
+
+	// 4. Binding de Contexto de Rama
+	if opts.ExpectedRef != "" && a.Claims.TargetRef != "" {
+		if !strings.EqualFold(a.Claims.TargetRef, opts.ExpectedRef) {
+			return fmt.Errorf("%w: ref firmado %s != esperado %s",
+				ErrRefMismatch, a.Claims.TargetRef, opts.ExpectedRef)
+		}
+	}
+
+	// 5. Anti-Downgrade: binding a PolicyHash
 	if opts.ExpectedPolicyHash != "" {
 		if subtle.ConstantTimeCompare([]byte(strings.ToLower(a.Claims.PolicyHash)), []byte(strings.ToLower(opts.ExpectedPolicyHash))) != 1 {
 			return fmt.Errorf("%w: obtenido %s, esperado %s", ErrPolicyMismatch, a.Claims.PolicyHash, opts.ExpectedPolicyHash)
 		}
 	}
 
-	// 3. Ventana de Frescura y Clock Skew
+	// 6. Ventana de Frescura y Clock Skew
 	now := opts.Now
 	if now.IsZero() {
 		now = time.Now().UTC()

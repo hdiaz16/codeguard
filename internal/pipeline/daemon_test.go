@@ -358,11 +358,7 @@ func colaDelLog(t *testing.T, datos string) string {
 	if err != nil {
 		return "(el daemon no dejó log en " + datos + ")"
 	}
-	lineas := strings.Split(strings.TrimRight(string(b), "\r\n"), "\n")
-	if len(lineas) > 25 {
-		lineas = lineas[len(lineas)-25:]
-	}
-	return "─── final del log del daemon ───\n" + strings.Join(lineas, "\n")
+	return "─── log del daemon ───\n" + string(b)
 }
 
 // noParticiparon devuelve los motores esperados que no aparecieron.

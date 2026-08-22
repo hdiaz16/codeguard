@@ -84,9 +84,9 @@ func TestTrailerInjectionAndExtraction(t *testing.T) {
 		t.Errorf("El mensaje no contiene el trailer inyectado")
 	}
 
-	extraido, ok := ExtractTrailer(msgConTrailer)
-	if !ok || extraido != attValue {
-		t.Errorf("ExtractTrailer = (%q, %v), want (%q, true)", extraido, ok, attValue)
+	extraido, err := ExtractTrailer(msgConTrailer)
+	if err != nil || extraido != attValue {
+		t.Errorf("ExtractTrailer = (%q, %v), want (%q, nil)", extraido, err, attValue)
 	}
 
 	// Idempotencia: Inyectar un valor nuevo debe reemplazar el anterior
@@ -100,9 +100,9 @@ func TestTrailerInjectionAndExtraction(t *testing.T) {
 		t.Errorf("InjectTrailer duplicó el trailer en vez de actualizarlo")
 	}
 
-	extraidoNuevo, ok := ExtractTrailer(msgActualizado)
-	if !ok || extraidoNuevo != attNuevo {
-		t.Errorf("ExtractTrailer tras update = (%q, %v), want (%q, true)", extraidoNuevo, ok, attNuevo)
+	extraidoNuevo, err := ExtractTrailer(msgActualizado)
+	if err != nil || extraidoNuevo != attNuevo {
+		t.Errorf("ExtractTrailer tras update = (%q, %v), want (%q, nil)", extraidoNuevo, err, attNuevo)
 	}
 }
 

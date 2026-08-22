@@ -1,7 +1,4 @@
-// Package llm es el cliente de la capa de consejo. Habla dos dialectos —el de
-// OpenAI, que copiaron casi todos, y el de Anthropic— y con eso alcanza para
-// los servicios que un equipo usa de verdad, incluido un modelo local.
-// Sin SDK: net/http.
+// Package llm es el cliente de la capa de consejo.
 package llm
 
 import (
@@ -12,16 +9,11 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
-	"net/url"
-	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"codeguard/internal/config"
-	"codeguard/internal/secreto"
 	"codeguard/internal/textutil"
 )
 
@@ -47,105 +39,6 @@ type Client struct {
 // El streaming NO pasa por aquí: usa bufio.Scanner línea a línea, y limitarlo
 // rompería respuestas largas legítimas.
 const maxRespuestaLLM = 32 << 20
-
-// leerSecreto es el punto de sustitución de las pruebas.
-//
-// La bóveda real no se puede ROMPER a propósito desde un test —haría falta
-// corromper el Administrador de credenciales del usuario, o pararle el
-// servicio— y el fallo de bóveda es justamente la rama que este código existe
-// para distinguir. Mismo patrón, y por la misma razón, que las sustituciones de
-// cmd/daemon/configllm.go.
-var leerSecreto = secreto.Leer
-
-// ClaveDe resuelve la clave del modelo, primero de la bóveda del sistema y
-// luego del entorno.
-//
-// El orden importa y la caída al entorno NO es un descuido: es lo que permite
-// que quien exporta la clave a mano para una prueba, o la inyecta en el CI por
-// variable, siga funcionando sin migrar nada. Lo que se deja de hacer es
-// ESCRIBIRLA ahí (ver cmd/daemon/configllm.go).
-//
-// La bóveda se consulta en cada llamada en vez de cachearse al arrancar, y eso
-// también es a propósito: la versión anterior leía la clave del entorno del
-// proceso, así que el daemon arrancaba sin ella cada vez que se reiniciaba
-// —varias veces por semana, una por actualización— y la capa semántica se
-// apagaba sola. El log decía "sin API key" mientras la clave llevaba días
-// guardada. Leer en el momento de usarla no tiene ese modo de fallo.
-func ClaveDe(cfg config.LLM) string {
-	if cfg.APIKeyEnv == "" {
-		return ""
-	}
-	guardada, err := leerSecreto(cfg.APIKeyEnv)
-	clave, aviso := decidirClave(cfg.APIKeyEnv, guardada, err, os.Getenv(cfg.APIKeyEnv))
-	avisarDeLaBoveda(aviso)
-	return clave
-}
-
-// decidirClave dice de dónde sale la clave y qué hay que contar en voz alta.
-//
-// Es pura y vive separada de la bóveda para poder probar la distinción que
-// importa —"aquí no hay nada guardado" contra "la bóveda falló"— sin tocar el
-// Administrador de credenciales de nadie.
-//
-// Aquí estaba el defecto: `if v, err := secreto.Leer(...); err == nil && v !=
-// ""` metía las dos cosas en el mismo saco. Una bóveda corrupta, sin permisos o
-// con el servicio parado caía EXACTAMENTE igual que "todavía no se ha migrado",
-// y río abajo el síntoma era el de siempre —"sin endpoint/API key, capa
-// apagada"—, así que el dev leía "no configuraste la clave" cuando lo que
-// pasaba es que su bóveda estaba rota. La avería se disfrazaba de descuido, que
-// es el peor diagnóstico posible: manda a arreglar lo que ya estaba bien.
-//
-// La caída al entorno se CONSERVA aun con la bóveda averiada, y no es
-// resignación: la capa de consejo nunca es requisito para commitear (P2), así
-// que negarse a mirar el entorno convertiría un fallo de la bóveda en una capa
-// apagada incluso cuando la variable tiene una clave perfectamente buena. Lo
-// que NO se conserva es el silencio — el fallo se registra, y el aviso dice si
-// el entorno salvó la llamada o si además se quedó sin clave.
-func decidirClave(nombreVar, guardada string, errBoveda error, delEntorno string) (clave, aviso string) {
-	switch {
-	case errBoveda == nil && guardada != "":
-		return guardada, ""
-	case errBoveda == nil || secreto.NoEncontrado(errBoveda):
-		// El camino de siempre: no hay nada guardado —no se ha migrado, o esta
-		// máquina no tiene bóveda—. Se cae al entorno sin decir nada, porque no
-		// ha fallado nada.
-		return delEntorno, ""
-	}
-	if delEntorno != "" {
-		return delEntorno, fmt.Sprintf("la bóveda no pudo leer %s (%v). Se usó el valor de la "+
-			"variable de entorno, así que la capa sigue en pie, pero la clave GUARDADA no se está "+
-			"leyendo: revisa el Administrador de credenciales", nombreVar, errBoveda)
-	}
-	return "", fmt.Sprintf("la bóveda no pudo leer %s (%v) y la variable de entorno tampoco tiene "+
-		"valor: la capa de consejo queda apagada por un FALLO de la bóveda, no porque falte "+
-		"configurar la clave", nombreVar, errBoveda)
-}
-
-var (
-	muAviso     sync.Mutex
-	ultimoAviso string
-)
-
-// avisarDeLaBoveda registra el fallo, pero no una vez por llamada.
-//
-// ClaveDe se consulta en CADA uso —a propósito, ver arriba— y la pantalla de
-// configuración la llama en cada refresco: sin filtro, una bóveda averiada
-// escribe la misma línea decenas de veces y entierra todo lo demás en el log,
-// que es otra forma de no decir nada.
-//
-// Se recuerda el último aviso y no un "ya avisé" a secas, y el camino bueno
-// pasa por aquí con la cadena vacía para BORRAR esa memoria. Así, un fallo que
-// se arregla y vuelve se cuenta las dos veces; con un sync.Once, la segunda
-// avería habría sido tan muda como el bug que este código viene a quitar.
-func avisarDeLaBoveda(aviso string) {
-	muAviso.Lock()
-	repetido := aviso == ultimoAviso
-	ultimoAviso = aviso
-	muAviso.Unlock()
-	if aviso != "" && !repetido {
-		log.Printf("clave del modelo: %s", aviso)
-	}
-}
 
 // New devuelve nil (sin error) cuando la capa no se puede usar: sin endpoint,
 // o con un proveedor que exige key y no la encuentra. Nunca es un requisito
@@ -235,103 +128,9 @@ func NewConClave(cfg config.LLM, key string) *Client {
 		http: &http.Client{},
 	}
 }
-
-// requiereKey: los preajustes lo declaran; para un endpoint escrito a mano se
-// deduce de si apunta a la propia máquina.
-func requiereKey(cfg config.LLM, prov Proveedor) bool {
-	if cfg.Provider != "" {
-		return prov.NecesitaKey
-	}
-	return !esLoopback(cfg.Endpoint)
-}
-
-// esLoopback dice si el endpoint apunta a la propia máquina, caso en el que
-// el tráfico no sale de ella y HTTP en claro es aceptable (Ollama, LM Studio).
-//
-// Se parsea el host de verdad —net/url + net.ParseIP— y no con
-// strings.Contains como antes: un host como "localhost.evil.com" CONTIENE
-// "localhost" y colaba como local. IsLoopback cubre todo 127.0.0.0/8 y ::1,
-// no sólo 127.0.0.1.
-func esLoopback(endpoint string) bool {
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return false
-	}
-	if u.Scheme == "unix" {
-		return true
-	}
-	host := u.Hostname()
-	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-// endpointSeguroParaClave es la ÚNICA fuente de la política "¿puede este
-// endpoint llevar la API key?": sí si es HTTPS (la clave viaja cifrada a
-// cualquier host), o si apunta a loopback (la clave no sale de la máquina).
-// Un http:// a un host remoto con clave es el caso que se cierra.
-func endpointSeguroParaClave(endpoint string) bool {
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return false
-	}
-	if u.Scheme == "https" {
-		return true
-	}
-	return esLoopback(endpoint)
-}
-
 // Dialecto dice con qué API se está hablando. Sirve para mostrarlo en la
 // pantalla de configuración.
 func (c *Client) Dialecto() Dialecto { return c.dialecto }
-
-// normalizarEndpoint completa las URLs de Azure a las que les falta la ruta.
-//
-// Azure expone dos superficies sobre el mismo host: la moderna, bajo
-// /openai/v1, que habla el dialecto de OpenAI tal cual; y la clásica, que
-// exige ?api-version= en cada llamada. Quien pega la URL del portal se lleva
-// el host pelado, y la respuesta —"Missing required query parameter:
-// api-version"— no da ninguna pista de que falta un trozo de ruta.
-func normalizarEndpoint(bruto string) string {
-	e := strings.TrimRight(strings.TrimSpace(bruto), "/")
-	if e == "" {
-		return e
-	}
-	bajo := strings.ToLower(e)
-	esAzure := strings.Contains(bajo, ".services.ai.azure.com") ||
-		strings.Contains(bajo, ".openai.azure.com") ||
-		strings.Contains(bajo, ".cognitiveservices.azure.com")
-	if !esAzure {
-		return e
-	}
-	// Ya trae ruta propia: no tocarla, puede ser un despliegue clásico
-	// deliberado con su api-version.
-	if strings.Contains(bajo, "/openai/") || strings.Contains(bajo, "?") {
-		return e
-	}
-	return e + "/openai/v1"
-}
-
-// pistaDeError traduce las respuestas del proveedor que, tal cual, no dicen
-// qué hacer. Un HTTP 400 crudo manda al desarrollador a adivinar.
-func pistaDeError(cuerpo string) string {
-	switch {
-	case strings.Contains(cuerpo, "api-version"):
-		return "\n\nEste endpoint de Azure es de la API clásica. Usa la moderna añadiendo " +
-			"/openai/v1 al final del host (por ejemplo https://TU-RECURSO.services.ai.azure.com/openai/v1), " +
-			"que es la que habla el dialecto de OpenAI sin api-version."
-	case strings.Contains(cuerpo, "DeploymentNotFound"):
-		return "\n\nEl modelo no existe en ese recurso: en Azure el nombre es el del DESPLIEGUE, " +
-			"no el del modelo base."
-	case strings.Contains(cuerpo, "401") || strings.Contains(cuerpo, "Unauthorized") ||
-		strings.Contains(cuerpo, "invalid_api_key"):
-		return "\n\nLa clave no es válida para este endpoint. Revisa que la variable de entorno " +
-			"tenga la clave de ESTE recurso."
-	}
-	return ""
-}
 
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`

@@ -400,3 +400,163 @@ rules:
           - pattern: $CTX.$SET.FirstOrDefault(...)
           - pattern: $CTX.$SET.Where(...).ToList()
           - pattern: await $CTX.$SET.FindAsync(...)
+
+
+  # --- DDL DE BASE DE DATOS Y POSTGRESQL LOCKS ---
+  - id: pg-create-index-sin-concurrently
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "CREATE INDEX sin CONCURRENTLY — bloquea escrituras en toda la tabla (ACCESS EXCLUSIVE)"
+    metadata:
+      pillar: data
+      why: "En tablas con tráfico, un índice sin CONCURRENTLY detiene todas las escrituras y genera caídas de servicio."
+      fix_hint: "Usa 'CREATE INDEX CONCURRENTLY' fuera de transacciones BEGIN/COMMIT."
+    patterns:
+      - pattern-regex: '(?im)^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+(?!CONCURRENTLY\b)'
+
+  - id: pg-add-column-not-null-sin-default
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ADD COLUMN NOT NULL sin DEFAULT — falla en tablas no vacías y bloquea la tabla"
+    metadata:
+      pillar: data
+      why: "Agregar una columna NOT NULL sin valor por defecto falla inmediatamente si la tabla contiene filas."
+      fix_hint: "Agrega un DEFAULT o agrega la columna como nullable primero, rellena los datos y aplica NOT NULL."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+[^;]+\bNOT\s+NULL\b(?!\s+DEFAULT\b)'
+
+  - id: pg-add-constraint-sin-not-valid
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ADD CONSTRAINT FOREIGN KEY sin NOT VALID — escaneo bloqueante de tabla completa"
+    metadata:
+      pillar: data
+      why: "Validar una foreign key al momento de crearla adquiere lock SHARE ROW EXCLUSIVE sobre ambas tablas."
+      fix_hint: "Usa 'ADD CONSTRAINT ... NOT VALID' y luego valida con 'VALIDATE CONSTRAINT' en un paso separado."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ADD\s+CONSTRAINT\s+\w+\s+FOREIGN\s+KEY\s*\([^)]+\)\s*REFERENCES\s+[^;]+;'
+      - pattern-not-regex: '(?i)NOT\s+VALID'
+
+  - id: pg-drop-table-column
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+      exclude: ["*.down.sql", "*_down.sql", "*_rollback.sql"]
+    severity: ERROR
+    message: "DROP TABLE o DROP COLUMN destructivo en migración"
+    metadata:
+      pillar: data
+      why: "Eliminar tablas o columnas en migraciones activas rompe código en ejecución y destruye datos."
+      fix_hint: "Depreca la columna primero a nivel de aplicación antes de eliminarla del esquema físico."
+    patterns:
+      - pattern-regex: '(?im)(^\s*DROP\s+TABLE\s+\w+|ALTER\s+TABLE\s+\w+\s+DROP\s+COLUMN\s+\w+)'
+
+  - id: pg-alter-column-type
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ALTER COLUMN TYPE — reescribe la tabla completa y adquiere ACCESS EXCLUSIVE"
+    metadata:
+      pillar: data
+      why: "Cambiar tipos de columna reescribe todas las páginas en disco bloqueando consultas concurrentes."
+      fix_hint: "Crea una columna nueva, migra los datos en lotes y cambia el puntero en la aplicación."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ALTER\s+COLUMN\s+\w+\s+TYPE\s+[^;]+;'
+
+  - id: pg-add-bigserial
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ADD COLUMN BIGSERIAL — adquiere lock exclusivo y reescribe índices"
+    metadata:
+      pillar: data
+      why: "BIGSERIAL reescribe la tabla entera. Usa GENERATED ALWAYS AS IDENTITY."
+      fix_hint: "Usa IDENTITY o genera secuencias desacopladas."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+\w+\s+BIGSERIAL'
+
+  - id: pg-index-concurrently-in-tx
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "CREATE INDEX CONCURRENTLY dentro de transacción — inválido en PostgreSQL"
+    metadata:
+      pillar: data
+      why: "PostgreSQL rechaza CREATE INDEX CONCURRENTLY dentro de un bloque BEGIN...COMMIT."
+      fix_hint: "Ejecuta la migración de índice concurrente fuera de bloques transaccionales."
+    patterns:
+      - pattern-regex: '(?is)\bBEGIN\s*;.*?CREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY\b.*?COMMIT\s*;'
+
+  - id: pg-rename-column
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "RENAME COLUMN sin período de compatibilidad"
+    metadata:
+      pillar: data
+      why: "Renombrar columnas rompe instancias activas de la aplicación durante el despliegue."
+      fix_hint: "Usa patrón expand-and-contract: agrega nueva columna, sincroniza y luego depreca la vieja."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+RENAME\s+COLUMN\s+\w+\s+TO\s+\w+'
+
+  - id: pg-add-constraint-unique
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ADD CONSTRAINT UNIQUE sin índice concurrente"
+    metadata:
+      pillar: data
+      why: "Crear una restricción UNIQUE directamente bloquea toda la tabla."
+      fix_hint: "Crea primero el índice con CREATE UNIQUE INDEX CONCURRENTLY y luego asocia con USING INDEX."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ADD\s+CONSTRAINT\s+\w+\s+UNIQUE\s*\([^)]+\)(?!\s*USING\s+INDEX)'
+
+  - id: sql-seed-password
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "Contraseña hardcodeada en script o semilla SQL"
+    metadata:
+      pillar: security
+      why: "Credenciales en archivos de migración o semillas quedan expuestas en el repositorio."
+      fix_hint: "Usa variables de entorno o almacenes de secretos."
+    patterns:
+      - pattern-regex: '(?im)INSERT\s+INTO\s+\w+.*VALUES\s*\(.*(password|secret|pass|passwd|superp@ss).*'
+
+  - id: pg-grant-all-privileges
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "GRANT ALL PRIVILEGES excesivo — violación de mínimos privilegios"
+    metadata:
+      pillar: security
+      why: "Otorgar ALL PRIVILEGES a usuarios de aplicación permite DDL y administración indeida."
+      fix_hint: "Otorga exclusivamente permisos SELECT, INSERT, UPDATE, DELETE según necesidad."
+    patterns:
+      - pattern-regex: '(?im)GRANT\s+ALL(\s+PRIVILEGES)?\s+ON\s+'
+
+  - id: pg-money-type-disallowed
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "Tipo problemático 'money' en PostgreSQL"
+    metadata:
+      pillar: data
+      why: "El tipo money tiene precisión fija, no maneja monedas múltiples y depende de locale."
+      fix_hint: "Usa numeric(p, s) o enteros en la unidad mínima (centavos)."
+    patterns:
+      - pattern-regex: '(?im)ADD\s+COLUMN\s+\w+\s+money\b'

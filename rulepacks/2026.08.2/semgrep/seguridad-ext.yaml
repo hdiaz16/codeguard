@@ -606,9 +606,12 @@ rules:
           - pattern: $EL.outerHTML = $X
           - pattern: $EL.insertAdjacentHTML(..., $X)
           - pattern: '<$T dangerouslySetInnerHTML={{__html: $X}} />'
+          - pattern: '<$T dangerouslySetInnerHTML={{ __html: $X }} />'
           - pattern: document.write($X)
       - pattern-not: $EL.innerHTML = "..."
       - pattern-not: $EL.innerHTML = DOMPurify.sanitize(...)
+      - pattern-not: '<$T dangerouslySetInnerHTML={{__html: DOMPurify.sanitize(...)}} />'
+      - pattern-not: '<$T dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(...) }} />'
 
   - id: java-xss-response
     languages: [java]
@@ -676,3 +679,269 @@ rules:
       - pattern-not-regex: '["''][A-Z][A-Z0-9_]{6,}["'']'
     paths:
       exclude: ["**/*_test.go", "**/*.test.*", "**/*.spec.*", "**/testdata/**", "**/fixtures/**", "**/mocks/**"]
+
+
+  # --- DOCKERFILE, COMPOSE E INFRAESTRUCTURA SEGURA ---
+  - id: dockerfile-user-root
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Dockerfile sin instrucción USER o ejecutando como root"
+    metadata:
+      pillar: security
+      why: "Ejecutar procesos dentro de un contenedor como root facilita escapes y ataques al host."
+      fix_hint: "Declara un usuario no privilegiado con 'USER <usuario>' antes del ENTRYPOINT/CMD."
+    patterns:
+      - pattern-regex: '(?is)\bFROM\b(?!.*?\bUSER\s+[a-zA-Z0-9_\-]+)'
+
+  - id: dockerfile-mutable-latest-tag
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Dockerfile usando tag mutable :latest"
+    metadata:
+      pillar: security
+      why: "El tag latest genera builds no reproducibles y facilita ataques de envenenamiento de imágenes."
+      fix_hint: "Pinea la versión específica (ej. node:20.11-alpine) o usa el digest sha256."
+    patterns:
+      - pattern-regex: '(?im)^\s*FROM\s+[\w\.\/\-]+:latest\b'
+
+  - id: dockerfile-eol-base-image
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Imagen base obsoleta (EOL) con vulnerabilidades críticas conocidas"
+    metadata:
+      pillar: security
+      why: "Imágenes base EOL no reciben parches de seguridad de la comunidad."
+      fix_hint: "Actualiza a una versión moderna y con soporte oficial."
+    patterns:
+      - pattern-regex: '(?im)^\s*FROM\s+(debian:(jessie|stretch|buster)|ubuntu:(14\.04|16\.04|18\.04)|alpine:(2\.|3\.(1[0-4]|[0-9])\b)|node:(1[0-6]\b|8\b))'
+
+  - id: dockerfile-add-remote-url
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Instrucción ADD descargando desde URL remota"
+    metadata:
+      pillar: security
+      why: "ADD desde URL descarga binarios sin verificar firmas o integridad criptográfica."
+      fix_hint: "Usa curl/wget con validación de checksum o COPY de artefactos locales pre-verificados."
+    patterns:
+      - pattern-regex: '(?im)^\s*ADD\s+https?:\/\/'
+
+  - id: dockerfile-privileged-port
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Puerto privilegiado <1024 en contenedor no-root"
+    metadata:
+      pillar: security
+      why: "Un usuario no-root no puede abrir puertos <1024 en Linux estándar."
+      fix_hint: "Usa puertos no privilegiados (ej. 8080, 8443, 3000)."
+    patterns:
+      - pattern-regex: '(?im)^\s*EXPOSE\s+(80|443|22|21|25)\b'
+
+  - id: dockerfile-uncleaned-apt-cache
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Instalación de paquetes apt-get sin limpiar caché"
+    metadata:
+      pillar: quality
+      why: "No limpiar /var/lib/apt/lists infla la imagen y deja metadatos innecesarios."
+      fix_hint: "Agrega '&& rm -rf /var/lib/apt/lists/*' al comando RUN."
+    patterns:
+      - pattern-regex: '(?im)^\s*RUN\s+.*?\bapt-get\s+install\b(?!\s*.*?rm\s+-rf\s+\/var\/lib\/apt)'
+
+  - id: dockerfile-sudo-usage
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Uso de sudo dentro de contenedor Docker"
+    metadata:
+      pillar: security
+      why: "El comando sudo en contenedores indica gestión inadecuada de permisos."
+      fix_hint: "Configura los permisos adecuados en tiempo de build con chown/chmod."
+    patterns:
+      - pattern-regex: '(?im)^\s*RUN\s+.*\bsudo\b'
+
+  - id: compose-docker-socket-mounted
+    languages: [generic]
+    paths:
+      include: ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+    severity: ERROR
+    message: "Socket de Docker (/var/run/docker.sock) montado en contenedor"
+    metadata:
+      pillar: security
+      why: "Montar el socket de Docker otorga control total sobre el daemon del host."
+      fix_hint: "Usa APIs aisladas o herramientas de orquestación sin exponer el socket."
+    patterns:
+      - pattern-regex: '(?im)\/var\/run\/docker\.sock:\/var\/run\/docker\.sock'
+
+  - id: compose-network-mode-host
+    languages: [generic]
+    paths:
+      include: ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+    severity: ERROR
+    message: "network_mode: host en contenedor compose"
+    metadata:
+      pillar: security
+      why: "network_mode host elimina el aislamiento de red del contenedor."
+      fix_hint: "Usa redes bridge dedicadas."
+    patterns:
+      - pattern-regex: '(?im)^\s*network_mode:\s*["'']?host["'']?'
+
+  - id: compose-privileged-true
+    languages: [generic]
+    paths:
+      include: ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+    severity: ERROR
+    message: "Contenedor con privileged: true"
+    metadata:
+      pillar: security
+      why: "privileged: true deshabilita todas las defensas del kernel (AppArmor, Seccomp, Capabilities)."
+      fix_hint: "Otorga capacidades granulares específicas con cap_add en lugar de privileged."
+    patterns:
+      - pattern-regex: '(?im)^\s*privileged:\s*true\b'
+
+  # --- SEGURIDAD FRONTEND TYPESCRIPT Y REACT (TAINT / DOM) ---
+  - id: ts-new-function-eval
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "new Function() dinámico como eval encubierto — inyección de código"
+    metadata:
+      pillar: security
+      why: "new Function('...') compila y ejecuta strings arbitrarios en el contexto global."
+      fix_hint: "Usa evaluadores seguros de AST o parsing estructurado."
+    patterns:
+      - pattern: "new Function(...)"
+
+  - id: ts-postmessage-wildcard
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "window.postMessage con targetOrigin wildcard '*'"
+    metadata:
+      pillar: security
+      why: "Enviar mensajes cross-origin con '*' permite a cualquier iframe o ventana interceptar datos confidenciales."
+      fix_hint: "Especifica el origen exacto del receptor (ej. 'https://portal.bodesa.com')."
+    patterns:
+      - pattern-either:
+          - pattern: "window.postMessage($DATA, '*')"
+          - pattern: "postMessage($DATA, '*')"
+          - pattern: "$WIN.postMessage($DATA, '*')"
+
+  - id: ts-localstorage-token
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Almacenamiento de token de autenticación en localStorage"
+    metadata:
+      pillar: security
+      why: "localStorage es accesible por cualquier script que corra en la página. Un XSS menor compromete la sesión."
+      fix_hint: "Usa cookies HttpOnly con flags Secure y SameSite=Strict."
+    patterns:
+      - pattern-either:
+          - pattern: "localStorage.setItem($KEY, $VAL)"
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: '(?i).*(token|jwt|auth|session|secret|bearer).*'
+
+  - id: ts-prototype-pollution-merge
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Posible Prototype Pollution en función de merge"
+    metadata:
+      pillar: security
+      why: "Copiar propiedades iterando con for..in sin validar __proto__ o constructor permite alterar Object.prototype."
+      fix_hint: "Filtra las claves '__proto__', 'constructor' y 'prototype', o usa Object.assign."
+    patterns:
+      - pattern: |
+          for (const $K in $SRC) {
+              $TARGET[$K] = $SRC[$K];
+          }
+
+
+
+  - id: ts-open-redirect-location
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Redirección abierta (Open Redirect) asignando window.location sin validación de prefijo seguro"
+    metadata:
+      pillar: security
+      why: "Asignar window.location directamente desde parámetros permite a un atacante redirigir a sitios maliciosos."
+      fix_hint: "Valida que el destino empiece por '/' o pertenezca a un dominio permitido."
+    patterns:
+      - pattern-either:
+          - pattern: "window.location.href = $X"
+          - pattern: "window.location = $X"
+      - pattern-not: "window.location.href = '/...'"
+      - pattern-not: "window.location = '/...'"
+      - pattern-not: "window.location.pathname = $X"
+
+  - id: ts-redos-nested-quantifiers
+    languages: [generic]
+    paths:
+      include: ["*.ts", "*.js", "*.tsx", "*.jsx"]
+    severity: ERROR
+    message: "Expresión regular vulnerable a ReDoS catastrófico por cuantificadores anidados"
+    metadata:
+      pillar: security
+      why: "La estructura ([...]+)+ provoca un árbol de búsqueda exponencial ante cadenas no coincidentes."
+      fix_hint: "Simplifica la expresión regular para eliminar la ambigüedad en los grupos."
+    patterns:
+      - pattern-regex: '(?im)/\^?\([^)]+\+\)\+\$?/'
+
+
+
+  - id: react-unvalidated-href-javascript
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Enlace <a> con href dinámico no validado — posible inyección javascript:"
+    metadata:
+      pillar: security
+      why: "Renderizar href={url} dinámico sin validar protocolo permite ejecución de scripts mediante javascript:..."
+      fix_hint: "Valida que el protocolo sea explícitamente http: o https:."
+    patterns:
+      - pattern: '<a href={$URL}>...</a>'
+      - pattern-not: '<a href={"/" + $REST}>...</a>'
+      - pattern-not: '<a href={"http" + $REST}>...</a>'
+      - pattern-not: '<a href={`/${$REST}`}>...</a>'
+      - pattern-not: '<a href={`http${$REST}`}>...</a>'
+      - pattern-not: '<a href={$URL} target="_blank" rel="noopener noreferrer">...</a>'
+      - pattern-not: '<a href={$URL} rel="noopener noreferrer" target="_blank">...</a>'
+      - pattern-not-inside: |
+          const $IS_SAFE = /^https?:\/\//i.test($URL);
+          ...
+
+  - id: npm-vulnerable-lodash-cve
+    languages: [generic]
+    paths:
+      include: ["package.json", "package-lock.json"]
+    severity: ERROR
+    message: "Versión vulnerable de lodash detectada (<4.17.21) — riesgo de Prototype Pollution y RCE"
+    metadata:
+      pillar: security
+      why: "Versiones de lodash inferiores a 4.17.21 están afectadas por vulnerabilidades críticas (CVE-2020-8203, CVE-2021-23337)."
+      fix_hint: "Actualiza a lodash >= 4.17.21."
+    patterns:
+      - pattern-regex: '(?im)"lodash"\s*:\s*"(4\.17\.(0|1[0-9]|20)\b|4\.(0|1[0-6])\.[0-9]+)'
+
+  - id: npm-typosquatting-dependency
+    languages: [generic]
+    paths:
+      include: ["package.json", "package-lock.json"]
+    severity: ERROR
+    message: "Posible paquete malicioso de typosquatting en dependencias"
+    metadata:
+      pillar: security
+      why: "Paquetes con nombres similares a librerías populares (lodahs, requset, reactt) pueden contener código malicioso."
+      fix_hint: "Verifica el nombre exacto del paquete oficial."
+    patterns:
+      - pattern-regex: '(?im)"(lodahs|requset|reactt|expres|coockie-parser)"\s*:'

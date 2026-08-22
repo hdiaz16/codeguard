@@ -98,11 +98,20 @@ func ciCmd() *cobra.Command {
 			if cfg != nil {
 				rulepack = filepath.Join(repoRoot, "rulepacks", cfg.Rulepack)
 				if _, statErr := os.Stat(rulepack); statErr != nil {
-					// rulepack distribuido junto al binario (repos que no vendorean reglas)
+					// 1. rulepack distribuido junto al binario (repos que no vendorean reglas)
 					if exe, exeErr := os.Executable(); exeErr == nil {
 						alt := filepath.Join(filepath.Dir(exe), "rulepacks", cfg.Rulepack)
 						if _, altErr := os.Stat(alt); altErr == nil {
 							rulepack = alt
+						}
+					}
+					// 2. rulepack en %LOCALAPPDATA%\CodeGuard\rulepacks\<ver>
+					if _, statErr2 := os.Stat(rulepack); statErr2 != nil {
+						if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+							appdataRulepack := filepath.Join(localAppData, "CodeGuard", "rulepacks", cfg.Rulepack)
+							if _, appdataErr := os.Stat(appdataRulepack); appdataErr == nil {
+								rulepack = appdataRulepack
+							}
 						}
 					}
 				}
