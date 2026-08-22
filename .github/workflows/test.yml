@@ -1,0 +1,40 @@
+# El guardián que faltaba: hasta este archivo, NINGÚN go test corría en CI —
+# los dos workflows existentes compilan, prueban el rulepack y corren la sombra,
+# y todo el rigor de mutaciones vivía en la disciplina de una sola máquina.
+#
+# Decisiones medidas en el debate del plan (remediacion/PLAN-CALIDAD-MUNDIAL.md):
+# - Un solo job windows-latest con -race sobre TODO: el runner trae mingw/gcc
+#   (el paso `gcc --version` lo confirma en cada corrida, no lo asume), y las
+#   carreras que importan viven en daemon/ipc — separar "paquetes portables"
+#   habría corrido race justo donde NO están.
+# - Las pruebas de integración que necesitan proyectos de juguete se saltan
+#   solas sin CODEGUARD_TOY_* (comportamiento diseñado, ver README).
+# - Sin continue-on-error: un fallo ambiental se clasifica (fix o skip con
+#   motivo), no se tolera para siempre.
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go test -race (windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gcc presente (requisito de -race en windows)
+        run: gcc --version
+      - name: go test -race
+        env:
+          CGO_ENABLED: "1"
+        run: go test ./... -race -count=1 -shuffle=on

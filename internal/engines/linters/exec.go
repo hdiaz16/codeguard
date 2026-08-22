@@ -3,6 +3,7 @@ package linters
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -40,7 +41,18 @@ func runTool(ctx context.Context, dir, bin string, args ...string) (string, erro
 	//
 	// Los linters se leen línea por línea: un texto recortado sigue siendo
 	// útil, a diferencia de un JSON a medias.
-	return string(salida.Combinada()), nil
+	combinada := string(salida.Combinada())
+	// La segunda mitad del contrato de arriba: el exit != 0 se tolera PORQUE
+	// hay diagnósticos que leer. Con cero bytes no hay análisis que defender —
+	// devolver ("", nil) convertía la avería en «corrió y no encontró nada»,
+	// el mismo verde silencioso que runToolConSalida cierra más abajo.
+	// %v y no ExitCode(): con muerte por señal ExitCode() es -1 y «salió con
+	// código -1» confunde; el Error() de ExitError distingue ambos casos.
+	if exitErr != nil && strings.TrimSpace(combinada) == "" {
+		return "", fmt.Errorf("%s salió con %v sin escribir nada: avería de ejecución, no un análisis limpio",
+			filepath.Base(bin), exitErr)
+	}
+	return combinada, nil
 }
 
 // runToolConSalida es runTool diciendo ADEMÁS si el proceso salió con código

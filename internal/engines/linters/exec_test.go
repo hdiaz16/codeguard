@@ -88,6 +88,27 @@ func TestRunToolToleraRecortePuro(t *testing.T) {
 	}
 }
 
+// La otra mitad del contrato: el exit != 0 se tolera PORQUE hay salida que
+// leer. Sin un byte no hay análisis — devolver ("", nil) es el mismo verde
+// silencioso que runToolConSalida nació para cerrar, por otra puerta. Este
+// cruce (ExitError + 0 bytes) vivió prometido en el comentario de runTool y
+// sin comprobar en su cuerpo.
+func TestRunToolExitSinSalidaEsAveria(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("la prueba usa cmd.exe")
+	}
+	out, err := runTool(context.Background(), t.TempDir(), "cmd", "/c", "exit /b 3")
+	if err == nil {
+		t.Fatalf("runTool devolvió err nil con salida %q: un exit 3 mudo se está reportando como análisis limpio", out)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("el error fue %v; una avería de ejecución no debe disfrazarse de plazo vencido", err)
+	}
+	if !strings.Contains(err.Error(), "3") {
+		t.Errorf("el error %q no dice el código de salida; el diagnóstico debe viajar entero", err)
+	}
+}
+
 // Un código de salida distinto de cero es la forma NORMAL de decir "encontré
 // problemas" en un linter; la respuesta está en la salida, no en el código.
 func TestRunToolToleraExitCodeConSalida(t *testing.T) {

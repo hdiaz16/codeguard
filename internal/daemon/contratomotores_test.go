@@ -358,6 +358,20 @@ var sabotajes = []sabotaje{
 		"@echo off\r\nexit /b 0\r\n",
 	},
 	{
+		// El 1 de arriba es el código CONOCIDO («encontré algo») de casi todos
+		// los linters, y varios adaptadores lo tratan con benevolencia. Un 3
+		// mudo no tiene lectura benigna posible: ningún motor de la tabla lo
+		// documenta como «hallazgos». Esta fila existe porque las cuatro de
+		// arriba solo ejercitaban los códigos 0 y 1 — la rama «código
+		// desconocido» de cada adaptador no la pisaba nadie.
+		//
+		// Al estrenarla, los 19 motores ya pasaban: es una fila de REGRESIÓN
+		// que congela ese comportamiento, no una aspiración pendiente. Si un
+		// motor nuevo la pone roja, el defecto es del motor, no de la fila.
+		"mudo-y-error-desconocido", "sale con un código desconocido (3) sin escribir nada",
+		"@echo off\r\nexit /b 3\r\n",
+	},
+	{
 		// EL IMPOSTOR CON CREDENCIALES, y lo pidió una mutación que sobrevivió.
 		//
 		// Los tres de arriba no saben decir su nombre, así que a los motores que

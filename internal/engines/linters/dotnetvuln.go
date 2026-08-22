@@ -1,6 +1,7 @@
 package linters
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/proc"
@@ -144,6 +146,7 @@ func dnvCsprojBajo(repoRoot, dir string) ([]string, error) {
 //     campo con el identificador ni con la versión corregida. El GHSA sale del
 //     último segmento de la URL, y la pista de arreglo no puede prometer una
 //     versión concreta porque el comando no la dice.
+//
 //  2. Un proyecto LIMPIO se serializa exactamente igual que un proyecto que no
 //     se pudo analizar: {"path": "..."} sin "frameworks". Lo único que los
 //     distingue es el array "problems". Es la trampa de tipoFatal de semgrep
@@ -192,6 +195,27 @@ func (e DotnetVuln) Run(ctx context.Context, in engines.Input) ([]finding.Findin
 	return out, nil
 }
 
+// dnvNoRestoreCache memoriza por directorio si el SDK que ahí resuelve
+// (global.json puede cambiarlo por directorio) anuncia `--no-restore` en su
+// ayuda. Los nombres de bandera no se localizan, así que buscar el literal es
+// estable en cualquier idioma del SDK.
+var dnvNoRestoreCache sync.Map // dir → bool
+
+func dnvSoportaNoRestore(ctx context.Context, dirProy string) bool {
+	if v, ok := dnvNoRestoreCache.Load(dirProy); ok {
+		return v.(bool)
+	}
+	// --help no toca red ni escribe obj/: es la sonda más barata que responde
+	// exactamente la pregunta que importa (¿este SDK conoce la bandera?).
+	cmd := exec.CommandContext(ctx, "dotnet", "list", "package", "--help")
+	cmd.Dir = dirProy
+	cmd.Env = proc.Entorno()
+	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
+	soporta := err == nil && bytes.Contains(salida.Stdout, []byte("--no-restore"))
+	dnvNoRestoreCache.Store(dirProy, soporta)
+	return soporta
+}
+
 // claveProyecto identifica una consulta: los manifiestos que determinan el
 // grafo de dependencias (no los .cs: cambiar código no cambia qué paquetes
 // resuelve NuGet) más el día UTC.
@@ -212,8 +236,20 @@ func (e DotnetVuln) revisarProyecto(ctx context.Context, repoRoot, csproj string
 	// motor NO PUEDE mirar. Ese caso degrada con remedio (abajo), nunca devuelve
 	// "0 CVE". Y esto no vuelve el motor independiente de la red: el índice de
 	// avisos se sigue consultando por red; lo que se quita es el restore.
-	cmd := exec.CommandContext(ctx, "dotnet", "list", path.Base(csproj), "package",
-		"--vulnerable", "--include-transitive", "--no-restore", "--format", "json")
+	// `--no-restore` NO existe en todos los SDK: el 8.0.3 lo rechaza imprimiendo
+	// su AYUDA en stdout ("Description: List all package references…"), que el
+	// parser recibía como JSON ilegible ("invalid character 'D'"). Y en ese SDK
+	// omitirla es seguro: `list package` no restaura implícitamente — sin assets
+	// sale con 1 y un problems JSON pidiendo `dotnet restore` (medido aquí con
+	// 8.0.300-preview; la rama de abajo ya convierte ese JSON en remedio). La
+	// bandera se manda solo donde el SDK la anuncia, así la protección del obj/
+	// se conserva en los SDK que sí restaurarían solos.
+	args := []string{"list", path.Base(csproj), "package",
+		"--vulnerable", "--include-transitive", "--format", "json"}
+	if dnvSoportaNoRestore(ctx, dirProy) {
+		args = append(args, "--no-restore")
+	}
+	cmd := exec.CommandContext(ctx, "dotnet", args...)
 	cmd.Dir = dirProy
 	cmd.Env = proc.Entorno()
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
@@ -240,4 +276,3 @@ func (e DotnetVuln) revisarProyecto(ctx context.Context, repoRoot, csproj string
 	}
 	return e.interpretar(salida.Stdout, repoRoot, csproj)
 }
-
