@@ -381,6 +381,11 @@ func informe(t *testing.T, repo, salida string) {
 		t.Errorf("estos motores corrieron sin ver la violación que tenían delante: %v.\n"+
 			"Un motor que no ve lo que se le pone delante es indistinguible de uno sano "+
 			"mientras el repositorio esté limpio, que es el 99%% del tiempo.", fallaron)
+		// La salida COMPLETA del producto, no solo la tabla: el fallo de un
+		// motor en un entorno ajeno (el runner del CI) no se puede diagnosticar
+		// desde lejos con un contador en cero — hacen falta sus tiempos, sus
+		// avisos de reglas rotas y sus degradaciones, que viajan aquí.
+		t.Logf("salida completa del producto, para diagnóstico:\n%s", salida)
 	}
 }
 

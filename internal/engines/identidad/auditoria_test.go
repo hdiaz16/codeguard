@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"codeguard/internal/trivydb"
 )
 
 // errHashDistinto separa el fallo GRAVE —lo que se bajó no es lo que se espera,
@@ -21,6 +23,28 @@ import (
 // tratarlo como fallo, nunca como «no se pudo probar»: los dos viajaban por el
 // mismo canal indistinguible y el test respondía a ambos con un skip.
 var errHashDistinto = errors.New("el hash no coincide con el esperado")
+
+// asegurarBaseTrivy deja la base de vulnerabilidades lista o se salta la
+// prueba: escanear va con --skip-db-update y la EXIGE, y en una máquina (o
+// runner) recién instalada no existe — trivy salía con 1 y estas pruebas
+// acusaban al escáner de un entorno cojo. La red ausente es un skip legítimo,
+// igual que con el jar de control; Auditar en producción la baja por su
+// cuenta (mismo cliente OCI verificado).
+func asegurarBaseTrivy(t *testing.T) {
+	t.Helper()
+	dir, err := trivydb.DirCache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	if err := trivydb.Actualizar(ctx, dir); err != nil {
+		if _, statErr := os.Stat(filepath.Join(dir, "db", "metadata.json")); statErr != nil {
+			t.Skipf("sin base de vulnerabilidades y sin red para bajarla: %v", err)
+		}
+		t.Logf("base de trivy sin refrescar (se usa la copia local): %v", err)
+	}
+}
 
 // El jar de control se baja con su hash comprobado, igual que los motores de
 // verdad: no vamos a predicar integridad de la cadena y luego tragarnos
@@ -72,6 +96,7 @@ func TestEscanerEncuentraLoQueDebeEncontrar(t *testing.T) {
 	if _, err := os.Stat(trivy); err != nil {
 		t.Skip("trivy no está instalado en esta máquina")
 	}
+	asegurarBaseTrivy(t)
 
 	const (
 		url  = "https://repo1.maven.org/maven2/org/apache/logging/log4j/log4j-core/2.14.1/log4j-core-2.14.1.jar"
@@ -122,6 +147,7 @@ func TestSinNadaAnalizableEsError(t *testing.T) {
 	if _, err := os.Stat(trivy); err != nil {
 		t.Skip("trivy no está instalado en esta máquina")
 	}
+	asegurarBaseTrivy(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

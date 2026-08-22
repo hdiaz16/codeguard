@@ -52,7 +52,11 @@ jobs:
       # y trivy salía DEGRADADO intermitente en los e2e. La clave por run_id +
       # restore-keys de prefijo hace que cada corrida restaure la más reciente
       # y guarde la suya; trivydb.Actualizar la refresca si envejeció.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      #
+      # restore/save partidos y NO el action combinado: aquel solo guarda si el
+      # job sale verde, y mientras el job estuvo rojo la base jamás se guardaba
+      # — el círculo exacto que este caché venía a romper.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~\AppData\Local\trivy
           key: trivy-db-${{ github.run_id }}
@@ -100,3 +104,9 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test ./... -race -count=1 -shuffle=on
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always()
+        with:
+          path: ~\AppData\Local\trivy
+          key: trivy-db-${{ github.run_id }}
