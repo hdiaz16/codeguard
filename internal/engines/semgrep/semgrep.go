@@ -234,7 +234,16 @@ func ajustesPropios() string {
 // correrLote invoca semgrep una vez sobre los objetivos dados y devuelve sus
 // hallazgos y las reglas del pack que no compilaron.
 func (e *Engine) correrLote(ctx context.Context, bin, rules string, in engines.Input, objetivos []string) ([]finding.Finding, []string, error) {
-	args := append([]string{"scan", "--config", rules, "--json", "--metrics=off", "--quiet", "--disable-version-check"}, objetivos...)
+	// --timeout 0 apaga el saltador silencioso interno de semgrep: por defecto
+	// (30 s por regla-archivo, 3 estrellamientos y descarta el archivo) un
+	// entorno lento hacía que el archivo plantado se SALTARA sin decirlo —
+	// exit 0, JSON válido, cero resultados: «corrió y limpio» sobre un archivo
+	// que nadie miró (medido en el runner de CI con -race: el e2e cazó a
+	// semgrep sin ver el subprocess shell=True que tenía delante). El plazo
+	// que manda es el del engine (proc.Correr + ctx): si algo de verdad
+	// cuelga, la capa degrada A GRITOS en vez de mentir en silencio.
+	args := append([]string{"scan", "--config", rules, "--json", "--metrics=off", "--quiet",
+		"--disable-version-check", "--timeout", "0"}, objetivos...)
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = in.RepoRoot
@@ -281,6 +290,26 @@ func (e *Engine) correrLote(ctx context.Context, bin, rules string, in engines.I
 		return nil, nil, fmt.Errorf("semgrep no llegó a analizar (%s): %s",
 			e.Type, truncar(e.Message, 300))
 	}
+	// Objetivos que semgrep dejó sin analizar (Timeout, OutOfMemory, sintaxis
+	// del objetivo…): la capa degrada CON nombres en vez de servir un «limpio»
+	// sobre archivos que nadie miró. Ver noAnalizados.
+	if omitidos := res.noAnalizados(); len(omitidos) > 0 {
+		primero := omitidos[0]
+		donde := primero.Path
+		if donde == "" {
+			donde = truncar(primero.Message, 120)
+		}
+		return nil, nil, fmt.Errorf("semgrep dejó %d objetivo(s) sin analizar (%s: %s): degradar y decirlo gana a un limpio falso",
+			len(omitidos), primero.Type, donde)
+	}
+	// Análisis parcial (PartialParsing y afines, nivel warn): la capa NO se
+	// tumba —en bds.portal un parcial convivía con 45 hallazgos válidos y
+	// degradarla los tiraría— pero tampoco se calla en un log que nadie ve:
+	// viaja como AVISO no bloqueante en el propio veredicto, sobre el archivo
+	// afectado. Los hallazgos válidos se conservan Y lo no mirado queda dicho
+	// donde se mira. El tratamiento completo (cobertura declarada + exclusión
+	// declarativa de bundles) es W6 del plan.
+	parciales := avisosParciales(res, in.RepoRoot)
 
 	findings := make([]finding.Finding, 0, len(res.Results))
 	for _, r := range res.Results {
@@ -319,6 +348,42 @@ func (e *Engine) correrLote(ctx context.Context, bin, rules string, in engines.I
 		f.ComputeFingerprint()
 		findings = append(findings, f)
 	}
-	return findings, res.reglasRotas(), nil
+	return append(findings, parciales...), res.reglasRotas(), nil
 }
 
+// avisosParciales convierte los avisos de análisis parcial en hallazgos
+// WARNING no bloqueantes sobre el archivo afectado: la única superficie que
+// el desarrollador mira es el veredicto, y un log del daemon no lo es.
+func avisosParciales(res sgResult, repoRoot string) []finding.Finding {
+	var out []finding.Finding
+	for _, p := range res.parciales() {
+		if p.Path == "" {
+			// Sin archivo no hay dónde colgar el aviso; al log, que es mejor
+			// que perderlo.
+			log.Printf("semgrep: análisis parcial sin ruta (%s): %s", p.Type, truncar(p.Message, 200))
+			continue
+		}
+		rel := p.Path
+		if r, err := filepath.Rel(repoRoot, p.Path); err == nil && !strings.HasPrefix(r, "..") {
+			rel = r
+		}
+		f := finding.Finding{
+			Engine:   "semgrep",
+			RuleKey:  "semgrep-analisis-parcial",
+			Pillar:   finding.Quality,
+			Severity: finding.Warning,
+			Blocking: false,
+			File:     filepath.ToSlash(rel),
+			Line:     1,
+			Message: fmt.Sprintf("semgrep analizó este archivo PARCIALMENTE (%s): lo que no pudo parsear quedó sin mirar",
+				p.Type),
+			Why:      "Un análisis parcial presentado como completo es cobertura perdida en silencio: el 'sin hallazgos' de este archivo no cubre la parte que no se pudo leer.",
+			FixHint:  "Revisa la sintaxis del fragmento que no parsea, o excluye el archivo a propósito en la configuración para que la omisión sea declarada.",
+			Verified: true,
+			Source:   finding.Deterministic,
+		}
+		f.ComputeFingerprint()
+		out = append(out, f)
+	}
+	return out
+}

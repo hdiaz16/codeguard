@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -65,6 +66,28 @@ type manifiestoOCI struct {
 		Digest    string `json:"digest"`
 		Size      int64  `json:"size"`
 	} `json:"layers"` // presente cuando es un manifiesto
+}
+
+// DirCache es donde trivy espera su base: %LOCALAPPDATA%/trivy en Windows.
+// Se calcula aquí —el paquete dueño de la base— y no se recibe por
+// configuración porque tiene que coincidir EXACTAMENTE con donde trivy la va
+// a leer. Lo comparten el motor de trivy y la auditoría de identidad: dos
+// cálculos separados era la receta para bajar la base a un sitio y leerla de
+// otro.
+func DirCache() (string, error) {
+	if base := os.Getenv("LOCALAPPDATA"); base != "" {
+		return filepath.Join(base, "trivy"), nil
+	}
+	home, err := os.UserCacheDir()
+	if err != nil {
+		// Un error ignorado aquí dejaba pasar una ruta RELATIVA:
+		// Join("", "trivy") da "trivy", que se resuelve contra el directorio
+		// de trabajo, así que la base se bajaba y se comprobaba en un sitio
+		// distinto del que trivy lee. Se falla explícito en vez de operar
+		// sobre una ruta ambigua.
+		return "", fmt.Errorf("no se pudo resolver el directorio de caché del usuario: %w", err)
+	}
+	return filepath.Join(home, "trivy"), nil
 }
 
 // Actualizar refresca la base de trivy en <dirTrivy>/db (el layout que trivy
@@ -252,4 +275,3 @@ func bajarBlob(ctx context.Context, token, digest string, destino *os.File) erro
 	_, err = destino.Seek(0, io.SeekStart)
 	return err
 }
-

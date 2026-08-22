@@ -215,21 +215,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	return findings, nil
 }
 
-// dirCacheTrivy es donde trivy espera su base: %LOCALAPPDATA%/trivy en
-// Windows. Se calcula aquí y no se recibe por configuración porque tiene que
-// coincidir EXACTAMENTE con donde trivy la va a leer.
-func dirCacheTrivy() (string, error) {
-	if base := os.Getenv("LOCALAPPDATA"); base != "" {
-		return filepath.Join(base, "trivy"), nil
-	}
-	home, err := os.UserCacheDir()
-	if err != nil {
-		// El `_` de antes dejaba pasar una ruta RELATIVA: Join("", "trivy") da
-		// "trivy", que se resuelve contra el directorio de trabajo, así que la
-		// base se bajaba y se comprobaba en un sitio distinto del que trivy lee
-		// — justo el invariante que el comentario de arriba declara no
-		// negociable. Se falla explícito en vez de operar sobre una ruta ambigua.
-		return "", fmt.Errorf("no se pudo resolver el directorio de caché del usuario: %w", err)
-	}
-	return filepath.Join(home, "trivy"), nil
-}
+// dirCacheTrivy vive ahora en el paquete dueño de la base (trivydb.DirCache):
+// la auditoría de identidad necesita el MISMO cálculo y dos copias eran la
+// receta para bajar la base a un sitio y leerla de otro.
+func dirCacheTrivy() (string, error) { return trivydb.DirCache() }

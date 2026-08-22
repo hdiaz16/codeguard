@@ -124,6 +124,65 @@ func TestEscaneoAbortadoNoPasaPorLimpio(t *testing.T) {
 	}
 }
 
+// El salto callado: un error de nivel "error" que no sea regla-rota significa
+// que un objetivo quedo SIN analizar, y hasta aqui pasaba en silencio — exit 0,
+// JSON valido, cero resultados: «corrio y limpio» sobre un archivo que nadie
+// miro (medido en el CI con -race: el e2e cazo a semgrep sin ver el
+// subprocess shell=True plantado). Los warn (Timeout del saltador interno —
+// hoy apagado con --timeout 0 —, PartialParsing) se DICEN sin tumbar la capa:
+// en bds.portal un archivo parcialmente parseado convivia con 45 hallazgos
+// validos.
+func TestUnObjetivoSaltadoNoEsLimpio(t *testing.T) {
+	res := parsear(t, `{
+	  "results": [],
+	  "errors": [
+	    {"code": 2, "level": "error", "type": "OutOfMemory",
+	     "path": "app/inseguro.py", "message": "semgrep ran out of memory"},
+	    {"code": 2, "level": "warn", "type": "Timeout",
+	     "message": "Timeout in cmd/daemon/frontend/3d-force-graph.js"},
+	    {"code": 2, "level": "error", "type": "Rule parse error",
+	     "rule_id": "rulepacks.2026.08.2.semgrep.log-dato-sensible",
+	     "message": "Invalid pattern"}
+	  ]
+	}`)
+	om := res.noAnalizados()
+	if len(om) != 1 || om[0].Path != "app/inseguro.py" {
+		t.Fatalf("noAnalizados = %+v; el OutOfMemory de nivel error es el unico que tumba", om)
+	}
+	pa := res.parciales()
+	if len(pa) != 1 || pa[0].Type != "Timeout" {
+		t.Fatalf("parciales = %+v; el Timeout warn se dice sin tumbar", pa)
+	}
+	if rotas := res.reglasRotas(); len(rotas) != 1 {
+		t.Fatalf("reglasRotas = %v; la regla rota no es ni omitido ni parcial", rotas)
+	}
+}
+
+// La exigencia de la revision: PartialParsing con cero resultados NO puede
+// presentarse como limpio. El aviso viaja como hallazgo WARNING no bloqueante
+// en el veredicto —la unica superficie que el desarrollador mira—, no como un
+// log del daemon. Y no bloquea (P4): degradar la capa entera por un parcial
+// tiraria los hallazgos validos que conviven con el (bds.portal: 45).
+func TestUnParcialConCeroResultadosNoEsLimpio(t *testing.T) {
+	res := parsear(t, `{"results":[],"errors":[
+	  {"code":3,"level":"warn","type":["PartialParsing",[{}]],
+	   "path":"C:\\repo\\doc\\raro.ts","message":"parcial"}]}`)
+	avisos := avisosParciales(res, `C:\repo`)
+	if len(avisos) != 1 {
+		t.Fatalf("avisos = %+v; un parcial con cero resultados no puede quedar en nada", avisos)
+	}
+	a := avisos[0]
+	if a.Blocking || a.Severity != finding.Warning {
+		t.Errorf("el aviso debe ser WARNING no bloqueante (P4), llego: bloqueante=%v severidad=%v", a.Blocking, a.Severity)
+	}
+	if a.File != "doc/raro.ts" {
+		t.Errorf("File = %q; el aviso cuelga del archivo afectado, relativo al repo", a.File)
+	}
+	if a.Fingerprint == "" {
+		t.Error("sin huella el aviso no sobrevive baseline ni dedupe")
+	}
+}
+
 // Un "Rule parse error" llega con level "error" pero el escaneo SI corrio: sus
 // resultados valen. Tratarlo como fatal apagaria el motor entero cada vez que
 // una sola regla del pack tenga un patron invalido — que es justo lo que le

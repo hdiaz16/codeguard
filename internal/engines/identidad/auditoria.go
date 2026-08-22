@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"codeguard/internal/engines/proc"
+	"codeguard/internal/trivydb"
 )
 
 // Auditoría de nuestra propia cadena de suministro.
@@ -160,6 +162,25 @@ func Auditar(ctx context.Context, op Opciones) (Auditoria, error) {
 	}
 	if _, err := os.Stat(binTrivy); err != nil {
 		return a, fmt.Errorf("sin trivy no hay auditoría posible: %w", err)
+	}
+	// El escaneo va con --skip-db-update (ver escanear: el registro remoto no
+	// entra por trivy), así que la base tiene que EXISTIR antes. En una máquina
+	// recién instalada no existe, y trivy salía con 1 y un mensaje ajeno
+	// («--skip-db-update cannot be specified on the first run»). La baja
+	// CodeGuard con su cliente OCI verificado — el mismo camino que el motor
+	// de trivy; si no se puede bajar pero hay copia local, se audita con ella
+	// (detectar con la base de ayer gana a no detectar); sin copia, el fallo
+	// se dice con la causa real.
+	dirDB, err := trivydb.DirCache()
+	if err != nil {
+		return a, err
+	}
+	if err := trivydb.Actualizar(ctx, dirDB); err != nil {
+		if _, statErr := os.Stat(filepath.Join(dirDB, "db", "metadata.json")); statErr != nil {
+			return a, fmt.Errorf("no hay base de vulnerabilidades para auditar y no se pudo bajar: %w", err)
+		}
+		log.Printf("auditoría: no se pudo actualizar la base de vulnerabilidades, "+
+			"se audita con la copia local (puede estar desactualizada): %v", err)
 	}
 
 	objetivos := map[string]string{} // nombre → ruta

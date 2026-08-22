@@ -40,6 +40,7 @@ type sgError struct {
 	Level   string    `json:"level"`
 	Type    tipoError `json:"type"`
 	RuleID  string    `json:"rule_id"`
+	Path    string    `json:"path"`
 	Message string    `json:"message"`
 }
 
@@ -95,6 +96,47 @@ func (r sgResult) fatal() *sgError {
 		}
 	}
 	return nil
+}
+
+// noAnalizados devuelve los errores que significan «este objetivo (o parte de
+// él) quedó SIN analizar»: nivel error que no sea ni el fatal (ya tratado) ni
+// una regla rota (cobertura del pack, no del objetivo). Aquí caían en silencio
+// los Timeout con que semgrep SALTA archivos lentos, los OutOfMemory y los
+// errores de sintaxis del objetivo: exit 0, JSON válido, cero resultados para
+// ese archivo — «corrió y limpio» sobre algo que nadie miró. Medido en el CI
+// con -race: el e2e cazó a semgrep sin ver el subprocess shell=True plantado.
+//
+// Un tipo desconocido con nivel error también entra: ante la duda, decirlo.
+func (r sgResult) noAnalizados() []sgError {
+	var out []sgError
+	for _, e := range r.Errors {
+		if e.Type == tipoFatal || e.Type == "Rule parse error" {
+			continue
+		}
+		if strings.EqualFold(e.Level, "error") {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// parciales son los avisos (nivel warn) de análisis incompleto, PartialParsing
+// el primero: parte del archivo quedó sin mirar. Se DICEN sin tumbar la capa:
+// en bds.portal un solo archivo parcialmente parseado convivía con 45
+// hallazgos válidos, y descartarlos por el aviso era el remedio peor que el
+// silencio. El tratamiento completo (cobertura declarada por motor) es W6 del
+// plan.
+func (r sgResult) parciales() []sgError {
+	var out []sgError
+	for _, e := range r.Errors {
+		if e.Type == tipoFatal || e.Type == "Rule parse error" {
+			continue
+		}
+		if !strings.EqualFold(e.Level, "error") {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // reglasRotas lista las reglas del pack que no compilan. No invalidan el

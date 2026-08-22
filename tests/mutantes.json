@@ -18,6 +18,15 @@
     "test": "TestNingunMotorPuedeDecirLimpioSinHaberMirado"
   },
   {
+    "id": "semgrep-salto-callado",
+    "porque": "noAnalizados es la guarda contra el salto callado de semgrep (objetivo sin analizar reportado como limpio, medido en el CI con -race); si un refactor la vacia, el falso verde vuelve.",
+    "archivo": "internal/engines/semgrep/semgrep_types.go",
+    "busca": "\t\tif strings.EqualFold(e.Level, \"error\") {",
+    "reemplaza": "\t\tif false {",
+    "paquete": "./internal/engines/semgrep/",
+    "test": "TestUnObjetivoSaltadoNoEsLimpio"
+  },
+  {
     "id": "ejecutar-started-asumido",
     "porque": "Started debe ser el hecho Salida.Arranco del transporte; asumirlo true convierte 'no hubo ejecucion' (binario ausente, ctx pre-cancelado) en un proceso que existio.",
     "archivo": "internal/engines/linters/exec.go",
