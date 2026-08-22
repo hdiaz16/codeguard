@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeGuard — el commit que no debe entrar, no entra</title>
+<meta name="description" content="Agente local de análisis pre-commit para Windows. Revisa el cambio antes de que entre al repositorio y bloquea sólo lo que el CI también rechazaría.">
+<meta name="theme-color" content="#1a1c20">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23b8f7e4'/%3E%3Cstop offset='1' stop-color='%234a9a70'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='%231a1c20'/%3E%3Ccircle cx='16' cy='16' r='8' fill='url(%23g)'/%3E%3Ccircle cx='13.5' cy='13' r='3' fill='%23fff' opacity='.75'/%3E%3C/svg%3E">
+<script type="module" src="/src/js/main.js"></script>
+</head>
+<body>
+<a class="saltar" href="#contenido">Saltar al contenido</a>
+
+<!-- ═══ barra ═══════════════════════════════════════════════════════════ -->
+<header class="barra" id="barra">
+  <div class="barra-caja">
+    <a class="marca" href="#" aria-label="CodeGuard, inicio">
+      <span class="marca-orbe" data-orbe="24" data-estado="idle"></span>
+      <span class="marca-texto">CodeGuard</span>
+    </a>
+    <nav class="barra-nav" aria-label="Secciones">
+      <a href="#recorrido">El recorrido</a>
+      <a href="#demo">Verlo correr</a>
+      <a href="#motores">Motores</a>
+      <a href="#orbe">El orbe</a>
+      <a href="docs.html">Documentación</a>
+    </nav>
+    <a class="boton primario barra-cta" href="docs.html#instalacion">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/></svg>
+      Instalar
+    </a>
+    <button class="barra-menu" id="barra-menu" aria-label="Abrir el menú" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+  </div>
+</header>
+
+<main id="contenido">
+
+<!-- ═══ portada ═════════════════════════════════════════════════════════ -->
+<section class="portada">
+  <!-- La cordillera del instalador. La dibuja montanas.js con la misma
+       matemática que dist\build-wizard-art.ps1, no es una imagen. -->
+  <div class="montanas" id="montanas" aria-hidden="true"></div>
+
+  <div class="envoltura portada-caja">
+
+    <p class="pastilla portada-pastilla">
+      <span class="brizna"></span>
+      Agente local para Windows · sin permisos de administrador
+    </p>
+
+    <div class="portada-orbe" id="portada-orbe"></div>
+
+    <h1 class="display portada-titulo">
+      El commit que no debe entrar,<br>
+      <em>no entra.</em>
+    </h1>
+
+    <p class="subtitulo portada-bajada">
+      CodeGuard se mete en el gancho de pre-commit de git y revisa tu cambio
+      <strong>antes</strong> de que llegue al repositorio. Corre motores
+      deterministas en tu máquina y bloquea sólo lo que el CI también
+      rechazaría. No es un linter más: es la promesa de que si el commit pasa
+      aquí, pasa allá.
+    </p>
+
+    <div class="portada-acciones">
+      <a class="boton primario" href="#recorrido">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M7 14l5 5 5-5"/></svg>
+        Bajar por la rama
+      </a>
+      <a class="boton fantasma" href="#demo">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+        Ver un commit bloqueado
+      </a>
+    </div>
+
+    <ul class="portada-datos">
+      <li><b>16</b><span>motores deterministas</span></li>
+      <li><b>1</b><span>compuerta fail-closed: los secretos</span></li>
+      <li><b>130</b><span>reglas propias en el rulepack fijado</span></li>
+      <li><b>=</b><span>el mismo binario en tu máquina y en el CI</span></li>
+    </ul>
+  </div>
+
+  <a class="portada-hilo" href="#recorrido" aria-label="Bajar al recorrido">
+    <span class="portada-hilo-linea"><span class="portada-hilo-gota"></span></span>
+    <span class="portada-hilo-texto">baja por la rama</span>
+  </a>
+</section>
+
+
+<!-- ═══ el recorrido: se baja por la rama ═══════════════════════════════ -->
+<section id="recorrido" class="recorrido">
+  <div class="envoltura">
+
+    <!-- La cabecera va DENTRO de la pista para que la rama empiece con ella:
+         fuera quedaba un trozo de camino huérfano entre el título y el
+         primer nodo. -->
+    <div class="pista" id="pista">
+      <svg class="rama" id="rama" aria-hidden="true"></svg>
+      <div class="viajero" id="viajero" aria-hidden="true"></div>
+
+      <header class="seccion-cabeza pista-cabeza">
+        <p class="rotulo">El recorrido</p>
+        <h2 class="titulo">Un commit, de arriba abajo</h2>
+        <p class="subtitulo">
+          Esto es lo que pasa entre que escribes <code>git commit</code> y que
+          el commit existe. Baja: el orbe hace el camino contigo y va cambiando
+          de clima en cada nodo, igual que en tu escritorio.
+        </p>
+      </header>
+
+      <article class="nodo" data-estado="idle" id="nodo-commit">
+        <span class="nodo-marca" aria-hidden="true"></span>
+        <div class="nodo-col">
+          <p class="nodo-indice">Nodo 01 · Etapa 0</p>
+          <h3 class="nodo-titulo">Escribes <code>git commit</code></h3>
+          <p class="nodo-texto">
+            El hook se dispara antes de que el commit exista. Lo primero no es
+            analizar: es decidir si hay algo que analizar. Un merge, un revert,
+            un cambio que sólo toca rutas excluidas o un repo sin enrolar salen
+            por aquí, y el motivo viaja como texto hasta la terminal.
+          </p>
+          <p class="nodo-texto">
+            Esa distinción tiene consecuencias visibles: una decisión de
+            configuración del equipo no se anuncia igual que una avería, y el
+            color del orbe y el tono del mensaje tienen que coincidir porque
+            describen el mismo commit.
+          </p>
+        </div>
+        <div class="nodo-extra">
+          <div class="pozo">
+            <span class="ln"><span class="num">$</span>git commit -m "cache de sesiones"</span>
+            <span class="ln apagado"><span class="num"></span>CodeGuard  de guardia</span>
+          </div>
+          <p class="nodo-pie">Cuatro motivos para saltarse el análisis, y los cuatro se dicen.</p>
+        </div>
+      </article>
+
+      <article class="nodo" data-estado="working" id="nodo-secretos">
+        <span class="nodo-marca" aria-hidden="true"></span>
+        <div class="nodo-col">
+          <p class="nodo-indice">Nodo 02 · Etapa 1</p>
+          <h3 class="nodo-titulo">Secretos, y sólo entonces lo demás</h3>
+          <p class="nodo-texto">
+            gitleaks corre <strong>en el proceso del hook y sin red</strong>,
+            antes de que nada salga de tu máquina. Es la única capa
+            <em>fail-closed</em> del producto: si no puede correr, el commit se
+            detiene. Un análisis que no pudo mirar credenciales no está en
+            condiciones de decir que no hay ninguna.
+          </p>
+          <p class="nodo-texto">
+            Un secreto encontrado aquí no se puede silenciar con la baseline ni
+            degradar con el feedback del equipo. Un secreto viejo sigue siendo
+            un secreto vivo.
+          </p>
+        </div>
+        <div class="nodo-extra">
+          <div class="pozo">
+            <span class="ln"><span class="num"></span>CodeGuard  secretos ✗  BLOQUEADO:</span>
+            <span class="ln"><span class="num"></span>  1 secreto(s) en el diff</span>
+            <span class="ln"><span class="num"></span>  — NADA salió a la red</span>
+            <span class="ln culpable"><span class="num"></span>CodeGuard    src/config.ts:14</span>
+            <span class="ln bloqueo"><span class="num"></span>CodeGuard  rota la credencial PRIMERO;</span>
+            <span class="ln bloqueo"><span class="num"></span>  borrarla del historial no la invalida</span>
+          </div>
+          <p class="nodo-pie">Salida real del hook cuando la compuerta encuentra algo.</p>
+        </div>
+      </article>
+
+      <article class="nodo nodo-abanico" data-estado="working" id="nodo-capas">
+        <span class="nodo-marca" aria-hidden="true"></span>
+        <div class="nodo-col">
+          <p class="nodo-indice">Nodo 03 · Etapa 2</p>
+          <h3 class="nodo-titulo">Dieciséis capas, a la vez</h3>
+          <p class="nodo-texto">
+            Aquí la rama se abre. Los motores que aplican al cambio corren en
+            paralelo, y quién va a mirar se decide <strong>antes</strong> de
+            lanzar a nadie: el denominador del progreso —«3 de 9»— tiene que
+            existir desde el primer instante, o el orbe cuenta hacia un total
+            que nunca llega.
+          </p>
+          <p class="nodo-texto">
+            Cada capa publica su estado en cuanto termina, no al final. Y un
+            motor que falla no bloquea: degrada y lo dice. Esa diferencia entre
+            «corrió y no encontró nada» y «no corrió» es la razón de que exista
+            el vocabulario de capas.
+          </p>
+        </div>
+        <div class="nodo-extra">
+          <ul class="capas-lista" id="capas-lista"></ul>
+          <p class="nodo-pie">
+            Los dieciséis motores más la compuerta de secretos. De un cambio
+            concreto sólo se encienden los que aplican: el resto no falló, es
+            que no tenía nada que mirar.
+          </p>
+        </div>
+      </article>
+
+      <article class="nodo" data-estado="blocked" id="nodo-veredicto">
+        <span class="nodo-marca" aria-hidden="true"></span>
+        <div class="nodo-col">
+          <p class="nodo-indice">Nodo 04 · Etapa 7</p>
+          <h3 class="nodo-titulo">El veredicto, y la rama que se corta</h3>
+          <p class="nodo-texto">
+            Se deduplica por archivo, línea y regla; se ordena por severidad. Si
+            queda un bloqueante, el hook sale con código 1 y
+            <strong>el commit no llega a existir</strong>. Esa es la rama que
+            muere aquí al lado.
+          </p>
+          <p class="nodo-texto">
+            El veredicto se explica siempre: regla, archivo, línea, por qué
+            importa y qué hacer. Un bloqueo sin explicación es una herramienta
+            que se desinstala.
+          </p>
+        </div>
+        <div class="nodo-extra">
+          <div class="pozo">
+            <span class="ln"><span class="num"></span>CodeGuard  secretos ✓</span>
+            <span class="ln culpable"><span class="num"></span>CodeGuard  formato/lint/tipos/reglas/migraciones ✗</span>
+            <span class="ln"><span class="num"></span>CodeGuard    <span class="regla">[cookie-sin-httponly]</span></span>
+            <span class="ln"><span class="num"></span>    src/api.ts:3</span>
+            <span class="ln"><span class="num"></span>    Cookie de sesión sin httpOnly</span>
+            <span class="ln bloqueo"><span class="num"></span>CodeGuard  BLOQUEADO: 1 problema que el</span>
+            <span class="ln bloqueo"><span class="num"></span>  CI también rechazaría</span>
+          </div>
+          <p class="nodo-pie">Un bloqueo con su regla, su archivo y su línea.</p>
+        </div>
+      </article>
+
+      <article class="nodo" data-estado="pass" id="nodo-paridad">
+        <span class="nodo-marca" aria-hidden="true"></span>
+        <div class="nodo-col">
+          <p class="nodo-indice">Nodo 05 · Paridad</p>
+          <h3 class="nodo-titulo">Y en el CI corre exactamente lo mismo</h3>
+          <p class="nodo-texto">
+            <code>codeguard ci</code> es el mismo binario, con el mismo rulepack
+            fijado por versión. La paridad no es una promesa de la
+            documentación: es que es el mismo programa leyendo las mismas
+            reglas.
+          </p>
+          <p class="nodo-texto">
+            Con dos endurecimientos propios del CI: los CVE críticos, que en tu
+            máquina avisan, allí bloquean; y la compuerta de secretos escanea el
+            <strong>historial</strong> del rango en vez del diff de árboles —
+            porque una credencial añadida en un commit y borrada en el siguiente
+            sigue estando en el historial.
+          </p>
+        </div>
+        <div class="nodo-extra">
+          <div class="pozo">
+            <span class="ln"><span class="num">$</span>codeguard ci --base origin/main \</span>
+            <span class="ln"><span class="num"></span>    --out cg.sarif</span>
+            <span class="ln ok"><span class="num"></span>codeguard: OK — 0 bloqueantes, 2 aviso(s)</span>
+            <span class="ln apagado"><span class="num"></span>SARIF: cg.sarif (2 resultados)</span>
+          </div>
+          <p class="nodo-pie">El SARIF alimenta la pestaña de seguridad de GitHub.</p>
+        </div>
+      </article>
+
+      <article class="nodo" data-estado="idle" id="nodo-modelo">
+        <span class="nodo-marca" aria-hidden="true"></span>
+        <div class="nodo-col">
+          <p class="nodo-indice">Nodo 06 · Después</p>
+          <h3 class="nodo-titulo">El modelo llega tarde, y a propósito</h3>
+          <p class="nodo-texto">
+            La capa de consejo corre <strong>después</strong> de responderle al
+            hook, así que su latencia nunca toca tu commit. Y no bloquea nunca:
+            no es una preferencia configurable, es un principio del producto.
+          </p>
+          <p class="nodo-texto">
+            Es opcional y se elige. Habla el dialecto de OpenAI y el de
+            Anthropic, con preajustes para Azure AI Foundry, OpenAI, Anthropic,
+            OpenRouter, Groq, DeepSeek, Ollama y LM Studio. Los dos últimos
+            corren en tu propia máquina: el código no sale de ahí.
+          </p>
+        </div>
+        <div class="nodo-extra">
+          <div class="aviso aviso-menta">
+            <b>La clave nunca se escribe en un archivo de CodeGuard.</b>
+            La configuración guarda sólo el <em>nombre</em> de la variable de
+            entorno que la contiene, y la clave vive en el Administrador de
+            credenciales de Windows.
+          </div>
+          <p class="nodo-pie">Principio P5, y por eso la redacción ocurre antes de cualquier llamada.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══ demo animada ════════════════════════════════════════════════════ -->
+<section id="demo" class="demo">
+  <div class="envoltura">
+    <header class="seccion-cabeza">
+      <p class="rotulo">Verlo correr</p>
+      <h2 class="titulo">Un commit que no pasa</h2>
+      <p class="subtitulo">
+        Una reconstrucción del camino real de un commit bloqueado: la terminal,
+        el orbe, las capas encendiéndose y el panel con el hallazgo. Arranca
+        sola al entrar en pantalla.
+      </p>
+    </header>
+
+    <div class="demo-tablero" id="demo-tablero">
+      <div class="demo-escritorio">
+
+        <!-- terminal -->
+        <div class="terminal">
+          <div class="terminal-barra">
+            <span class="terminal-punto"></span>
+            <span class="terminal-punto"></span>
+            <span class="terminal-punto"></span>
+            <span class="terminal-titulo">pwsh — ejemplo-web</span>
+          </div>
+          <div class="terminal-cuerpo" id="terminal-cuerpo" role="log" aria-live="polite" aria-label="Salida de la terminal"></div>
+        </div>
+
+        <!-- el panel del daemon, y debajo el orbe del que florece -->
+        <div class="demo-columna">
+          <div class="panel" id="demo-panel" aria-hidden="true">
+            <div class="panel-cabeza">
+              <p class="panel-marca">CodeGuard</p>
+              <p class="panel-veredicto" id="panel-veredicto">esperando el primer análisis…</p>
+              <p class="panel-meta" id="panel-meta"></p>
+              <div class="panel-stack">
+                <span class="lang">typescript</span><span class="lang">sql</span>
+              </div>
+            </div>
+            <div class="panel-cuerpo" id="panel-cuerpo"></div>
+          </div>
+          <div class="demo-orbe" id="demo-orbe"></div>
+        </div>
+      </div>
+
+      <div class="demo-controles">
+        <button class="boton fantasma" id="demo-play" aria-label="Reproducir la demostración">
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="icono-play"><path d="M8 5.5v13l11-6.5z"/></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="icono-pausa" hidden><path d="M9 5v14M15 5v14"/></svg>
+          <span id="demo-play-texto">Reproducir</span>
+        </button>
+        <button class="boton fantasma" id="demo-reiniciar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v4h4"/></svg>
+          Reiniciar
+        </button>
+        <div class="demo-progreso" aria-hidden="true"><span id="demo-progreso-barra"></span></div>
+        <p class="demo-nota">
+          Reconstrucción animada en el navegador — no es un vídeo grabado.
+          Los textos son los del producto.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══ motores ═════════════════════════════════════════════════════════ -->
+<section id="motores" class="motores">
+  <div class="envoltura">
+    <header class="seccion-cabeza">
+      <p class="rotulo">Las capas</p>
+      <h2 class="titulo">Qué te vigila, motor por motor</h2>
+      <p class="subtitulo">
+        Dieciséis motores deterministas más la compuerta de secretos. Cada uno
+        con qué mira, cuándo bloquea, de dónde sale y por qué está — incluidas
+        las razones por las que <em>no</em> hace algo que parecería obvio.
+      </p>
+      <p class="subtitulo aviso-origen">
+        Dieciséis motores no son dieciséis instalaciones:
+        <b>nueve los instala CodeGuard</b>, <b>uno va dentro</b> del propio
+        binario y <b>seis usan la cadena de herramientas que ya tienes</b>.
+        Eso último no es una carencia — es lo que
+        <a href="docs.html#instalacion-motores">defiende la paridad</a>.
+      </p>
+    </header>
+
+    <div class="motores-filtro" id="motores-filtro" role="group" aria-label="Filtrar motores"></div>
+    <div class="motores-acordeon" id="motores-acordeon"></div>
+
+    <div class="forma">
+      <h3 class="forma-titulo">Y tres reglas que no miran el contenido, sino la forma del cambio</h3>
+      <p class="forma-bajada">
+        No dependen de ningún binario de terceros ni de la red, así que corren
+        siempre — incluso cuando el diff es tan grande que el análisis degrada
+        a sólo-secretos.
+      </p>
+      <ul class="forma-lista" id="forma-lista"></ul>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══ el orbe y el panel ══════════════════════════════════════════════ -->
+<section id="orbe" class="estados">
+  <div class="envoltura">
+    <header class="seccion-cabeza">
+      <p class="rotulo">El emblema</p>
+      <h2 class="titulo">Un orbe que dice la verdad</h2>
+      <p class="subtitulo">
+        Vive en la esquina de tu pantalla y cambia de clima según el estado del
+        análisis. Nunca abre un modal, nunca suena, nunca te roba el foco.
+        Toca un estado para verlo.
+      </p>
+    </header>
+
+    <div class="estados-tablero">
+      <div class="estados-escena">
+        <div class="estados-orbe" id="estados-orbe"></div>
+      </div>
+      <div class="estados-lista" id="estados-lista" role="tablist" aria-label="Estados del orbe"></div>
+    </div>
+
+    <div class="capas-vocabulario">
+      <h3 class="forma-titulo">Y un vocabulario para cada capa</h3>
+      <p class="forma-bajada">
+        Hasta que existió, el resultado sólo nombraba los motores que
+        <em>fallaron</em>, así que «corrió y no encontró nada» y «no corrió»
+        llegaban a la pantalla idénticos: el mismo silencio que este producto
+        existe para no producir.
+      </p>
+      <ul class="vocabulario-lista" id="vocabulario-lista"></ul>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══ principios ══════════════════════════════════════════════════════ -->
+<section id="principios" class="principios">
+  <div class="envoltura">
+    <!-- Sin encabezado grande a propósito: las cinco reglas ya se contaron
+         una por una en el recorrido de la rama de más arriba —P5 en el nodo
+         del modelo, P1 en el de paridad—. Esto es el resumen, no una
+         sección nueva; el h2 sigue existiendo para quien navega por
+         encabezados, sólo que no ocupa sitio en pantalla. -->
+    <h2 class="solo-lectores">Cinco reglas que mandan sobre cualquier decisión</h2>
+    <p class="rotulo principios-rotulo">Las reglas de la casa, en resumen</p>
+    <ol class="principios-lista" id="principios-lista"></ol>
+  </div>
+</section>
+
+
+<!-- ═══ cierre ══════════════════════════════════════════════════════════ -->
+<section class="cierre">
+  <div class="envoltura cierre-caja">
+    <div class="cierre-orbe" id="cierre-orbe"></div>
+    <h2 class="titulo">Enrolar un repo en un comando</h2>
+    <p class="subtitulo">
+      <code>codeguard init</code> detecta los lenguajes, escribe la
+      configuración, instala los hooks y genera la baseline para que lo que ya
+      existía no bloquee. Versionas <code>.codeguard/</code> y
+      <code>.githooks/</code>, y el resto del equipo queda enrolado con un
+      <code>git pull</code>. Nadie escribe YAML.
+    </p>
+    <div class="portada-acciones">
+      <a class="boton primario" href="docs.html#instalacion">Cómo se instala</a>
+      <a class="boton fantasma" href="docs.html">Leer la documentación</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="pie">
+  <div class="envoltura pie-caja">
+    <div>
+      <p class="pie-marca">CodeGuard</p>
+      <p class="apagado">Agente local de análisis pre-commit para Windows.</p>
+    </div>
+    <nav class="pie-nav" aria-label="Pie">
+      <a href="docs.html#instalacion">Instalación</a>
+      <a href="docs.html#comandos">Comandos</a>
+      <a href="docs.html#motores">Motores</a>
+      <a href="docs.html#configuracion">Configuración</a>
+      <a href="docs.html#bloqueado">Me bloqueó, ¿ahora qué?</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>
