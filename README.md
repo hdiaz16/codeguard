@@ -173,22 +173,40 @@ análisis. Todo local, sin navegador.
 
 ## Instalación
 
-Sin permisos de administrador, para el usuario actual.
+CodeGuard es de **Windows** y se instala para el usuario actual, **sin permisos
+de administrador**.
 
-```
-CodeGuard-Setup.exe              # asistente gráfico
-CodeGuard-Setup.exe /VERYSILENT  # reparto masivo
-```
+**Requisitos:** Windows 10/11 · `git` · **Go 1.26 o más nuevo**
+(`winget install -e --id GoLang.Go`, y reabre la terminal para que `go` quede
+en el PATH). *Opcional:* Inno Setup 6 (`winget install -e --id JRSoftware.InnoSetup`)
+sólo si quieres el asistente gráfico.
 
-O con el script clásico:
+Todavía no hay releases precompiladas: se clona el repo y se ensambla la
+distribución en tu máquina.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File dist\install.ps1
+git clone https://github.com/hdiaz16/codeguard.git
+cd codeguard
+powershell -ExecutionPolicy Bypass -File dist\build-dist.ps1
+```
+
+`build-dist.ps1` compila los binarios con Go y deja `dist\` listo; si hay Inno
+Setup, genera además `dist\CodeGuard-Setup.exe`. Después instala —el asistente y
+el script hacen lo mismo—:
+
+```powershell
+dist\CodeGuard-Setup.exe            # asistente gráfico (o /VERYSILENT para reparto masivo)
+# — o, si no generaste el .exe —
+powershell -ExecutionPolicy Bypass -File dist\install.ps1   # banderas: -ApiKey "…", -SkipTrivy
 ```
 
 Instala binarios y motores bajo `%LOCALAPPDATA%\CodeGuard`, añade esas rutas al
 `PATH` del usuario, deja el daemon arrancando con la sesión y queda registrado
 en «Aplicaciones instaladas» con su desinstalador.
+
+> **El instalador todavía no está firmado** (el certificado está en trámite): un
+> EDR puede marcarlo, y con razón. Compilarlo desde el repo clonado es la forma
+> de saber exactamente qué estás corriendo.
 
 **Verifica cada motor descargable contra el SHA-256 que publicaron sus autores,
 antes de extraerlo.** Los de Python (semgrep, squawk, ruff, mypy) llegan por
