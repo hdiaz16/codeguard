@@ -1,0 +1,63 @@
+CODEGUARD — QUÉ ES Y QUÉ VAS A INSTALAR
+
+CodeGuard es un agente local de análisis pre-commit. Vive en tu máquina,
+revisa lo que estás a punto de commitear y bloquea únicamente lo que el
+CI también rechazaría. Si el commit pasa aquí, pasa allá.
+
+QUÉ HACE
+
+  · Busca secretos y credenciales en lo staged. Esa compuerta es
+    fail-closed: si no puede correr, el commit se bloquea.
+  · Aplica {REGLAS} reglas propias de seguridad, calidad y datos sobre
+    Go, Python, TypeScript/JS, C# y Java.
+  · Detecta migraciones de PostgreSQL riesgosas, dependencias con CVE y
+    si tu código LLAMA de verdad al símbolo vulnerable.
+  · Un orbe en la esquina de tu pantalla muestra el estado de cada análisis.
+
+QUÉ SE INSTALA Y DÓNDE
+
+  · CodeGuard (CLI + daemon del orbe) en %LOCALAPPDATA%\CodeGuard\bin
+  · Motores de análisis en %LOCALAPPDATA%\CodeGuard\engines:
+      gitleaks y trivy — descargados de sus releases oficiales y verificados
+      contra el checksum SHA-256 publicado por sus autores; si un checksum
+      no coincide, no se instala nada.
+      govulncheck y staticcheck — se COMPILAN desde el fuente, con la versión
+      fijada; tarda un par de minutos.
+      semgrep, squawk, ruff y mypy — vía pip, con versiones fijadas. Si no
+      tienes Python, se instala con winget.
+      google-java-format y PMD — sólo si tienes un JDK; si no, se omiten.
+  · Los motores corren contenidos: token restringido sin privilegios, job
+    object con tope de memoria y procesos, sin acceso a tu escritorio ni al
+    portapapeles, y con un entorno acotado del que se excluyen tus claves.
+  · Sin todos los motores la paridad con el CI se rompe, y el agente te dice
+    cuáles faltan en vez de callarlo.
+
+QUÉ CAMBIA EN TU EQUIPO
+
+  · Se agregan las carpetas de CodeGuard al PATH de tu usuario.
+  · El daemon del orbe arranca con tu sesión de Windows.
+  · Nada requiere permisos de administrador; todo es por-usuario.
+
+TU CÓDIGO NO SALE DE TU MÁQUINA
+
+  · Todo el análisis es local: los motores corren aquí, contra tu repo.
+  · Los resultados se guardan en una base SQLite en tu equipo. Si tu
+    organización configura un destino central (una variable de entorno con
+    la cadena de conexión), el agente empuja allí el registro de análisis y
+    hallazgos —rutas, reglas y mensajes— para calibrar las reglas. Sin esa
+    variable no se envía nada a ningún sitio.
+  · La capa de consejo con modelo de IA viene APAGADA: se reparte la
+    plantilla de tu organización, pero sin la clave del proveedor no se hace
+    ninguna llamada. Si algún día la enciendes, todo lo que parezca una
+    credencial se redacta antes de salir, y el modelo nunca bloquea un
+    commit: sólo aconseja.
+
+DESINSTALACIÓN
+
+  · Desde "Aplicaciones instaladas" de Windows, cuando quieras.
+    Tus repositorios no se tocan.
+  · Se conservan tu base de datos, tu configuración y los motores ya
+    verificados, para que reinstalar no cueste otra descarga larga. Para
+    borrarlo todo: elimina la carpeta %LOCALAPPDATA%\CodeGuard.
+
+Al aceptar, autorizas la instalación descrita arriba en tu equipo.

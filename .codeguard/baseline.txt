@@ -1,0 +1,36 @@
+# CodeGuard baseline — hallazgos preexistentes suprimidos (§17 paso 4).
+# Solo lo NUEVO bloquea. Regenerar con: codeguard baseline
+# Los secretos nunca se suprimen.
+17c4a03954d745888aab87b85819ae5fbe687aa09a82692f3f20f23214df7bea  # require-lock-timeout migrations/001_init.sql:23
+55304b95a89ab5ebece2b79c9eb36c3033f8238386af8e11dc3b4139515c4d75  # require-statement-timeout migrations/001_init.sql:23
+5eddc7c63b6503a55db149f8b9f4b47ba3cfb8859efcc8166e279d4aec291e1b  # gofmt spikes/s4-namedpipes/main.go:1
+61a17959f372de542b7691c36e9ab5b2806ce7309778858de09f0bcfcd13cd4c  # require-concurrent-index-creation migrations/001_init.sql:43
+e87156859b15e65b7fbafaa8a1fc4ef105dcc5b3d9e30524a41017be058908e2  # pg-create-index-sin-concurrently migrations/007_outbox.sql:51 (la tabla outbox NACE en esta misma migración transaccional: el índice es instantáneo sobre cero filas y CONCURRENTLY no funciona dentro de una tx; misma clase aceptada que los índices de 001_init)
+8c7f218e1413c26aaba732b09089df2cfd819b8fbfb7f9695c10018a5696ab6a  # ruff-format spikes/s5-tsc-incremental/generate_project.py:1
+9802592b11420599450f45bb9115afb232f2fba99af80bf6aa295e746d3e245f  # I001 spikes/s5-tsc-incremental/generate_project.py:3
+af732c5640a2df29003481e74c037f7747b2e1fd357e9fcc298ce0547f2f85dd  # prefer-robust-stmts migrations/001_init.sql:2
+c0d3801ddf9676033d20c67614c8684db2bb9f46f86088131e735e2c4b250cda  # gofmt spikes/s3-foundry/main.go:1
+db32d603512220cfea072244ebaade0d8d8441c91314dc96cd00733c36c35b5b  # prefer-bigint-over-int migrations/001_init.sql:16
+e3386511ff42e250ae91e2129854b7be692721d54088025c54352245fc7e2187  # ruff-format spikes/s1-semgrep/generate_testrepo.py:1
+
+# ── Añadido a mano, con reserva — DECISIÓN PENDIENTE DE UN HUMANO ────────────
+# go-dinero-float sobre PriceInPerMTok / PriceOutPerMTok (un solo fingerprint
+# cubre las dos líneas).
+#
+# Por qué no se corrigió: no son importes, son TARIFAS que el equipo escribe a
+# mano en el YAML ("2.0" dólares por millón de tokens). Participan en una única
+# multiplicación cuyo resultado se cuantiza de inmediato a int64 en micros, que
+# es lo que se acumula y lo que se guarda. El riesgo de redondeo que la regla
+# persigue —acumular dinero en float— no se da aquí.
+#
+# Por qué queda anotado y no cerrado: pasarlas a enteros obligaría al equipo a
+# escribir "2000000" en vez de "2.0" en config.yaml y en dist/org-llm.yaml. Es
+# un cambio del contrato público de configuración, y esa es tu decisión, no la
+# mía. Si decides convertirlas, borra esta entrada.
+#
+# (De paso: el truncamiento de int64(usd*1e6) sí se corrigió a math.Round —
+# sesgaba el gasto acumulado a la baja en la misma cifra que vigila el tope.)
+5384d0f80398825b6d4e4a43df50c1fd7e41f32db4667b59fb3aae1240616547  # ts-innerhtml-var sitio/src/js/demo.js (los 3 sitios: HTML estático del demo, lo variable pasa por esc(); misma decisión y colapso regla+archivo que main.js/docs.js — huella medida con el binario instalado 1.14.0 en worktree limpio)
+8fa0e32f56246937c62118ae648ed1adf99e1293d3512c7b7b48de230e16d550  # go-dinero-float internal/config/config.go:107-108
+c5a84b7c28b7797a21416cee157f5ac3c95e2da29b809328ff6913c8b9533abd  # ts-innerhtml-var sitio/src/js/docs.js (los 6 sitios: escapados con esc(), datos estáticos del sitio; misma decisión y mismo colapso regla+archivo que main.js — huella medida con el binario instalado 1.14.0 en worktree limpio)
+f81adf589e238978aeb88fd37cb163b2bc3a47d0aa415f04bc88d47fef8f79b5  # ts-innerhtml-var sitio/src/js/main.js (los 4 sitios: van escapados con esc(); la huella colapsa por regla+archivo, ver pendiente de ComputeFingerprint)

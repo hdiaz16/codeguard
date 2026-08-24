@@ -1,0 +1,956 @@
+# =============================================================================
+# PILAR SEGURIDAD
+# severity: ERROR = bloquea | WARNING = aviso
+# Criterio de severidad: si la consecuencia es RCE, XSS, fuga de datos
+# personales o bypass de autenticación -> ERROR. Si es higiene -> WARNING.
+# =============================================================================
+rules:
+
+# ---------------------------------------------------------------------------
+# INYECCIÓN SQL  (CWE-89) — replica de go-sql-concat al resto de lenguajes
+# ---------------------------------------------------------------------------
+  - id: python-sql-concat
+    languages: [python]
+    severity: ERROR
+    message: >-
+      SQL construido por interpolación. Usa consulta parametrizada:
+      cursor.execute("... WHERE id = %s", (valor,))
+    metadata: { pilar: seguridad, cwe: "CWE-89", owasp: "A03:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: $CUR.execute("..." % ...)
+          - pattern: $CUR.execute("..." + $X)
+          - pattern: $CUR.execute("...".format(...))
+          - pattern: $CUR.execute(f"...{$X}...")
+          - pattern: $CUR.executemany(f"...{$X}...")
+          - pattern: $DB.raw(f"...{$X}...")
+          - pattern: sqlalchemy.text(f"...{$X}...")
+      - pattern-not: $CUR.execute("...", ...)
+
+  - id: ts-sql-concat
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      SQL construido por interpolación. Usa placeholders ($1, ?) y pasa los
+      valores como segundo argumento.
+    metadata: { pilar: seguridad, cwe: "CWE-89", owasp: "A03:2021" }
+    # curación 2026-08-11 (lo destapó el corpus de --test): la metavariable-
+    # regex de $M en AND mataba las alternativas que no ligan $M (las de
+    # query/execute/raw explícitos y la concatenación con +), y el pattern-not
+    # con `...` matcheaba también plantillas CON interpolación, anulando la
+    # forma query sin argumentos extra. Cada alternativa lleva ahora su propio
+    # filtro de $M; la llamada parametrizada sana (plantilla sin ${}) no
+    # matchea el patrón positivo, así que no necesita exención.
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: $DB.$M(`...${$X}...`, ...)
+              - metavariable-regex:
+                  metavariable: $M
+                  regex: ^(query|execute|raw|unsafe)$
+          - patterns:
+              - pattern: $DB.$M("..." + $X, ...)
+              - metavariable-regex:
+                  metavariable: $M
+                  regex: ^(query|execute|raw|unsafe)$
+
+  - id: java-sql-concat
+    languages: [java]
+    severity: ERROR
+    message: >-
+      SQL construido por concatenación. Usa PreparedStatement con placeholders.
+    metadata: { pilar: seguridad, cwe: "CWE-89", owasp: "A03:2021" }
+    pattern-either:
+      - pattern: $STMT.executeQuery("..." + $X)
+      - pattern: $STMT.executeUpdate("..." + $X)
+      - pattern: $STMT.execute("..." + $X)
+      - pattern: $CONN.prepareStatement("..." + $X)
+      - pattern: String.format("...SELECT...", ...)
+
+  - id: csharp-sql-concat
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      SQL construido por concatenación o interpolación. Usa SqlParameter.
+    metadata: { pilar: seguridad, cwe: "CWE-89", owasp: "A03:2021" }
+    pattern-either:
+      - pattern: new SqlCommand("..." + $X, ...)
+      - pattern: new SqlCommand($"...{$X}...", ...)
+      - pattern: new NpgsqlCommand($"...{$X}...", ...)
+      - pattern: $CTX.Database.ExecuteSqlRaw("..." + $X, ...)
+      - pattern: $CTX.$SET.FromSqlRaw($"...{$X}...", ...)
+
+# ---------------------------------------------------------------------------
+# INYECCIÓN DE COMANDOS  (CWE-78) — replica de python-subprocess-shell
+# ---------------------------------------------------------------------------
+  - id: ts-command-injection
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      exec/execSync interpreta shell. Usa execFile o spawn con array de
+      argumentos, nunca una cadena construida.
+    metadata: { pilar: seguridad, cwe: "CWE-78", owasp: "A03:2021" }
+    pattern-either:
+      - pattern: $CP.exec(`...${$X}...`, ...)
+      - pattern: $CP.exec("..." + $X, ...)
+      - pattern: $CP.execSync(`...${$X}...`, ...)
+      - pattern: $CP.execSync("..." + $X, ...)
+      - pattern: '$CP.spawn(..., {..., shell: true, ...})'
+
+  - id: go-command-injection
+    languages: [go]
+    severity: ERROR
+    message: >-
+      exec.Command invocando shell o con binario dinámico. Pasa el binario
+      literal y los argumentos por separado.
+    metadata: { pilar: seguridad, cwe: "CWE-78", owasp: "A03:2021" }
+    pattern-either:
+      - pattern: exec.Command("sh", "-c", $X)
+      - pattern: exec.Command("bash", "-c", $X)
+      - pattern: exec.CommandContext($CTX, "sh", "-c", $X)
+      - pattern: exec.Command(fmt.Sprintf("...", ...), ...)
+
+  - id: java-command-injection
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Runtime.exec / ProcessBuilder con cadena construida. Usa ProcessBuilder
+      con lista de argumentos literales.
+    metadata: { pilar: seguridad, cwe: "CWE-78", owasp: "A03:2021" }
+    pattern-either:
+      - pattern: Runtime.getRuntime().exec("..." + $X)
+      - pattern: Runtime.getRuntime().exec($X)
+      - pattern: new ProcessBuilder("sh", "-c", $X)
+      - pattern: new ProcessBuilder("cmd.exe", "/c", $X)
+
+  - id: csharp-command-injection
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      Process.Start con UseShellExecute o argumentos interpolados.
+      Usa ArgumentList con valores separados.
+    metadata: { pilar: seguridad, cwe: "CWE-78", owasp: "A03:2021" }
+    pattern-either:
+      - pattern: |
+          new ProcessStartInfo { ..., UseShellExecute = true, ... }
+      - pattern: Process.Start("cmd.exe", $"...{$X}...")
+      - pattern: Process.Start("/bin/sh", $"...{$X}...")
+
+# ---------------------------------------------------------------------------
+# DESERIALIZACIÓN INSEGURA  (CWE-502) — el hueco grande de Java
+# ---------------------------------------------------------------------------
+  - id: java-unsafe-deserialization
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Deserialización insegura. ObjectInputStream sobre datos no confiables es
+      RCE directa. Jackson con default typing y SnakeYAML sin SafeConstructor,
+      igual.
+    metadata: { pilar: seguridad, cwe: "CWE-502", owasp: "A08:2021" }
+    pattern-either:
+      - pattern: new ObjectInputStream(...).readObject()
+      - pattern: $OIS.readObject()
+      - pattern: $MAPPER.enableDefaultTyping(...)
+      - pattern: $MAPPER.activateDefaultTyping(...)
+      - pattern: new Yaml()
+      - pattern: new XStream(...)
+
+  - id: python-pickle-load
+    languages: [python]
+    severity: ERROR   # SUBIDO desde aviso: pickle sobre datos externos es RCE
+    message: >-
+      pickle sobre datos no confiables es ejecución remota de código.
+      Usa JSON, MessagePack o Protobuf.
+    metadata: { pilar: seguridad, cwe: "CWE-502", owasp: "A08:2021" }
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+      - pattern: cPickle.loads(...)
+      - pattern: dill.loads(...)
+      - pattern: joblib.load(...)
+      - pattern: torch.load($X)
+      - pattern: shelve.open(...)
+
+  - id: ts-unsafe-deserialization
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "node-serialize.unserialize sobre entrada externa es RCE."
+    metadata: { pilar: seguridad, cwe: "CWE-502" }
+    pattern-either:
+      - pattern: $S.unserialize(...)
+      - pattern: require('node-serialize')
+
+# ---------------------------------------------------------------------------
+# JWT SIN VERIFICAR FIRMA  (CWE-347) — replica de ts-jwt-decode-no-verify
+# ---------------------------------------------------------------------------
+  - id: python-jwt-no-verify
+    languages: [python]
+    severity: ERROR
+    message: >-
+      JWT decodificado sin verificar firma. Cualquiera puede fabricar el token.
+    metadata: { pilar: seguridad, cwe: "CWE-347", owasp: "A01:2021" }
+    pattern-either:
+      - pattern: jwt.decode(..., verify=False, ...)
+      - pattern: 'jwt.decode(..., options={..., "verify_signature": False, ...}, ...)'
+      - pattern: jwt.get_unverified_header(...)
+      - pattern: jwt.get_unverified_claims(...)
+
+  - id: go-jwt-no-verify
+    languages: [go]
+    severity: ERROR
+    message: "ParseUnverified no valida la firma del token."
+    metadata: { pilar: seguridad, cwe: "CWE-347", owasp: "A01:2021" }
+    pattern-either:
+      - pattern: $P.ParseUnverified(...)
+      - pattern: jwt.ParseUnverified(...)
+
+  - id: java-jwt-no-verify
+    languages: [java]
+    severity: ERROR
+    message: "parseClaimsJwt / JWT.decode no verifican firma. Usa parseClaimsJws."
+    metadata: { pilar: seguridad, cwe: "CWE-347", owasp: "A01:2021" }
+    pattern-either:
+      - pattern: $P.parseClaimsJwt(...)
+      - pattern: $P.parsePlaintextJwt(...)
+      - pattern: JWT.decode(...)
+
+  - id: csharp-jwt-no-verify
+    languages: [csharp]
+    severity: ERROR
+    message: "Validación de firma o de emisor desactivada en TokenValidationParameters."
+    metadata: { pilar: seguridad, cwe: "CWE-347", owasp: "A01:2021" }
+    pattern-either:
+      - pattern: |
+          new TokenValidationParameters { ..., ValidateIssuerSigningKey = false, ... }
+      - pattern: |
+          new TokenValidationParameters { ..., RequireSignedTokens = false, ... }
+      - pattern: $H.ReadJwtToken(...)
+
+# ---------------------------------------------------------------------------
+# EVAL / EJECUCIÓN DINÁMICA  (CWE-95) — faltaba en Java y C#
+# ---------------------------------------------------------------------------
+  - id: java-dynamic-eval
+    languages: [java]
+    severity: ERROR
+    message: "Ejecución de código dinámico (ScriptEngine / Nashorn / OGNL / SpEL)."
+    metadata: { pilar: seguridad, cwe: "CWE-95" }
+    pattern-either:
+      - pattern: $ENGINE.eval(...)
+      - pattern: new SpelExpressionParser().parseExpression($X)
+      - pattern: Ognl.getValue(...)
+
+  - id: csharp-dynamic-eval
+    languages: [csharp]
+    severity: ERROR
+    message: "Compilación o evaluación de código en tiempo de ejecución."
+    metadata: { pilar: seguridad, cwe: "CWE-95" }
+    pattern-either:
+      - pattern: CSharpScript.EvaluateAsync(...)
+      - pattern: CSharpScript.RunAsync(...)
+      - pattern: $C.CompileAssemblyFromSource(...)
+
+# ---------------------------------------------------------------------------
+# CRIPTOGRAFÍA DÉBIL  (CWE-327 / CWE-916)
+# ---------------------------------------------------------------------------
+  - id: python-crypto-debil
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Algoritmo o modo débil. Hash de contraseñas -> Argon2id o bcrypt.
+      Cifrado -> AES-GCM. Nunca MD5, SHA-1, DES ni modo ECB.
+    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+      - pattern: hashlib.new("md5", ...)
+      - pattern: Crypto.Cipher.DES.new(...)
+      - pattern: DES.new(...)
+      - pattern: ARC4.new(...)
+      - pattern: $C.new($K, AES.MODE_ECB, ...)
+      - pattern: modes.ECB(...)
+
+  - id: ts-crypto-debil
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Algoritmo o modo débil. Usa sha256+ y AES-GCM."
+    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: crypto.createHash("$ALGO")
+          - pattern: crypto.createCipheriv("$ALGO", ...)
+          - pattern: crypto.createDecipheriv("$ALGO", ...)
+      - metavariable-regex:
+          metavariable: $ALGO
+          regex: (?i)(md5|md4|sha1|rc4|des|.*-ecb)
+
+  - id: go-crypto-debil
+    languages: [go]
+    severity: ERROR
+    message: "Algoritmo o modo débil. Usa sha256+, AES-GCM y bcrypt/argon2."
+    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    pattern-either:
+      - pattern: md5.New()
+      - pattern: md5.Sum(...)
+      - pattern: sha1.New()
+      - pattern: sha1.Sum(...)
+      - pattern: des.NewCipher(...)
+      - pattern: rc4.NewCipher(...)
+      - pattern: cipher.NewCBCEncrypter(...)
+
+  - id: java-crypto-debil
+    languages: [java]
+    severity: ERROR
+    message: "Algoritmo o modo débil. AES/GCM/NoPadding y SHA-256 como mínimo."
+    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: MessageDigest.getInstance("$ALGO")
+          - pattern: Cipher.getInstance("$ALGO")
+          - pattern: KeyGenerator.getInstance("$ALGO")
+      - metavariable-regex:
+          metavariable: $ALGO
+          regex: (?i)(md5|md2|sha-?1|des|rc2|rc4|blowfish|.*ecb.*|aes$|aes/ecb.*)
+
+  - id: csharp-crypto-debil
+    languages: [csharp]
+    severity: ERROR
+    message: "Algoritmo o modo débil. Usa SHA256+, AesGcm y Rfc2898/Argon2."
+    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    pattern-either:
+      - pattern: MD5.Create()
+      - pattern: SHA1.Create()
+      - pattern: DES.Create()
+      - pattern: TripleDES.Create()
+      - pattern: RC2.Create()
+      - pattern: $X.Mode = CipherMode.ECB
+
+# ---------------------------------------------------------------------------
+# ALEATORIEDAD NO CRIPTOGRÁFICA  (CWE-338)
+# Se dispara solo cuando el destino tiene nombre de material sensible.
+# ---------------------------------------------------------------------------
+  - id: python-random-inseguro
+    languages: [python]
+    severity: ERROR
+    message: >-
+      random no es criptográficamente seguro. Para tokens, nonces, OTP o
+      identificadores impredecibles usa el módulo secrets.
+    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: $VAR = random.$F(...)
+          - pattern: $VAR = random.$F(...).$ANY(...)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(token|secret|key|passw|nonce|salt|otp|session|csrf|reset|api_?key|uuid).*
+
+  - id: ts-random-inseguro
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Math.random no es seguro. Usa crypto.randomUUID o crypto.randomBytes.
+    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: const $VAR = <... Math.random() ...>
+          - pattern: let $VAR = <... Math.random() ...>
+          - pattern: $VAR = <... Math.random() ...>
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(token|secret|key|passw|nonce|salt|otp|session|csrf|reset|apiKey|id)$
+
+  - id: go-random-inseguro
+    languages: [go]
+    severity: ERROR
+    message: "math/rand no es seguro. Usa crypto/rand para material sensible."
+    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: $VAR := rand.$F(...)
+          - pattern: $VAR = rand.$F(...)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(token|secret|key|passw|nonce|salt|otp|session|csrf|reset).*
+
+  - id: java-random-inseguro
+    languages: [java]
+    severity: WARNING  # curación: sin filtro por nombre sensible (como sus hermanos), ERROR sería ruido
+    message: "java.util.Random no es seguro. Usa SecureRandom."
+    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    pattern-either:
+      - pattern: new Random()
+      - pattern: Math.random()
+      - pattern: ThreadLocalRandom.current()
+
+  - id: csharp-random-inseguro
+    languages: [csharp]
+    severity: ERROR
+    message: "System.Random no es seguro. Usa RandomNumberGenerator."
+    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    pattern-either:
+      - pattern: new Random()
+      - pattern: Random.Shared.$F(...)
+
+# ---------------------------------------------------------------------------
+# VERIFICACIÓN TLS DESACTIVADA  (CWE-295)
+# ---------------------------------------------------------------------------
+  - id: python-tls-verify-off
+    languages: [python]
+    severity: ERROR
+    message: "Verificación de certificado desactivada. Habilita MITM."
+    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    pattern-either:
+      - pattern: requests.$M(..., verify=False, ...)
+      - pattern: httpx.$M(..., verify=False, ...)
+      - pattern: ssl._create_unverified_context(...)
+      - pattern: $CTX.check_hostname = False
+      - pattern: $CTX.verify_mode = ssl.CERT_NONE
+
+  - id: go-tls-verify-off
+    languages: [go]
+    severity: ERROR
+    message: "InsecureSkipVerify desactiva la validación del certificado."
+    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    pattern: |
+      &tls.Config{..., InsecureSkipVerify: true, ...}
+
+  - id: ts-tls-verify-off
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "rejectUnauthorized:false o NODE_TLS_REJECT_UNAUTHORIZED=0."
+    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    pattern-either:
+      - pattern: "{..., rejectUnauthorized: false, ...}"
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+
+  - id: java-tls-verify-off
+    languages: [java]
+    severity: ERROR
+    message: "TrustManager o HostnameVerifier permisivo."
+    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    pattern-either:
+      - pattern: |
+          new X509TrustManager() { ... }
+      - pattern: $X.setHostnameVerifier(...)
+      - pattern: NoopHostnameVerifier.INSTANCE
+
+  - id: csharp-tls-verify-off
+    languages: [csharp]
+    severity: ERROR
+    message: "Callback de validación de certificado que siempre acepta."
+    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    pattern-either:
+      - pattern: ServicePointManager.ServerCertificateValidationCallback = ...
+      - pattern: |
+          new HttpClientHandler { ..., ServerCertificateCustomValidationCallback = ..., ... }
+
+# ---------------------------------------------------------------------------
+# XXE  (CWE-611)
+# ---------------------------------------------------------------------------
+  - id: python-xxe
+    languages: [python]
+    severity: ERROR
+    message: "Parser XML sin protección contra entidades externas. Usa defusedxml."
+    metadata: { pilar: seguridad, cwe: "CWE-611", owasp: "A05:2021" }
+    pattern-either:
+      - pattern: xml.etree.ElementTree.parse(...)
+      - pattern: xml.etree.ElementTree.fromstring(...)
+      - pattern: xml.dom.minidom.parse(...)
+      - pattern: xml.sax.make_parser(...)
+      - pattern: lxml.etree.XMLParser(..., resolve_entities=True, ...)
+
+  - id: java-xxe
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Factory XML sin desactivar DTD. Añade
+      setFeature("http://apache.org/xml/features/disallow-doctype-decl", true).
+    metadata: { pilar: seguridad, cwe: "CWE-611", owasp: "A05:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: DocumentBuilderFactory.newInstance()
+          - pattern: SAXParserFactory.newInstance()
+          - pattern: XMLInputFactory.newInstance()
+          - pattern: TransformerFactory.newInstance()
+      - pattern-not-inside: |
+          $F.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+          ...
+
+  - id: csharp-xxe
+    languages: [csharp]
+    severity: ERROR
+    message: "DtdProcessing.Parse o XmlResolver activo permite XXE."
+    metadata: { pilar: seguridad, cwe: "CWE-611", owasp: "A05:2021" }
+    pattern-either:
+      - pattern: |
+          new XmlReaderSettings { ..., DtdProcessing = DtdProcessing.Parse, ... }
+      - pattern: $X.XmlResolver = new XmlUrlResolver()
+
+# ---------------------------------------------------------------------------
+# PATH TRAVERSAL / ZIP SLIP  (CWE-22)
+# ---------------------------------------------------------------------------
+  - id: python-zip-slip
+    languages: [python]
+    severity: ERROR
+    message: >-
+      extractall sobre un archivo no confiable permite escribir fuera del
+      destino. Valida cada nombre de entrada contra el directorio base.
+    metadata: { pilar: seguridad, cwe: "CWE-22" }
+    pattern-either:
+      - pattern: $Z.extractall(...)
+      - pattern: $T.extractall(...)
+
+  - id: java-zip-slip
+    languages: [java]
+    severity: ERROR
+    message: "Nombre de entrada del ZIP usado como ruta sin normalizar (Zip Slip)."
+    metadata: { pilar: seguridad, cwe: "CWE-22" }
+    pattern-either:
+      - pattern: new File($DIR, $ENTRY.getName())
+      - pattern: Paths.get($DIR, $ENTRY.getName())
+      - pattern: new FileOutputStream($DIR + $ENTRY.getName())
+
+  - id: go-zip-slip
+    languages: [go]
+    severity: ERROR
+    message: "Nombre de entrada del archivo comprimido usado sin validar (Zip Slip)."
+    metadata: { pilar: seguridad, cwe: "CWE-22" }
+    pattern-either:
+      - pattern: filepath.Join($DST, $F.Name)
+      - pattern: filepath.Join($DST, $HDR.Name)
+
+  - id: ts-path-traversal
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Ruta construida con entrada externa. Normaliza y verifica que el
+      resultado siga dentro del directorio base.
+    metadata: { pilar: seguridad, cwe: "CWE-22" }
+    pattern-either:
+      - pattern: fs.$M(path.join($BASE, $REQ.params.$P), ...)
+      - pattern: fs.$M(path.join($BASE, $REQ.query.$P), ...)
+      - pattern: fs.$M($BASE + $REQ.$X.$P, ...)
+
+# ---------------------------------------------------------------------------
+# DEBUG / CONFIGURACIÓN INSEGURA EN PRODUCCIÓN  (CWE-489)
+# ---------------------------------------------------------------------------
+  - id: python-debug-en-prod
+    languages: [python]
+    severity: ERROR
+    message: "Modo debug activo expone stack traces y consola remota."
+    metadata: { pilar: seguridad, cwe: "CWE-489", owasp: "A05:2021" }
+    pattern-either:
+      - pattern: $APP.run(..., debug=True, ...)
+      - pattern: DEBUG = True
+      - pattern: app.config["DEBUG"] = True
+
+  - id: ts-debug-en-prod
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Configuración de desarrollo activa."
+    metadata: { pilar: seguridad, cwe: "CWE-489", owasp: "A05:2021" }
+    pattern-either:
+      - pattern: $APP.set("env", "development")
+      - pattern: "{..., stacktrace: true, ...}"
+
+# ---------------------------------------------------------------------------
+# SSRF  (CWE-918) — modo taint
+# ---------------------------------------------------------------------------
+  - id: python-ssrf
+    languages: [python]
+    severity: WARNING
+    mode: taint
+    message: >-
+      URL controlada por el usuario llega a un cliente HTTP. Valida contra una
+      lista de permitidos y bloquea rangos internos y 169.254.169.254.
+    metadata: { pilar: seguridad, cwe: "CWE-918", owasp: "A10:2021" }
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.json[...]
+      - pattern: request.form.get(...)
+      - pattern: $REQ.query_params[...]
+    pattern-sinks:
+      - pattern: requests.$M($URL, ...)
+      - pattern: httpx.$M($URL, ...)
+      - pattern: urllib.request.urlopen($URL, ...)
+
+  - id: ts-ssrf
+    languages: [javascript, typescript]
+    severity: WARNING
+    mode: taint
+    message: >-
+      URL controlada por el usuario llega a un cliente HTTP. Aplica lista de
+      permitidos antes del fetch.
+    metadata: { pilar: seguridad, cwe: "CWE-918", owasp: "A10:2021" }
+    pattern-sources:
+      - pattern: $REQ.query.$P
+      - pattern: $REQ.body.$P
+      - pattern: $REQ.params.$P
+    pattern-sinks:
+      - pattern: fetch($URL, ...)
+      - pattern: axios.$M($URL, ...)
+      - pattern: got($URL, ...)
+
+# ---------------------------------------------------------------------------
+# XSS  (CWE-79) — ts-innerhtml-var subido a ERROR + cobertura de plantillas
+# ---------------------------------------------------------------------------
+  - id: ts-innerhtml-var
+    languages: [javascript, typescript]
+    severity: ERROR   # SUBIDO desde aviso: XSS es fuga de sesión
+    message: >-
+      HTML dinámico sin sanitizar. Usa textContent, o DOMPurify si necesitas
+      HTML.
+    metadata: { pilar: seguridad, cwe: "CWE-79", owasp: "A03:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: $EL.innerHTML = $X
+          - pattern: $EL.outerHTML = $X
+          - pattern: $EL.insertAdjacentHTML(..., $X)
+          - pattern: '<$T dangerouslySetInnerHTML={{__html: $X}} />'
+          - pattern: '<$T dangerouslySetInnerHTML={{ __html: $X }} />'
+          - pattern: document.write($X)
+      - pattern-not: $EL.innerHTML = "..."
+      - pattern-not: $EL.innerHTML = DOMPurify.sanitize(...)
+      - pattern-not: '<$T dangerouslySetInnerHTML={{__html: DOMPurify.sanitize(...)}} />'
+      - pattern-not: '<$T dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(...) }} />'
+
+  - id: java-xss-response
+    languages: [java]
+    severity: ERROR
+    message: "Escritura directa de entrada del usuario en la respuesta HTTP."
+    metadata: { pilar: seguridad, cwe: "CWE-79", owasp: "A03:2021" }
+    pattern-either:
+      - pattern: $RESP.getWriter().println($REQ.getParameter(...))
+      - pattern: $RESP.getWriter().write($REQ.getParameter(...))
+
+# ---------------------------------------------------------------------------
+# CORS  (CWE-942) — cors-wildcard extendido y subido cuando hay credenciales
+# ---------------------------------------------------------------------------
+  # curación: era UNA regla para seis lenguajes, pero los objetos literales
+  # sólo parsean en js/ts y semgrep exige que cada patrón parsee en TODOS los
+  # lenguajes listados: llevaba muerta desde el primer día. Partida por
+  # framework, que es donde vive cada forma del mismo error.
+  - id: cors-wildcard-con-credenciales
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Origen comodín junto a credenciales. La combinación es inválida y suele
+      resolverse reflejando el Origin, que anula la política del navegador.
+    metadata: { pilar: seguridad, cwe: "CWE-942", owasp: "A05:2021" }
+    pattern-either:
+      - pattern: "{..., origin: true, credentials: true, ...}"
+      - pattern: '{..., origin: "*", credentials: true, ...}'
+
+  - id: cors-wildcard-con-credenciales-net
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      Origen comodín junto a credenciales (AllowAnyOrigin + AllowCredentials).
+      La combinación es inválida y suele resolverse reflejando el Origin, que
+      anula la política del navegador.
+    metadata: { pilar: seguridad, cwe: "CWE-942", owasp: "A05:2021" }
+    pattern: $X.AllowAnyOrigin().AllowCredentials()
+
+  - id: cors-wildcard-con-credenciales-java
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Origen comodín en la configuración CORS. Combinado con credenciales la
+      política es inválida y suele resolverse reflejando el Origin, que anula
+      la protección del navegador.
+    metadata: { pilar: seguridad, cwe: "CWE-942", owasp: "A05:2021" }
+    pattern: $C.setAllowedOrigins(Arrays.asList("*"))
+
+# ---------------------------------------------------------------------------
+# CADENAS DE CONEXIÓN Y SECRETOS EN CÓDIGO  (CWE-798)
+# Complementa a gitleaks: gitleaks caza formatos conocidos, esto caza el resto.
+# ---------------------------------------------------------------------------
+  - id: hardcoded-credential-generico
+    languages: [python, javascript, typescript, go, java, csharp]
+    severity: ERROR
+    message: >-
+      Credencial literal en el código. Muévela al gestor de secretos.
+    metadata: { pilar: seguridad, cwe: "CWE-798", owasp: "A07:2021" }
+    # curación: los patterns por-lenguaje no parseaban en todos los lenguajes
+    # listados; regex agnóstica con las mismas exclusiones de placeholders
+    patterns:
+      - pattern-regex: '(?i)\b\w*(password|passwd|pwd|secret|api_?key|apikey|token|private_?key|client_?secret)\w*\s*(=|:=|:)\s*["''][^"'']{8,}["'']'
+      - pattern-not-regex: '(?i)(example|dummy|changeme|placeholder|xxx|\{\{|\$\{|<[^>]*>|redactado)'
+      # un valor TODO_EN_MAYUSCULAS es el NOMBRE de una env var, no un secreto
+      - pattern-not-regex: '["''][A-Z][A-Z0-9_]{6,}["'']'
+    paths:
+      exclude: ["**/*_test.go", "**/*.test.*", "**/*.spec.*", "**/testdata/**", "**/fixtures/**", "**/mocks/**"]
+
+
+  # --- DOCKERFILE, COMPOSE E INFRAESTRUCTURA SEGURA ---
+  - id: dockerfile-user-root
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Dockerfile sin instrucción USER o ejecutando como root"
+    metadata:
+      pillar: security
+      why: "Ejecutar procesos dentro de un contenedor como root facilita escapes y ataques al host."
+      fix_hint: "Declara un usuario no privilegiado con 'USER <usuario>' antes del ENTRYPOINT/CMD."
+    patterns:
+      # Anclado a inicio de línea en AMBOS lados y SENSIBLE a mayúsculas: la
+      # instrucción FROM de un Dockerfile empieza la línea y por convención va
+      # en mayúsculas. Un \bFROM\b suelto con (?i) cazaba el FROM de cualquier
+      # SQL y el `from x import y` de Python — y semgrep --test ignora el
+      # filtro paths:, así que la regla disparaba sobre los testdata de los
+      # demás lenguajes y el corpus entero salía rojo (medido: era la única
+      # regla generic del pack sin anclar). Un Dockerfile con `from` en
+      # minúsculas es legal y se escapa: el precio de no marcar cada import
+      # de Python del planeta; el filtro paths sigue siendo la guarda real.
+      - pattern-regex: '(?ms)^\s*FROM\b(?!.*^\s*USER\s+[a-zA-Z0-9_\-]+)'
+
+  - id: dockerfile-mutable-latest-tag
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Dockerfile usando tag mutable :latest"
+    metadata:
+      pillar: security
+      why: "El tag latest genera builds no reproducibles y facilita ataques de envenenamiento de imágenes."
+      fix_hint: "Pinea la versión específica (ej. node:20.11-alpine) o usa el digest sha256."
+    patterns:
+      - pattern-regex: '(?im)^\s*FROM\s+[\w\.\/\-]+:latest\b'
+
+  - id: dockerfile-eol-base-image
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Imagen base obsoleta (EOL) con vulnerabilidades críticas conocidas"
+    metadata:
+      pillar: security
+      why: "Imágenes base EOL no reciben parches de seguridad de la comunidad."
+      fix_hint: "Actualiza a una versión moderna y con soporte oficial."
+    patterns:
+      - pattern-regex: '(?im)^\s*FROM\s+(debian:(jessie|stretch|buster)|ubuntu:(14\.04|16\.04|18\.04)|alpine:(2\.|3\.(1[0-4]|[0-9])\b)|node:(1[0-6]\b|8\b))'
+
+  - id: dockerfile-add-remote-url
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Instrucción ADD descargando desde URL remota"
+    metadata:
+      pillar: security
+      why: "ADD desde URL descarga binarios sin verificar firmas o integridad criptográfica."
+      fix_hint: "Usa curl/wget con validación de checksum o COPY de artefactos locales pre-verificados."
+    patterns:
+      - pattern-regex: '(?im)^\s*ADD\s+https?:\/\/'
+
+  - id: dockerfile-privileged-port
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Puerto privilegiado <1024 en contenedor no-root"
+    metadata:
+      pillar: security
+      why: "Un usuario no-root no puede abrir puertos <1024 en Linux estándar."
+      fix_hint: "Usa puertos no privilegiados (ej. 8080, 8443, 3000)."
+    patterns:
+      - pattern-regex: '(?im)^\s*EXPOSE\s+(80|443|22|21|25)\b'
+
+  - id: dockerfile-uncleaned-apt-cache
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Instalación de paquetes apt-get sin limpiar caché"
+    metadata:
+      pillar: quality
+      why: "No limpiar /var/lib/apt/lists infla la imagen y deja metadatos innecesarios."
+      fix_hint: "Agrega '&& rm -rf /var/lib/apt/lists/*' al comando RUN."
+    patterns:
+      - pattern-regex: '(?im)^\s*RUN\s+.*?\bapt-get\s+install\b(?!\s*.*?rm\s+-rf\s+\/var\/lib\/apt)'
+
+  - id: dockerfile-sudo-usage
+    languages: [generic]
+    paths:
+      include: ["Dockerfile", "Dockerfile.*", "*.dockerfile"]
+    severity: ERROR
+    message: "Uso de sudo dentro de contenedor Docker"
+    metadata:
+      pillar: security
+      why: "El comando sudo en contenedores indica gestión inadecuada de permisos."
+      fix_hint: "Configura los permisos adecuados en tiempo de build con chown/chmod."
+    patterns:
+      - pattern-regex: '(?im)^\s*RUN\s+.*\bsudo\b'
+
+  - id: compose-docker-socket-mounted
+    languages: [generic]
+    paths:
+      include: ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+    severity: ERROR
+    message: "Socket de Docker (/var/run/docker.sock) montado en contenedor"
+    metadata:
+      pillar: security
+      why: "Montar el socket de Docker otorga control total sobre el daemon del host."
+      fix_hint: "Usa APIs aisladas o herramientas de orquestación sin exponer el socket."
+    patterns:
+      - pattern-regex: '(?im)\/var\/run\/docker\.sock:\/var\/run\/docker\.sock'
+
+  - id: compose-network-mode-host
+    languages: [generic]
+    paths:
+      include: ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+    severity: ERROR
+    message: "network_mode: host en contenedor compose"
+    metadata:
+      pillar: security
+      why: "network_mode host elimina el aislamiento de red del contenedor."
+      fix_hint: "Usa redes bridge dedicadas."
+    patterns:
+      - pattern-regex: '(?im)^\s*network_mode:\s*["'']?host["'']?'
+
+  - id: compose-privileged-true
+    languages: [generic]
+    paths:
+      include: ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+    severity: ERROR
+    message: "Contenedor con privileged: true"
+    metadata:
+      pillar: security
+      why: "privileged: true deshabilita todas las defensas del kernel (AppArmor, Seccomp, Capabilities)."
+      fix_hint: "Otorga capacidades granulares específicas con cap_add en lugar de privileged."
+    patterns:
+      - pattern-regex: '(?im)^\s*privileged:\s*true\b'
+
+  # --- SEGURIDAD FRONTEND TYPESCRIPT Y REACT (TAINT / DOM) ---
+  - id: ts-new-function-eval
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "new Function() dinámico como eval encubierto — inyección de código"
+    metadata:
+      pillar: security
+      why: "new Function('...') compila y ejecuta strings arbitrarios en el contexto global."
+      fix_hint: "Usa evaluadores seguros de AST o parsing estructurado."
+    patterns:
+      - pattern: "new Function(...)"
+
+  - id: ts-postmessage-wildcard
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "window.postMessage con targetOrigin wildcard '*'"
+    metadata:
+      pillar: security
+      why: "Enviar mensajes cross-origin con '*' permite a cualquier iframe o ventana interceptar datos confidenciales."
+      fix_hint: "Especifica el origen exacto del receptor (ej. 'https://portal.empresa-ejemplo.com')."
+    patterns:
+      - pattern-either:
+          - pattern: "window.postMessage($DATA, '*')"
+          - pattern: "postMessage($DATA, '*')"
+          - pattern: "$WIN.postMessage($DATA, '*')"
+
+  - id: ts-localstorage-token
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Almacenamiento de token de autenticación en localStorage"
+    metadata:
+      pillar: security
+      why: "localStorage es accesible por cualquier script que corra en la página. Un XSS menor compromete la sesión."
+      fix_hint: "Usa cookies HttpOnly con flags Secure y SameSite=Strict."
+    patterns:
+      - pattern-either:
+          - pattern: "localStorage.setItem($KEY, $VAL)"
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: '(?i).*(token|jwt|auth|session|secret|bearer).*'
+
+  - id: ts-prototype-pollution-merge
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Posible Prototype Pollution en función de merge"
+    metadata:
+      pillar: security
+      why: "Copiar propiedades iterando con for..in sin validar __proto__ o constructor permite alterar Object.prototype."
+      fix_hint: "Filtra las claves '__proto__', 'constructor' y 'prototype', o usa Object.assign."
+    patterns:
+      - pattern: |
+          for (const $K in $SRC) {
+              $TARGET[$K] = $SRC[$K];
+          }
+
+
+
+  - id: ts-open-redirect-location
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Redirección abierta (Open Redirect) asignando window.location sin validación de prefijo seguro"
+    metadata:
+      pillar: security
+      why: "Asignar window.location directamente desde parámetros permite a un atacante redirigir a sitios maliciosos."
+      fix_hint: "Valida que el destino empiece por '/' o pertenezca a un dominio permitido."
+    patterns:
+      - pattern-either:
+          - pattern: "window.location.href = $X"
+          - pattern: "window.location = $X"
+      - pattern-not: "window.location.href = '/...'"
+      - pattern-not: "window.location = '/...'"
+      - pattern-not: "window.location.pathname = $X"
+
+  - id: ts-redos-nested-quantifiers
+    languages: [generic]
+    paths:
+      include: ["*.ts", "*.js", "*.tsx", "*.jsx"]
+    severity: ERROR
+    message: "Expresión regular vulnerable a ReDoS catastrófico por cuantificadores anidados"
+    metadata:
+      pillar: security
+      why: "La estructura ([...]+)+ provoca un árbol de búsqueda exponencial ante cadenas no coincidentes."
+      fix_hint: "Simplifica la expresión regular para eliminar la ambigüedad en los grupos."
+    patterns:
+      - pattern-regex: '(?im)/\^?\([^)]+\+\)\+\$?/'
+
+
+
+  - id: react-unvalidated-href-javascript
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Enlace <a> con href dinámico no validado — posible inyección javascript:"
+    metadata:
+      pillar: security
+      why: "Renderizar href={url} dinámico sin validar protocolo permite ejecución de scripts mediante javascript:..."
+      fix_hint: "Valida que el protocolo sea explícitamente http: o https:."
+    patterns:
+      - pattern: '<a href={$URL}>...</a>'
+      - pattern-not: '<a href={"/" + $REST}>...</a>'
+      - pattern-not: '<a href={"http" + $REST}>...</a>'
+      - pattern-not: '<a href={`/${$REST}`}>...</a>'
+      - pattern-not: '<a href={`http${$REST}`}>...</a>'
+      - pattern-not: '<a href={$URL} target="_blank" rel="noopener noreferrer">...</a>'
+      - pattern-not: '<a href={$URL} rel="noopener noreferrer" target="_blank">...</a>'
+      - pattern-not-inside: |
+          const $IS_SAFE = /^https?:\/\//i.test($URL);
+          ...
+
+  - id: npm-vulnerable-lodash-cve
+    languages: [generic]
+    paths:
+      include: ["package.json", "package-lock.json"]
+    severity: ERROR
+    message: "Versión vulnerable de lodash detectada (<4.17.21) — riesgo de Prototype Pollution y RCE"
+    metadata:
+      pillar: security
+      why: "Versiones de lodash inferiores a 4.17.21 están afectadas por vulnerabilidades críticas (CVE-2020-8203, CVE-2021-23337)."
+      fix_hint: "Actualiza a lodash >= 4.17.21."
+    patterns:
+      - pattern-regex: '(?im)"lodash"\s*:\s*"(4\.17\.(0|1[0-9]|20)\b|4\.(0|1[0-6])\.[0-9]+)'
+
+  - id: npm-typosquatting-dependency
+    languages: [generic]
+    paths:
+      include: ["package.json", "package-lock.json"]
+    severity: ERROR
+    message: "Posible paquete malicioso de typosquatting en dependencias"
+    metadata:
+      pillar: security
+      why: "Paquetes con nombres similares a librerías populares (lodahs, requset, reactt) pueden contener código malicioso."
+      fix_hint: "Verifica el nombre exacto del paquete oficial."
+    patterns:
+      - pattern-regex: '(?im)"(lodahs|requset|reactt|expres|coockie-parser)"\s*:'

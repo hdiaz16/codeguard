@@ -1,0 +1,22 @@
+-- 003: el veredicto único tipado (AnalysisOutcome, consejo turnos 61-68).
+--
+-- runs.verdict guarda el vocabulario viejo, con su "degraded" sintetizado al
+-- escribir (store_runs.go) que ningún lector entendía: el panel lo pintaba
+-- «pasó», el resumen semanal lo contaba como «sin nada». No se reescribe ni se
+-- reinterpreta: esas filas se midieron con el criterio viejo y retro-fijarlas
+-- fingiría una precisión que no existía.
+--
+-- outcome es el veredicto derivado UNA vez en el productor
+-- (pipeline.Finalizar): clean|findings|blocked|degraded|failed|skipped.
+-- NULL significa "fila anterior a este vocabulario" y los lectores lo dicen
+-- así (legacy), jamás lo mapean en silencio a un estado que no se midió.
+--
+-- failure_code acompaña a failed: la fase tipada (config|secrets|staged|
+-- pipeline|daemon|unknown) que permite distinguir «arregla tu YAML» de
+-- «reporta un bug» sin parsear textos.
+--
+-- Expand-only: columnas nuevas, ninguna se toca. El central corre estas
+-- mismas migraciones, así que el sync puede empujar las columnas nuevas sin
+-- divergencia de esquema.
+ALTER TABLE runs ADD COLUMN outcome TEXT CHECK (outcome IN ('clean','findings','blocked','degraded','failed','skipped'));
+ALTER TABLE runs ADD COLUMN failure_code TEXT;

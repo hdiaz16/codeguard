@@ -1,0 +1,632 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   La portada: barra, hero, el recorrido por la rama, la demo, los motores,
+   los estados del orbe y el cierre.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── barra ──────────────────────────────────────────────────────────────── */
+.barra {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+  transition: background .3s ease, box-shadow .3s ease, backdrop-filter .3s;
+}
+.barra.posada {
+  background: rgba(26, 28, 32, .82);
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 1px 0 rgba(255,255,255,.05), 0 10px 30px rgba(0,0,0,.3);
+}
+.barra-caja {
+  max-width: var(--ancho); margin-inline: auto;
+  padding: 14px var(--gutter);
+  display: flex; align-items: center; gap: 28px;
+}
+.marca { display: flex; align-items: center; gap: 11px; color: var(--ink); flex: none; }
+.marca:hover { text-decoration: none; }
+.marca-orbe { display: block; flex: none; }
+.marca-texto { font-weight: 620; font-size: 15px; letter-spacing: -.015em; }
+
+.barra-nav { display: flex; gap: 4px; margin-left: auto; }
+.barra-nav a {
+  color: var(--ink-2); font-size: 13.5px; padding: 8px 13px; border-radius: 9px;
+  transition: color .15s, background .15s;
+}
+.barra-nav a:hover { color: var(--ink); background: rgba(255,255,255,.05); text-decoration: none; }
+.barra-cta { padding: 9px 17px; font-size: 13.5px; flex: none; }
+.barra-menu {
+  display: none; background: var(--d2); border: 0; border-radius: 9px;
+  width: 38px; height: 38px; color: var(--ink-2); cursor: pointer;
+  padding: 0; place-items: center; box-shadow: var(--raise);
+}
+.barra-menu svg { width: 20px; height: 20px; }
+
+/* ── portada ────────────────────────────────────────────────────────────── */
+/* justify-content: center está a propósito descartado. Con min-height y una
+   columna flex, en cuanto el contenido pasa del alto de la ventana el centrado
+   reparte el desbordamiento a los dos lados y la parte de ARRIBA queda fuera
+   de alcance: en una pantalla de portátil el orbe se salía por el techo. Con
+   flex-start el relleno superior hace el mismo trabajo visual y nada se pierde. */
+.portada {
+  position: relative;
+  min-height: 100svh;
+  display: flex; flex-direction: column; justify-content: flex-start;
+  padding: clamp(84px, 9vh, 116px) 0 0;
+  overflow: hidden;
+}
+.portada-caja { text-align: center; display: flex; flex-direction: column; align-items: center; }
+.portada-pastilla { margin-bottom: clamp(16px, 2.4vh, 26px); }
+
+.portada-orbe {
+  display: grid; place-items: center;
+  margin-bottom: clamp(12px, 2vh, 22px);
+  /* El orbe se apoya sobre su propia luz: la sombra de debajo lo asienta en
+     la página en vez de dejarlo flotando como una calcomanía. */
+  position: relative;
+}
+.portada-orbe::after {
+  content: ""; position: absolute; bottom: -14%; left: 50%; translate: -50% 0;
+  width: 62%; height: 16px; border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(0,0,0,.5), transparent 70%);
+  filter: blur(7px);
+}
+
+.portada-titulo { max-width: 15ch; }
+.portada-titulo em {
+  font-style: normal;
+  color: var(--accent);
+  /* Un degradado muy corto: el acento sigue siendo el color de marca, no un
+     arcoíris. */
+  background: linear-gradient(96deg, var(--accent), var(--ok) 78%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.portada-bajada { max-width: 60ch; margin-top: 14px; }
+.portada-bajada strong { color: var(--ink); font-weight: 600; }
+
+.portada-acciones { display: flex; gap: 12px; margin-top: 22px; flex-wrap: wrap; justify-content: center; }
+
+.portada-datos {
+  display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 10px 44px; list-style: none;
+  margin-top: clamp(24px, 3.2vh, 40px);
+  padding-top: 20px;
+  border-top: var(--hair);
+  width: 100%; max-width: 900px;
+}
+.portada-datos li { display: flex; align-items: baseline; gap: 10px; }
+.portada-datos b {
+  font-size: 26px; font-weight: 620; letter-spacing: -.03em;
+  color: var(--accent); font-variant-numeric: tabular-nums;
+}
+.portada-datos span { font-size: 12.5px; color: var(--ink-3); max-width: 22ch; text-align: left; line-height: 1.35; }
+
+/* El indicio de que hay que bajar. NO es la rama: la rama vive en el carril
+   de la izquierda y empieza en su sección. Un hilo centrado aquí y una rama a
+   la izquierda allí se leían como un camino roto, así que este se declara lo
+   que es — una invitación a bajar — y se aparta. */
+.portada-hilo {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  margin-top: clamp(12px, 1.8vh, 22px);
+  padding-bottom: 10px;
+  color: var(--ink-3);
+}
+.portada-hilo:hover { text-decoration: none; color: var(--ink-2); }
+.portada-hilo-linea {
+  position: relative; display: block;
+  width: 1px; height: clamp(32px, 4.4vh, 48px);
+  background: linear-gradient(180deg, transparent, rgba(184,247,228,.32));
+  overflow: visible;
+}
+.portada-hilo-gota {
+  position: absolute; left: 50%; top: 0; translate: -50% 0;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 10px rgba(184,247,228,.8);
+  animation: gotea 2.6s cubic-bezier(.6,0,.4,1) infinite;
+}
+@keyframes gotea {
+  0%   { top: 0;    opacity: 0; }
+  18%  { opacity: 1; }
+  82%  { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+.portada-hilo-texto {
+  font-size: 11px; letter-spacing: .16em; text-transform: uppercase; font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .portada-hilo-gota { animation: none; top: 50%; }
+}
+
+/* ── cabeceras de sección ───────────────────────────────────────────────── */
+.seccion-cabeza { max-width: 62ch; margin-bottom: clamp(36px, 5vw, 60px); }
+/* El desglose de instalación: es una corrección de una idea equivocada, así
+   que se separa del resto de la bajada en vez de disolverse en ella. */
+.aviso-origen {
+  font-size: 14.5px; line-height: 1.6;
+  margin-top: 14px; padding: 13px 16px;
+  border-radius: 11px; background: rgba(184,247,228,.07);
+  border-left: 3px solid var(--accent);
+}
+.aviso-origen b { color: var(--ink); font-weight: 600; }
+.seccion-cabeza .rotulo { margin-bottom: 14px; }
+.seccion-cabeza .subtitulo { margin-top: 18px; }
+.seccion-cabeza code, .nodo-texto code, .cierre code {
+  background: var(--d2); padding: 2px 7px; border-radius: 5px;
+  color: var(--accent); font-size: .88em;
+}
+
+/* Antes clamp(80,12vh,150): con siete secciones seguidas, esos 70 px extra
+   por sección sumaban casi medio scroll de más entre el principio y el final
+   de la página. Se aprieta el ritmo entero, no sólo un sitio. */
+section { padding: clamp(64px, 9vh, 120px) 0; position: relative; }
+
+/* ── el recorrido: la rama ──────────────────────────────────────────────── */
+.recorrido { padding-top: 0; }
+
+.pista {
+  position: relative;
+  --carril: 108px;
+  padding-left: var(--carril);
+}
+.rama {
+  position: absolute; left: 0; top: 0;
+  width: var(--carril); height: 100%;
+  overflow: visible; pointer-events: none;
+}
+/* La rama en reposo: apenas visible, para que se intuya el camino que falta. */
+.rama .via-fondo { fill: none; stroke: rgba(255,255,255,.09); stroke-width: 1.5; stroke-linecap: round; }
+/* La rama recorrida: se dibuja al bajar. */
+.rama .via-viva {
+  fill: none; stroke: var(--accent); stroke-width: 1.8;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px rgba(184,247,228,.45));
+}
+/* Las hebras del abanico: los motores en paralelo. */
+.rama .hebra { fill: none; stroke: rgba(184,247,228,.2); stroke-width: 1; stroke-linecap: round; }
+/* La rama que muere: el commit bloqueado no llega a existir. */
+.rama .via-muerta { fill: none; stroke: rgba(228,96,75,.55); stroke-width: 1.5; stroke-linecap: round; stroke-dasharray: 4 5; }
+.rama .tope-muerto { fill: var(--block); opacity: .8; }
+
+/* El orbe que viaja por la rama. Se posiciona desde JS con transform. */
+.viajero {
+  position: absolute; left: 0; top: 0;
+  width: 0; height: 0;
+  display: grid; place-items: center;
+  will-change: transform;
+  z-index: 3;
+}
+
+/* La cabecera dentro de la pista: alineada con los nodos, porque la rama
+   pasa por delante de las dos. */
+.pista-cabeza { padding-top: clamp(24px, 4vh, 44px); }
+
+.nodo {
+  position: relative;
+  padding: clamp(24px, 4vh, 42px) 0 clamp(32px, 5.6vh, 64px);
+  max-width: 62ch;
+}
+.nodo-col { min-width: 0; }
+.nodo-pie {
+  margin-top: 10px; font-size: 11.5px; color: var(--ink-3); line-height: 1.45;
+}
+/* La columna del ejemplo es estrecha: el mono a 12.5 px desbordaba y el pozo
+   se quedaba con una barra de desplazamiento horizontal en cada nodo. */
+.nodo-extra .pozo { font-size: 11.5px; line-height: 1.65; }
+.nodo-extra .pozo .num { width: 8px; margin-right: 6px; }
+
+/* A partir de aquí sobra ancho: el texto se queda en su medida legible y el
+   ejemplo se va al lado en vez de dejar medio sitio vacío. */
+@media (min-width: 1120px) {
+  .nodo {
+    max-width: none;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, .92fr);
+    gap: clamp(28px, 4vw, 52px);
+    align-items: start;
+  }
+  .nodo-extra { margin-top: 34px; }
+  /* El último nodo no tiene ejemplo largo; sin esto su columna derecha
+     arrastraría el alto de la fila y el nodo quedaría con un hueco abajo. */
+  .nodo:last-child { padding-bottom: clamp(30px, 4vh, 56px); }
+}
+/* La marca se centra en el carril, que es por donde pasa la rama: el `d` del
+   camino se construye midiendo estas marcas, así que mover esto mueve la
+   rama con ella. */
+.nodo-marca {
+  position: absolute;
+  left: calc(-1 * var(--carril) / 2); top: 46px;
+  width: 13px; height: 13px; margin-left: -6.5px;
+  border-radius: 50%;
+  background: var(--d0);
+  box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.22);
+  z-index: 2;
+  transition: box-shadow .45s ease, background .45s ease, transform .45s cubic-bezier(.2,1.3,.4,1);
+}
+.nodo.alcanzado .nodo-marca {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 5px rgba(184,247,228,.12), 0 0 16px rgba(184,247,228,.5);
+  transform: scale(1.12);
+}
+/* La marca del nodo del veredicto se enciende en rojo: es la que corta. */
+.nodo[data-estado="blocked"].alcanzado .nodo-marca {
+  background: var(--block);
+  box-shadow: inset 0 0 0 1.5px var(--block), 0 0 0 5px rgba(228,96,75,.14), 0 0 16px rgba(228,96,75,.5);
+}
+
+.nodo-indice {
+  font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 600; margin-bottom: 12px;
+}
+.nodo-titulo { font-size: clamp(1.35rem, 2.4vw, 1.85rem); margin-bottom: 16px; letter-spacing: -.026em; }
+.nodo-texto { color: var(--ink-2); margin-bottom: 14px; font-size: 15.5px; }
+.nodo-texto strong { color: var(--ink); font-weight: 600; }
+.nodo-texto em { color: var(--accent); font-style: normal; }
+.nodo-extra { margin-top: 22px; }
+
+.pozo .regla { color: var(--accent); }
+.pozo .ln.bloqueo { color: var(--block); font-weight: 600; }
+.pozo .ln.apagado { color: var(--ink-3); }
+.pozo .ln.ok { color: var(--ok); }
+
+.aviso {
+  padding: 13px 16px; border-radius: 10px; font-size: 13.5px;
+  color: var(--ink-2); line-height: 1.5;
+}
+.aviso b { color: var(--ink); font-weight: 600; }
+.aviso-bloque { background: rgba(228,96,75,.1); }
+.aviso-bloque b { color: var(--block); }
+.aviso-menta { background: rgba(184,247,228,.08); }
+.aviso-menta b { color: var(--accent); display: block; margin-bottom: 4px; }
+.aviso-menta em { color: var(--ink); font-style: italic; }
+
+/* la lista de capas del nodo 03 */
+.capas-lista { list-style: none; display: flex; flex-wrap: wrap; gap: 7px; }
+.capas-lista li {
+  font-family: var(--mono); font-size: 11.5px;
+  padding: 5px 11px; border-radius: 7px;
+  background: var(--d2); color: var(--ink-3);
+  box-shadow: var(--raise);
+  transition: color .3s, background .3s, box-shadow .3s;
+}
+.capas-lista li.viva { color: var(--ok); background: rgba(111,220,180,.13); }
+
+/* ── demo ───────────────────────────────────────────────────────────────── */
+.demo-tablero {
+  background: var(--d1);
+  border-radius: 22px;
+  box-shadow: var(--lift);
+  padding: clamp(18px, 3vw, 32px);
+}
+.demo-escritorio {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr);
+  gap: clamp(16px, 2.4vw, 28px);
+  align-items: start;
+  /* Alto reservado: sin esto la tarjeta pega un salto cada vez que la
+     terminal escribe una línea nueva, y el salto arrastra el scroll. */
+  min-height: 500px;
+}
+
+.terminal {
+  background: var(--d0);
+  border-radius: 13px;
+  box-shadow: var(--carve);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  min-height: 500px;
+}
+.terminal-barra {
+  display: flex; align-items: center; gap: 7px;
+  padding: 11px 14px;
+  background: rgba(255,255,255,.03);
+  flex: none;
+}
+.terminal-punto { width: 9px; height: 9px; border-radius: 50%; background: var(--d3); flex: none; }
+.terminal-titulo { margin-left: 10px; font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
+.terminal-cuerpo {
+  flex: 1; padding: 16px 18px 20px;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.75;
+  color: var(--ink-2); overflow-y: auto;
+}
+.terminal-cuerpo .fila { white-space: pre-wrap; word-break: break-word; }
+.terminal-cuerpo .prefijo { color: var(--ink-3); }
+.terminal-cuerpo .cmd { color: var(--ink); }
+.terminal-cuerpo .cmd .sigil { color: var(--ok); margin-right: 8px; }
+.terminal-cuerpo .ok { color: var(--ok); }
+.terminal-cuerpo .mal { color: var(--block); }
+.terminal-cuerpo .aviso-linea { color: var(--warn); }
+.terminal-cuerpo .regla { color: var(--accent); }
+.terminal-cuerpo .tenue { color: var(--ink-3); }
+.terminal-cuerpo .cursor {
+  display: inline-block; width: 7px; height: 15px; vertical-align: -3px;
+  background: var(--accent); margin-left: 2px;
+  animation: parpadeo 1.05s steps(1) infinite;
+}
+@keyframes parpadeo { 50% { opacity: 0; } }
+
+/* el panel del daemon, con el sistema de profundidad del producto */
+.panel {
+  background: var(--d1);
+  border-radius: 18px;
+  box-shadow: var(--raise);
+  overflow: hidden;
+  opacity: 0;
+  transform: translate(18px, 34px) scale(.72);
+  transform-origin: 92% 105%;
+  transition: opacity .3s ease, transform .42s cubic-bezier(.22, 1.12, .36, 1);
+  will-change: transform, opacity;
+  /* 412 + 12 de hueco + 76 del orbe = los 500 de la terminal: las dos
+     columnas acaban a la misma altura. */
+  max-height: 412px; display: flex; flex-direction: column;
+}
+.panel.abierto { opacity: 1; transform: translate(0,0) scale(1); }
+.panel-cabeza { padding: 16px 18px 13px; flex: none; box-shadow: 0 10px 14px -12px rgba(0,0,0,.6); }
+.panel-marca {
+  font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 600;
+}
+.panel-veredicto { font-size: 15.5px; font-weight: 650; margin-top: 6px; letter-spacing: -.01em; }
+.panel-veredicto.block { color: var(--block); }
+.panel-veredicto.pass { color: var(--ok); }
+.panel-veredicto.working { color: var(--warn); }
+.panel-meta { color: var(--ink-3); font-size: 11px; margin-top: 3px; }
+.panel-stack { margin-top: 9px; display: flex; gap: 5px; flex-wrap: wrap; }
+.panel-stack .lang {
+  font-size: 10px; padding: 2px 7px; border-radius: 4px;
+  background: var(--d3); color: var(--ink-2);
+}
+.panel-cuerpo { padding: 6px 12px 14px; overflow-y: auto; }
+
+.hallazgo {
+  background: var(--d2); border-radius: 12px; margin-bottom: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.45), 0 4px 14px rgba(228,96,75,.13);
+  overflow: hidden;
+  animation: subir .45s cubic-bezier(.2,.9,.3,1) both;
+}
+@keyframes subir { from { transform: translateY(14px); opacity: 0; } to { transform: none; opacity: 1; } }
+.hallazgo-cabeza { padding: 11px 13px 4px; display: flex; gap: 9px; align-items: baseline; flex-wrap: wrap; }
+.hallazgo .regla { font-family: var(--mono); font-size: 11px; color: var(--block); font-weight: 600; }
+.hallazgo .msg { flex: 1; font-size: 13px; min-width: 12ch; }
+.hallazgo-cuerpo { padding: 2px 13px 13px; }
+.hallazgo .ruta { color: var(--ink-3); font-size: 11px; font-family: var(--mono); word-break: break-all; }
+.hallazgo .porque { color: var(--ink-2); font-size: 12.5px; margin-top: 8px; }
+.hallazgo .porque b { color: var(--ink); font-weight: 600; }
+.hallazgo .pozo { margin-top: 8px; font-size: 11.5px; }
+
+/* El orbe va DEBAJO del panel y pegado a la derecha, que es de donde el panel
+   florece en el escritorio de verdad. Estaba encima, en la esquina, y tapaba
+   justo el hallazgo de abajo — la información por la que existe el panel. */
+.demo-columna { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.demo-orbe { align-self: flex-end; display: grid; place-items: center; padding-right: 4px; }
+
+.demo-controles {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 20px; padding-top: 18px; border-top: var(--hair);
+}
+.demo-controles .boton { padding: 9px 16px; font-size: 13px; }
+.demo-progreso {
+  flex: 1; min-width: 120px; height: 3px; border-radius: 2px;
+  background: var(--d3); overflow: hidden;
+}
+.demo-progreso span { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 2px; }
+.demo-nota { font-size: 11.5px; color: var(--ink-3); flex-basis: 100%; }
+
+/* ── motores ────────────────────────────────────────────────────────────── */
+.motores-filtro { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 26px; }
+.motores-filtro button {
+  font: inherit; font-size: 12.5px; padding: 7px 15px;
+  border: 0; border-radius: 999px; cursor: pointer;
+  background: var(--d2); color: var(--ink-3);
+  box-shadow: var(--raise);
+  transition: background .15s, color .15s, transform .12s;
+}
+.motores-filtro button:hover { color: var(--ink-2); transform: translateY(-1px); }
+.motores-filtro button[aria-pressed="true"] { background: var(--accent); color: #16211d; font-weight: 600; }
+
+/* ── el acordeón de motores ──────────────────────────────────────────────
+   Diecisiete tarjetas abiertas a la vez eran una pared de rectángulos. Cada
+   motor es ahora una fila de <details>: colapsada pesa una línea, abierta
+   trae lo mismo que traía la tarjeta —nada se resumió de más—. El teclado y
+   el lector de pantalla ya saben abrir y cerrar un <details> sin ARIA a mano. */
+.motores-acordeon { display: grid; gap: 8px; }
+.motor {
+  background: var(--d1); border-radius: 13px;
+  box-shadow: var(--raise);
+  transition: box-shadow .2s;
+}
+.motor[open] { box-shadow: var(--lift); }
+.motor.destacado { background: linear-gradient(180deg, rgba(228,96,75,.09), transparent 46%), var(--d1); }
+
+.motor-resumen {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 15px 18px;
+  cursor: pointer; list-style: none;
+}
+/* El triángulo nativo del <summary> se apaga: la flecha propia ya dice lo
+   mismo y gira con la transición del sistema, no con el reloj del navegador. */
+.motor-resumen::-webkit-details-marker { display: none; }
+.motor-resumen::marker { content: ""; }
+.motor-resumen:hover .motor-nombre { color: var(--accent); }
+.motor-flecha {
+  width: 18px; height: 18px; flex: none; margin-left: auto;
+  fill: none; stroke: var(--ink-3); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  transition: transform .25s cubic-bezier(.2,.9,.3,1);
+}
+.motor[open] .motor-flecha { transform: rotate(180deg); }
+/* Con la flecha empujada al final por su propio margin-left:auto, el pilar
+   no necesita el suyo: basta con que vaya justo antes en el orden del DOM. */
+.motor-nombre { font-family: var(--mono); font-size: 14px; color: var(--ink); font-weight: 500; letter-spacing: -.01em; transition: color .15s; }
+.motor-lenguajes { display: flex; gap: 5px; flex-wrap: wrap; }
+.motor-lenguajes span {
+  font-size: 10px; padding: 2px 7px; border-radius: 4px;
+  background: var(--d3); color: var(--ink-2);
+}
+
+.motor-detalle {
+  padding: 0 18px 18px;
+  display: flex; flex-direction: column; gap: 11px;
+  /* El <details> ya anima su apertura en los navegadores que soportan
+     ::details-content; en los que no, aparece de golpe — aceptable, es
+     información, no un efecto que dependa de ese fotograma. */
+  animation: motor-abre .22s ease;
+}
+@keyframes motor-abre { from { opacity: 0; } to { opacity: 1; } }
+.motor dl { margin: 0; display: grid; gap: 9px; }
+.motor dt {
+  font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--ink-3); font-weight: 700; margin-bottom: 3px;
+}
+.motor dd { margin: 0; font-size: 13.2px; color: var(--ink-2); line-height: 1.5; }
+.motor dd code { color: var(--accent); font-size: .9em; }
+.motor .bloqueo-si { color: var(--ink-2); }
+.motor-porque {
+  font-size: 12.6px; color: var(--ink-3); line-height: 1.55;
+  padding-left: 12px; border-left: 2px solid var(--d3);
+}
+.motor-pie {
+  margin-top: auto; padding-top: 10px; border-top: var(--hair);
+  font-size: 11px; color: var(--ink-3); font-family: var(--mono);
+  display: grid; gap: 3px; line-height: 1.4;
+}
+/* De dónde sale el motor. Va en la ficha y no sólo en la documentación
+   porque «dieciséis motores» se lee como «dieciséis cosas que me instalan»,
+   y de los dieciséis CodeGuard instala nueve. */
+.motor-pie .origen { color: var(--ink-2); }
+
+.forma, .capas-vocabulario { margin-top: clamp(50px, 7vw, 84px); }
+.forma-titulo { font-size: clamp(1.15rem, 2vw, 1.45rem); margin-bottom: 12px; }
+.forma-bajada { color: var(--ink-2); max-width: 64ch; margin-bottom: 22px; font-size: 15px; }
+.forma-bajada em { color: var(--accent); font-style: normal; }
+.forma-lista, .vocabulario-lista {
+  list-style: none; display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+}
+.forma-lista li, .vocabulario-lista li {
+  background: var(--d1); border-radius: 13px; padding: 16px 18px;
+  box-shadow: var(--raise);
+}
+.forma-lista b, .vocabulario-lista b {
+  display: block; margin-bottom: 6px; font-size: 13.5px;
+  font-family: var(--mono); color: var(--accent); font-weight: 500;
+}
+.forma-lista span, .vocabulario-lista span { font-size: 13.2px; color: var(--ink-2); line-height: 1.5; }
+
+/* ── estados del orbe ───────────────────────────────────────────────────── */
+.estados-tablero {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: clamp(28px, 5vw, 64px); align-items: center;
+}
+.estados-escena {
+  position: relative; display: grid; place-items: center;
+  min-height: 360px;
+  background: var(--d1);
+  border-radius: 22px;
+  box-shadow: var(--raise);
+  overflow: hidden;
+}
+/* El escritorio de detrás, sugerido: una rejilla apenas visible para que el
+   orbe se lea como algo que flota SOBRE algo, no en el vacío. */
+.estados-escena::before {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(circle at 50% 50%, #000 20%, transparent 72%);
+}
+.estados-orbe { position: relative; z-index: 1; display: grid; place-items: center; }
+
+.estados-lista { display: grid; gap: 8px; }
+.estado-fila {
+  display: grid; grid-template-columns: auto 1fr; align-items: start; gap: 15px;
+  width: 100%; text-align: left;
+  background: transparent; border: 0; cursor: pointer;
+  font: inherit; color: inherit;
+  padding: 13px 16px; border-radius: 13px;
+  transition: background .18s, box-shadow .18s;
+}
+.estado-fila:hover { background: var(--d1); }
+.estado-fila[aria-selected="true"] { background: var(--d1); box-shadow: var(--raise); }
+.estado-viñeta { margin-top: 3px; }
+.estado-nombre { font-weight: 600; font-size: 14.5px; display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.estado-clima { font-size: 11px; color: var(--ink-3); font-weight: 400; letter-spacing: .02em; }
+.estado-susurro {
+  font-size: 12.5px; color: var(--accent); font-family: var(--mono); margin-top: 4px;
+}
+.estado-cuando { font-size: 12.8px; color: var(--ink-3); margin-top: 5px; line-height: 1.45; }
+
+/* ── principios: una tira, no una sección ────────────────────────────────
+   Las cinco reglas ya se contaron una por una, cada una en el nodo del
+   recorrido que le corresponde —P5 junto al modelo, P1 junto a la paridad—.
+   Repetirlas con su propio título grande y sus filas de 20 px de alto era
+   decir lo mismo dos veces con el mismo peso. Aquí quedan como el resumen
+   que son: una tira compacta, con el mismo par borde-arriba + padding corto
+   que ya usa el pie de página para cerrar algo sin abrir una sección nueva. */
+.principios {
+  padding: clamp(36px, 5vh, 56px) 0;
+  border-top: var(--hair);
+}
+.principios-rotulo { margin-bottom: 16px; }
+.principios-lista {
+  list-style: none; counter-reset: p;
+  display: flex; flex-wrap: wrap; gap: 11px 30px;
+}
+.principios-lista li {
+  display: flex; align-items: baseline; gap: 9px;
+  max-width: 40ch;
+  font-size: 14px; color: var(--ink-2); line-height: 1.5;
+}
+.principios-lista .pid {
+  font-family: var(--mono); font-size: 12px; color: var(--accent);
+  font-weight: 600; letter-spacing: .04em; flex: none;
+}
+.principios-lista strong { color: var(--ink); font-weight: 600; }
+
+/* ── cierre ─────────────────────────────────────────────────────────────── */
+.cierre { padding-bottom: clamp(90px, 14vh, 160px); }
+.cierre-caja { text-align: center; display: flex; flex-direction: column; align-items: center; }
+.cierre-orbe { margin-bottom: 30px; }
+.cierre .subtitulo { max-width: 60ch; margin-top: 18px; }
+
+/* ── pie ────────────────────────────────────────────────────────────────── */
+.pie { border-top: var(--hair); padding: 40px 0 56px; }
+.pie-caja { display: flex; justify-content: space-between; gap: 30px; flex-wrap: wrap; }
+.pie-marca { font-weight: 620; letter-spacing: -.015em; margin-bottom: 4px; }
+.pie .apagado { font-size: 13px; }
+.pie-nav { display: flex; gap: 8px 22px; flex-wrap: wrap; align-items: flex-start; }
+.pie-nav a { color: var(--ink-2); font-size: 13.5px; }
+
+/* ══ responsive ═══════════════════════════════════════════════════════════
+   En móvil el carril de la rama se estrecha pero NO desaparece: el hilo
+   conductor del sitio es que se baja por una rama, y una versión móvil sin
+   rama sería otro sitio. */
+@media (max-width: 1000px) {
+  .estados-tablero { grid-template-columns: 1fr; }
+  .estados-escena { min-height: 300px; }
+  .demo-escritorio { grid-template-columns: 1fr; min-height: 0; }
+  .terminal { min-height: 330px; }
+  .panel { max-height: none; }
+}
+
+@media (max-width: 820px) {
+  .barra-nav, .barra-cta { display: none; }
+  .barra-menu { display: grid; margin-left: auto; }
+  .barra.desplegada .barra-nav {
+    display: flex; flex-direction: column; gap: 2px;
+    position: absolute; top: 100%; left: var(--gutter); right: var(--gutter);
+    background: var(--d1); border-radius: 14px; padding: 10px;
+    box-shadow: var(--lift); margin-left: 0;
+  }
+  .barra.desplegada .barra-nav a { padding: 11px 14px; }
+
+  .pista { --carril: 52px; }
+  .nodo-marca { top: 40px; }
+  .portada { padding-top: 108px; }
+  .portada-datos { gap: 14px 26px; }
+  .portada-datos b { font-size: 21px; }
+  .principios-lista li { max-width: none; flex-basis: 100%; }
+}
+
+@media (max-width: 520px) {
+  .pista { --carril: 34px; }
+  .portada-datos li { flex-basis: 100%; }
+}

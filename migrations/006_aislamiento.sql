@@ -1,0 +1,15 @@
+-- 006: el aislamiento degradado de cada corrida (W4, consejo t.107-116).
+--
+-- degraded_layers (001) habla de COBERTURA («esta capa no miró»); esta
+-- columna habla de ARMADURA: qué facetas del sandbox no se activaron
+-- (token-restringido, job, matarile-arbol, limites-ui) mientras los motores
+-- SÍ corrían. Son canales separados a propósito: mezclarlos pintaría de
+-- naranja permanente a las máquinas que no pueden crear tokens restringidos
+-- y enseñaría a ignorar el color. Hasta 2026-08-23 el fallo del job object
+-- se descartaba sin log siquiera — el peor caso corría años sin que nadie
+-- pudiera saberlo.
+--
+-- CSV con orden fijo, como degraded_layers. NULL = fila anterior a esta
+-- migración (legacy explícito); '' = corrida con contención COMPLETA.
+-- Expand-only; el central corre estas mismas migraciones.
+ALTER TABLE runs ADD COLUMN aislamiento_degradado TEXT;

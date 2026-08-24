@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>CodeGuard estado</title>
+<style>
+  /* ── Orbe de plasma (portado de os-samantha): 3 capas fusionadas por un
+     filtro gooey — resplandor que respira, núcleo que morfa y rota, destello
+     que pulsa. Los estados de CodeGuard reasignan paleta y velocidades. ── */
+  :root {
+    /* default = idle: niebla de pizarra (paleta MONTAÑA sobre el plasma) */
+    --plasma-glow: rgba(142, 151, 158, 0.45);
+    --plasma-hot-a: #8e979e;
+    --plasma-hot-b: #565f66;
+    --plasma-spark-mid: #c9d2d8;
+    --speed-breathe: 6s;
+    --speed-morph: 9s;
+    --speed-spin: 20s;
+    --speed-pulse: 4s;
+    --dim: 1;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; width: 100%; height: 100%; overflow: hidden;
+    background: transparent; user-select: none;
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  svg { display: none; }
+
+  .stage {
+    position: relative; width: 100%; height: 100%;
+    display: flex; justify-content: flex-end; align-items: flex-end;
+  }
+  /* 84 px, desde los 128 originales. A tamaño anterior el orbe competía con la
+     barra de tareas y pedía demasiada atención para algo que casi siempre está
+     en reposo. Las tres capas bajan en la misma proporción que tenían sobre
+     128 (.6875 / .484 / .344) para no deformar el plasma. */
+  .container {
+    position: relative;
+    width: 84px; height: 84px;
+    margin: 0 2px 2px 0;
+    display: flex; justify-content: center; align-items: center;
+    filter: url(#goo);
+    cursor: pointer;
+    opacity: var(--dim);
+    transition: opacity .8s ease, transform .3s cubic-bezier(.3, 1.4, .5, 1);
+  }
+  .container.gesto { transform: scale(1.12); }
+
+  .orb-layer {
+    position: absolute;
+    mix-blend-mode: screen;
+    transition: background 0.8s ease, filter 0.8s ease, opacity 0.6s ease;
+    pointer-events: none;
+  }
+  /* La capa de resplandor se retiró: era un halo difuso de 58 px alrededor del
+     núcleo y ensuciaba la silueta. El orbe se lee mejor como una esfera limpia
+     sobre el escritorio, sin un aura que lo emborrona contra el fondo.
+
+     Lo que sí se conservó es la RESPIRACIÓN, que vivía en esa capa: sin ella
+     el orbe quedaba inerte, y un indicador de estado que no se mueve parece
+     apagado.
+
+     Pero respira con la LUZ, no con el tamaño. El núcleo ya rota (spin usa
+     transform) y dos animaciones que tocan transform no se combinan: gana la
+     última y la otra deja de existir. Añadir el scale del halo aquí habría
+     apagado la rotación en silencio. Latir con la opacidad no compite con
+     nada, y a 41 px se lee igual de vivo. */
+
+  /* Núcleo de plasma: morfa, rota y late */
+  .layer-core {
+    width: 41px; height: 41px;
+    background: linear-gradient(45deg, var(--plasma-hot-a), var(--plasma-hot-b));
+    filter: blur(2px);
+    animation: morph var(--speed-morph) infinite linear,
+               spin var(--speed-spin) infinite linear,
+               latido var(--speed-breathe) infinite ease-in-out;
+  }
+  /* Capa 3: destello interno (pulsa) */
+  .layer-spark {
+    width: 29px; height: 29px;
+    background: radial-gradient(circle, #ffffff 0%, var(--plasma-spark-mid) 50%, transparent 80%);
+    opacity: 0.8;
+    animation: morph var(--speed-morph) infinite reverse linear,
+               pulse var(--speed-pulse) infinite alternate ease-in-out;
+  }
+
+  /* ── paletas por estado: MONTAÑA (pizarra/niebla/nieve) sobre el plasma ── */
+  .orb-idle { /* niebla serena */
+    --plasma-glow: rgba(142, 151, 158, 0.45);
+    --plasma-hot-a: #8e979e; --plasma-hot-b: #565f66; --plasma-spark-mid: #c9d2d8;
+    --speed-breathe: 6s; --speed-morph: 9s; --speed-spin: 20s; --speed-pulse: 4s;
+  }
+  .orb-working { /* ventisca: nieve brillante agitándose */
+    --plasma-glow: rgba(188, 197, 204, 0.6);
+    --plasma-hot-a: #bcc5cc; --plasma-hot-b: #7d8891; --plasma-spark-mid: #e6ebef;
+    --speed-breathe: 3s; --speed-morph: 3s; --speed-spin: 6s; --speed-pulse: 1.2s;
+  }
+  .orb-pass { /* aprobado: verde salvia luminoso — inconfundible contra la niebla */
+    --plasma-glow: rgba(111, 220, 180, 0.6);
+    --plasma-hot-a: #6fdcb4; --plasma-hot-b: #3f9e7e; --plasma-spark-mid: #d7f7ec;
+    --speed-breathe: 5s; --speed-morph: 8s; --speed-spin: 18s; --speed-pulse: 3s;
+  }
+  .orb-blocked { /* granito ferroso latiendo */
+    --plasma-glow: rgba(197, 106, 85, 0.7);
+    --plasma-hot-a: #c56a55; --plasma-hot-b: #7e4436; --plasma-spark-mid: #f0b5a4;
+    --speed-breathe: 1.6s; --speed-morph: 2.4s; --speed-spin: 8s; --speed-pulse: 0.6s;
+  }
+  .orb-degraded { /* piedra arenisca apagada */
+    --plasma-glow: rgba(158, 148, 132, 0.5);
+    --plasma-hot-a: #9e9484; --plasma-hot-b: #645c50; --plasma-spark-mid: #d8cfc0;
+    --speed-breathe: 4s; --speed-morph: 6s; --speed-spin: 14s; --speed-pulse: 2.5s;
+  }
+  .orb-offline { /* montaña dormida: gris hondo, casi quieto */
+    --plasma-glow: rgba(90, 97, 104, 0.3);
+    --plasma-hot-a: #565b60; --plasma-hot-b: #35393d; --plasma-spark-mid: #8a9298;
+    --speed-breathe: 10s; --speed-morph: 16s; --speed-spin: 40s; --speed-pulse: 8s;
+    --dim: .75;
+  }
+
+  /* El latido del núcleo: sólo luz. No toca transform porque ahí ya vive la
+     rotación, y dos animaciones sobre transform no se suman — una anula a la
+     otra. (breathe, la del halo retirado, sí escalaba: podía permitírselo
+     porque era una mancha difusa sin borde.) */
+  @keyframes latido {
+    0%, 100% { opacity: 0.78; }
+    50%      { opacity: 1; }
+  }
+  /* líquido en gravedad cero */
+  @keyframes morph {
+    0%   { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
+    25%  { border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%; }
+    50%  { border-radius: 50% 50% 20% 80% / 25% 80% 20% 75%; }
+    75%  { border-radius: 70% 30% 50% 50% / 70% 70% 30% 30%; }
+    100% { border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse {
+    0%   { transform: scale(0.85) rotate(0deg); }
+    100% { transform: scale(1.1)  rotate(-15deg); }
+  }
+
+  /* ── Burbuja de estado: emerge del orbe, no es texto suelto ──
+     Antes el mensaje era texto plano con sombra; se perdía contra cualquier
+     fondo del escritorio. Ahora es una cápsula con su propio cuerpo:
+     translúcida, con desenfoque detrás, un punto del color del estado y una
+     colita que la ancla al orbe. Emerge y se va como algo vivo, no aparece
+     y desaparece. */
+  /* bottom 72: el orbe de 84 px llega hasta 86 px desde abajo, así que la
+     cápsula apoya sus últimos 14 px sobre él y la colita nace de dentro del
+     plasma en vez de flotar suelta. */
+  .burbuja {
+    position: absolute; right: 20px; bottom: 72px;
+    max-width: 230px;
+    display: flex; align-items: center; gap: 9px;
+    margin: 0; padding: 9px 14px;
+    font-size: 12.5px; font-weight: 400; line-height: 1.35;
+    color: #e6f4ef;
+    background: rgba(37, 39, 44, 0.86);
+    backdrop-filter: blur(14px) saturate(1.1);
+    -webkit-backdrop-filter: blur(14px) saturate(1.1);
+    border: 1px solid rgba(184, 247, 228, 0.13);
+    border-radius: 14px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.42), 0 0 0 0.5px rgba(0,0,0,.3);
+    white-space: nowrap;
+    pointer-events: none;
+    transform-origin: 88% 130%;
+    opacity: 0; transform: translateY(8px) scale(.9);
+    transition: opacity .32s ease, transform .42s cubic-bezier(.22, 1.15, .36, 1);
+  }
+  .burbuja.on { opacity: 1; transform: translateY(0) scale(1); }
+  /* La colita apunta al CENTRO del orbe. Con 84 px ese centro cae a 44 px del
+     borde derecho de la ventana; la cápsula empieza a 20 px, así que la colita
+     va a 19 px de su propio borde (19 + 5.5 de media colita + 20 = 44.5).
+     Antes apuntaba 15 px desviada: seguía calculada para el orbe de 128. */
+  .burbuja::after {
+    content: ""; position: absolute; right: 19px; bottom: -5px;
+    width: 11px; height: 11px;
+    background: rgba(37, 39, 44, 0.86);
+    border-right: 1px solid rgba(184, 247, 228, 0.13);
+    border-bottom: 1px solid rgba(184, 247, 228, 0.13);
+    transform: rotate(45deg);
+    border-bottom-right-radius: 3px;
+  }
+  .burbuja .punto {
+    width: 8px; height: 8px; border-radius: 50%; flex: none;
+    background: var(--plasma-hot-a);
+    box-shadow: 0 0 8px var(--plasma-glow);
+  }
+  .burbuja .texto { position: relative; z-index: 1; }
+  /* La cápsula del tooltip (hover) es la misma burbuja, pero permanente
+     mientras el mouse esté encima y con sitio para dos líneas. */
+  .burbuja.tip { white-space: normal; max-width: 260px; }
+  .burbuja.tip .sub {
+    display: block; margin-top: 3px;
+    color: #9aa6b0; font-size: 11px; font-weight: 400;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .orb-layer { animation-duration: 20s !important; }
+    .burbuja { transition: opacity .2s ease; transform: none; }
+    .burbuja.on { transform: none; }
+  }
+</style>
+</head>
+<body>
+  <!-- filtro gooey: suelda las 3 capas en un solo cuerpo de plasma -->
+  <svg aria-hidden="true">
+    <defs>
+      <filter id="goo">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+        <feColorMatrix in="blur" mode="matrix"
+          values="1 0 0 0 0
+                  0 1 0 0 0
+                  0 0 1 0 0
+                  0 0 0 22 -10" result="goo" />
+        <feBlend in="SourceGraphic" in2="goo" />
+      </filter>
+    </defs>
+  </svg>
+
+  <main class="stage orb-idle" id="stage">
+    <div class="burbuja" id="burbuja" role="status" aria-live="polite">
+      <span class="punto"></span><span class="texto" id="burbuja-texto"></span>
+    </div>
+    <div class="container" id="orb">
+      <div class="orb-layer layer-core"></div>
+      <div class="orb-layer layer-spark"></div>
+    </div>
+  </main>
+
+<script type="module">
+  import { Events } from "/wails/runtime.js";
+
+  const stage = document.getElementById("stage");
+  const orb = document.getElementById("orb");
+  const burbuja = document.getElementById("burbuja");
+  const burbujaTexto = document.getElementById("burbuja-texto");
+
+  // Lo que susurra el orbe al cambiar de estado. "en reposo" y "todo bien"
+  // eran correctos y no decían nada: cualquier programa podría decirlos.
+  // Estos hablan de lo que este agente hace — vigilar commits — y en el tono
+  // de un compañero, no de una barra de estado.
+  // «revisé sólo una parte» decía degraded, y afirmaba una revisión parcial que
+  // no siempre existió: a este estado se llega también cuando un análisis se
+  // muere sin que ninguna capa llegara a mirar nada (ver alMorirElAnalisis). El
+  // hueco es lo único cierto en los tres caminos que traen aquí, así que es lo
+  // único que se dice; el detalle exacto va en el tooltip, que sí lo sabe.
+  const WHISPERS = {
+    idle:     "de guardia",
+    working:  "revisando tu cambio",
+    pass:     "puedes seguir",
+    blocked:  "espera, hay algo",
+    degraded: "hay un hueco en la revisión",
+    offline:  "sin modelo, reglas al día",
+  };
+  const VALID = new Set(Object.keys(WHISPERS));
+
+  // Lo que se lee al dejar el mouse encima. Explica el estado, no lo repite.
+  const TITULOS = {
+    idle:     "De guardia — cada commit pasa por aquí antes de entrar",
+    working:  "Revisando tu cambio",
+    pass:     "El commit pasó todas las compuertas",
+    blocked:  "Commit detenido — hay problemas que el CI también rechazaría",
+    degraded: "Hueco en la revisión — no todo se pudo mirar",
+    offline:  "Sin conexión al modelo — las reglas deterministas siguen aplicándose",
+  };
+
+  // Estado vigente, para poder reconstruir el tooltip al hacer hover.
+  let current = "idle";
+  let detalle = "";          // lo que manda el daemon: "repo · rama · N problemas"
+  let sobreElOrbe = false;   // el mouse está encima ahora mismo
+  let panelAbierto = false;  // el panel lateral está visible: taparía la burbuja
+  let burbujaTimer = null;
+  // Capas terminadas del análisis en curso. -1 = no hay análisis corriendo.
+  // Sirve de filtro: el bus de Wails despacha cada emisión en su propia
+  // goroutine, así que dos avances pueden llegar cambiados de orden y el
+  // contador retrocedería a la vista del usuario.
+  let capasVistas = -1;
+
+  // El susurro efímero: aparece al cambiar de estado y se va solo. No se
+  // muestra si el mouse está encima (ahí manda el tooltip) ni si el panel
+  // está abierto (lo taparía, y ya muestra el veredicto con detalle).
+  function susurrar(texto) {
+    if (sobreElOrbe || panelAbierto) return;
+    burbuja.classList.remove("tip");
+    burbujaTexto.textContent = texto;
+    burbuja.classList.add("on");
+    clearTimeout(burbujaTimer);
+    burbujaTimer = setTimeout(() => {
+      if (!sobreElOrbe) burbuja.classList.remove("on");
+    }, 3400);
+  }
+
+  // El tooltip: la misma burbuja, pero con dos líneas y permanente mientras
+  // el mouse esté encima. Reemplaza al title nativo (amarillo, lento, feo).
+  //
+  // Con el panel abierto NO se muestra. La burbuja vive a 118 px del borde
+  // inferior y el panel llega hasta los 108: el solape no es un caso raro,
+  // es geometría. Además el panel ya trae el veredicto con detalle, así que
+  // la burbuja sólo taparía información mejor.
+  function mostrarTooltip() {
+    sobreElOrbe = true;
+    if (panelAbierto) return;
+    clearTimeout(burbujaTimer);
+    burbuja.classList.add("tip");
+    const sub = detalle
+      ? `<span class="sub">${detalle}</span>`
+      : `<span class="sub">clic para el panel · clic derecho para el menú</span>`;
+    burbujaTexto.innerHTML = `${TITULOS[current] || ""}${sub}`;
+    burbuja.classList.add("on");
+  }
+  function ocultarTooltip() {
+    sobreElOrbe = false;
+    burbuja.classList.remove("tip");
+    burbuja.classList.remove("on");
+  }
+
+  // El susurro del avance: igual que el efímero pero SIN caducidad, porque
+  // mientras el análisis corre no hay nada mejor que enseñar y una capa lenta
+  // (tsc compila el proyecto entero) puede tardar más que los 3,4 s del otro.
+  // Lo retira el estado siguiente, que siempre llega: o el veredicto, o el
+  // vigilante del daemon cortando el «revisando».
+  function susurrarAvance(texto) {
+    if (sobreElOrbe || panelAbierto) return;
+    clearTimeout(burbujaTimer);
+    burbuja.classList.remove("tip");
+    burbujaTexto.textContent = texto;
+    burbuja.classList.add("on");
+  }
+
+  function setState(s, tip) {
+    if (!VALID.has(s)) s = "idle";
+    const changed = s !== current;
+    current = s;
+    detalle = tip || "";
+    // El marcador de capas es de UN análisis. Se reinicia con cada cambio de
+    // estado: al abrirse un «working» porque empieza otro, y al cerrarse porque
+    // un avance rezagado después del veredicto volvería a poner al orbe a contar
+    // capas de un commit ya decidido.
+    capasVistas = -1;
+    stage.className = "stage orb-" + s;
+    if (sobreElOrbe) mostrarTooltip();       // el tooltip abierto se refresca
+    else if (changed) susurrar(susurroDe(s)); // si no, susurro al cambiar
+  }
+
+  // MARCA es la costura con el daemon: actualizarOrbe (escritorio.go) añade al
+  // tooltip " — no corrió: <capas>" cuando hay degradación. Está aquí arriba y
+  // con nombre para que se vea que es un contrato entre dos archivos y no una
+  // cadena mágica perdida en una función.
+  const MARCA_NO_CORRIO = " — no corrió: ";
+
+  // susurroDe NOMBRA la capa que no pudo mirar, en vez de dejarlo en genérico.
+  //
+  // El susurro de degraded decía sólo "hay un hueco en la revisión". Es cierto
+  // —a este estado se llega por tres caminos y el hueco es lo único común—, pero
+  // en el caso que de verdad ocurre a diario el daemon SÍ sabe qué capa cayó, y
+  // callarlo obligaba a pasar el ratón por encima para enterarse. Héctor lo dijo
+  // mirando la pantalla: "los errores en el orbe no se ven". Estaban, en el
+  // tooltip, que es justo donde no se mira.
+  //
+  // Cuando el daemon no manda el detalle —el análisis que se muere sin que
+  // ninguna capa llegue a mirar— se cae al texto genérico, que ahí es lo único
+  // que se puede afirmar.
+  function susurroDe(s) {
+    if (s === "degraded" && detalle.includes(MARCA_NO_CORRIO)) {
+      // "tsc:error, trivy:timeout" → "tsc, trivy". El motivo va detrás de los
+      // dos puntos y aquí sobra: el susurro es un vistazo de un segundo y lo que
+      // hace falta es el NOMBRE. El motivo entero sigue en el tooltip y en el
+      // panel, que es donde se va a leer con calma.
+      const capas = detalle.split(MARCA_NO_CORRIO)[1]
+        .split(",").map(c => c.trim().split(":")[0]).filter(Boolean).join(", ");
+      if (capas) return "no pudo revisar: " + capas;
+    }
+    return WHISPERS[s];
+  }
+
+  Events.On("state", (e) => {
+    const d = Array.isArray(e.data) ? e.data[0] : e.data;
+    if (typeof d === "string") setState(d, "");
+    else if (d) setState(d.state, d.tooltip);
+  });
+
+  // El análisis avanzando, capa a capa. Lo manda el daemon desde las goroutines
+  // de los motores (ver progreso.go), y por eso hay que suponer desorden: cada
+  // Emit de Wails despacha en su propia goroutine.
+  //
+  // Dos filtros, y los dos son la funcionalidad, no defensa paranoica:
+  //
+  //   - Sólo se pinta en «working». Un avance que llegue después del veredicto
+  //     dejaría al orbe contando capas de un commit que ya se decidió, y ese es
+  //     justo el estado colgado que esto viene a quitar.
+  //   - Sólo hacia adelante. Sin esto el contador retrocede a la vista del
+  //     usuario en cuanto dos capas terminan a la vez.
+  Events.On("progreso", (e) => {
+    const pr = Array.isArray(e.data) ? e.data[0] : e.data;
+    if (!pr || current !== "working") return;
+    if (pr.hechas <= capasVistas) return;
+    capasVistas = pr.hechas;
+    detalle = pr.detalle || "";
+    if (sobreElOrbe) mostrarTooltip();
+    else susurrarAvance(pr.texto || "");
+  });
+
+  // gesto al abrir/cerrar el panel: el orbe se estira y vuelve
+  Events.On("panel-show", () => {
+    panelAbierto = true;
+    // Se retira SIEMPRE, también con el mouse encima. La versión anterior la
+    // conservaba en ese caso —"ahí manda el tooltip"— y era justo el camino
+    // que dejaba la burbuja pegada sobre el panel: basta abrirlo con el cursor
+    // todavía sobre el orbe, que es exactamente como se abre al hacer clic.
+    clearTimeout(burbujaTimer);
+    burbuja.classList.remove("on");
+    burbuja.classList.remove("tip");
+    orb.classList.add("gesto");
+    setTimeout(() => orb.classList.remove("gesto"), 320);
+  });
+  Events.On("panel-hide", () => {
+    panelAbierto = false;
+    // Al cerrar el panel el cursor suele seguir sobre el orbe; sin esto habría
+    // que salir y volver a entrar para recuperar el tooltip.
+    if (sobreElOrbe) mostrarTooltip();
+    orb.classList.add("gesto");
+    setTimeout(() => orb.classList.remove("gesto"), 320);
+  });
+
+  orb.addEventListener("mouseenter", mostrarTooltip);
+  orb.addEventListener("mouseleave", ocultarTooltip);
+
+  orb.addEventListener("click", () => {
+    try { Events.Emit("widget-click", null); }
+    catch { Events.Emit({ name: "widget-click", data: null }); }
+  });
+
+  // ── La ventana se recorta a lo que de verdad se ve ──────────────────────
+  //
+  // Esta ventana mide 300x180 y de eso sólo se ven 84 px de orbe (más la
+  // burbuja cuando aparece). El resto es aire transparente — pero transparente
+  // no es inexistente: sigue siendo ventana, está siempre encima, y se come
+  // cada clic que cae ahí. Desde fuera se ve un trozo de pantalla que no
+  // responde y nada que lo explique.
+  //
+  // Así que la página mide dónde acabó su contenido y el daemon le da esa
+  // forma a la ventana (SetWindowRgn). Lo de fuera deja de existir para el
+  // ratón. Se manda devicePixelRatio con la medida porque es el mismo factor
+  // con el que se midió: en un monitor al 150% recortaríamos donde no es.
+  function emitir(nombre, datos) {
+    try { Events.Emit(nombre, datos); }
+    catch { Events.Emit({ name: nombre, data: datos }); }
+  }
+
+  // Se mide la caja de MAQUETACIÓN, no la de pintado.
+  //
+  // getBoundingClientRect incluye las transformaciones, y aquí casi todo está
+  // animado: el orbe se encoge con la clase "gesto", la burbuja entra desde
+  // scale(.9). Medir a media animación daría una región más pequeña que lo que
+  // se está dibujando, y el recorte mordería justo lo que se mueve. offsetLeft
+  // y compañía son valores de maquetación: ignoran los transform y devuelven
+  // siempre la posición en reposo, que es la forma que la ventana debe tener.
+  function caja(el, radio) {
+    if (el.offsetWidth <= 0 || el.offsetHeight <= 0) return null;
+    let x = 0, y = 0;
+    for (let n = el; n; n = n.offsetParent) {
+      x += n.offsetLeft;
+      y += n.offsetTop;
+    }
+    // Un margen de 2 px evita que el antialias del borde quede fuera de la
+    // región y se vea el orbe con el canto mordido.
+    return { x: x - 2, y: y - 2, w: el.offsetWidth + 4, h: el.offsetHeight + 4, radio: radio };
+  }
+
+  // La región CRECE de inmediato y ENCOGE tarde, y ese desfase es el punto.
+  //
+  // La burbuja tarda hasta 420 ms en desvanecerse (mira su transition). Si la
+  // ventana se recorta en cuanto se le quita la clase, el recorte llega antes
+  // que la animación y la burbuja se corta en seco a media transición: se veía
+  // desaparecer a mordiscos en vez de desvanecerse. Así que al aparecer se
+  // publica ya —si no, el primer fotograma quedaría fuera de la región— y al
+  // ocultarse se espera a que termine.
+  //
+  // Durante el desvanecido se usa la caja MEDIDA MIENTRAS SE VEÍA: la burbuja
+  // se encoge a 0.9 al salir, y medirla en ese momento daría una región más
+  // pequeña que la burbuja que todavía se está dibujando.
+  const SALIDA_MS = 460;                    // 420 de transform + margen
+  let cajaBurbuja = null;                   // última caja con la burbuja visible
+  let temporizadorSalida = null;
+  let ultimaForma = "";
+
+  function publicar(zonas) {
+    if (!zonas.length) return;
+    const forma = JSON.stringify(zonas);
+    if (forma === ultimaForma) return;      // nada cambió: no molestar al daemon
+    ultimaForma = forma;
+    emitir("zona-activa", {
+      ventana: "CodeGuard estado",
+      escala: window.devicePixelRatio || 1,
+      zonas: zonas,
+    });
+  }
+
+  function publicarZonaActiva() {
+    const zonas = [];
+    const z1 = caja(orb, 999);              // el orbe: redondo, siempre
+    if (z1) zonas.push(z1);
+
+    if (burbuja.classList.contains("on")) {
+      clearTimeout(temporizadorSalida);
+      temporizadorSalida = null;
+      const z2 = caja(burbuja, 10);
+      if (z2) cajaBurbuja = z2;
+      if (cajaBurbuja) zonas.push(cajaBurbuja);
+    } else if (cajaBurbuja) {
+      // Se está yendo: la región la sigue incluyendo hasta que acabe.
+      zonas.push(cajaBurbuja);
+      if (!temporizadorSalida) {
+        temporizadorSalida = setTimeout(() => {
+          temporizadorSalida = null;
+          cajaBurbuja = null;
+          publicarZonaActiva();             // ahora sí, sólo el orbe
+        }, SALIDA_MS);
+      }
+    }
+    publicar(zonas);
+  }
+
+  // Al cargar, y cada vez que algo pueda cambiar la forma: la burbuja aparece
+  // y desaparece, y su ancho depende del texto.
+  publicarZonaActiva();
+  new ResizeObserver(publicarZonaActiva).observe(document.body);
+  new MutationObserver(publicarZonaActiva).observe(burbuja, {
+    attributes: true, attributeFilter: ["class"], childList: true, subtree: true,
+  });
+  setInterval(publicarZonaActiva, 500);     // red de seguridad
+</script>
+</body>
+</html>

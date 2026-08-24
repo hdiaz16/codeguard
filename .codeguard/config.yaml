@@ -1,0 +1,66 @@
+version: 1
+rulepack: "2026.08.3"
+
+languages: [go, javascript, python]
+
+paths:
+  # Además de lo binario, tres exclusiones que se ganaron a pulso analizando
+  # este propio repo:
+  #   rulepacks/**  — las reglas se encuentran a SÍ MISMAS en sus ejemplos
+  #                   (todo-sin-ticket disparaba 10 veces sobre los YAML).
+  #   spikes/**     — código de exploración de la fase 0, ya cumplido; y
+  #                   generate_testrepo.py PLANTA vulnerabilidades falsas a
+  #                   propósito, así que sus hallazgos son los señuelos.
+  #   3d-force-graph.js — librería vendoreada de 1.1 MB: agotaba el tiempo de
+  #                   semgrep en cada análisis sin aportar nada.
+  exclude: ["**/*.db", "**/*.exe", "**/*.log", "bin/**",
+            "rulepacks/**", "spikes/**", "**/3d-force-graph.js"]
+  migrations: ["migrations/*.sql"]
+  # SQLite, no Postgres: internal/store/store.go abre la BD con el driver
+  # sqlite y ejecuta este DDL embebido dentro de una transacción. Squawk
+  # exigía aquí CREATE INDEX CONCURRENTLY — sintaxis que SQLite no tiene y
+  # que ninguna base acepta dentro de una transacción.
+  migrations_dialect: sqlite
+  sensitive: []          # marca aquí rutas de auth/pagos/PII: suben el riesgo
+  generated: []
+
+gates:
+  secrets: block
+  format: block
+  compile: block
+  lint_error: block
+  semgrep_error: block
+  migration_unsafe: block
+  cve_critical: warn_local_block_ci
+  llm: never_block
+
+risk:
+  threshold: 35
+  weights:
+    touches_migration: 30
+    touches_sensitive: 25
+    ai_generated: 20
+    touches_security_config: 20
+    adds_dependency: 15
+    touches_query: 15
+    many_files: 10
+    tests_only: -20
+    docs_only: -40
+
+ui:
+  max_visible_findings: 7
+  auto_open_panel: on_block
+
+llm:
+  # Plantilla de la ORGANIZACIÓN: codeguard init copia este bloque a cada
+  # repo nuevo. Cambiar el modelo aquí + reinstalar = todo el equipo actualizado.
+  provider: "azure-foundry"
+  endpoint: "https://TU-RECURSO.services.ai.azure.com/openai/v1"
+  api_key_env: "FOUNDRY_API_KEY"
+  model: "FW-Kimi-K3"
+  model_fast: "gpt-5.6-sol"
+  timeout_ms: 20000
+  max_diff_tokens: 12000
+  monthly_budget_usd: 0
+
+max_diff_lines: 2000

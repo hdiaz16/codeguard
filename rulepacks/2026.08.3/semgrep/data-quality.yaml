@@ -1,0 +1,129 @@
+rules:
+  - id: sql-delete-sin-where
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "DELETE sin WHERE — borra la tabla completa"
+    metadata:
+      pillar: data
+      why: "Un DELETE sin filtro en producción es pérdida de datos irreversible."
+      fix_hint: "Agrega el WHERE; si de verdad quieres vaciar la tabla, usa TRUNCATE explícito y revisado."
+    patterns:
+      - pattern-regex: '(?i)DELETE\s+FROM\s+\w+\s*;'
+
+  - id: sql-update-sin-where
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "UPDATE sin WHERE — modifica todas las filas"
+    metadata:
+      pillar: data
+      why: "Un UPDATE sin filtro reescribe la tabla entera."
+      fix_hint: "Agrega el WHERE con la condición que delimita las filas."
+    patterns:
+      - pattern-regex: '(?i)UPDATE\s+\w+\s+SET\s+[^;]*;'
+      - pattern-not-regex: '(?i)WHERE'
+
+  - id: sql-select-star
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: WARNING
+    message: "SELECT * — trae columnas que no necesitas"
+    metadata:
+      pillar: data
+      why: "Acopla el código al esquema completo y arrastra datos de más por la red."
+      fix_hint: "Nombra las columnas que realmente usas."
+    patterns:
+      - pattern-regex: '(?i)SELECT\s+\*\s+FROM'
+
+  - id: sql-like-comodin-inicial
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: WARNING
+    message: "LIKE con comodín inicial — no puede usar índices"
+    metadata:
+      pillar: data
+      why: "LIKE '%...' obliga a escanear la tabla completa."
+      fix_hint: "Reordena el patrón o usa búsqueda de texto (tsvector/fulltext)."
+    patterns:
+      - pattern-regex: "(?i)LIKE\\s+'%"
+
+  - id: ts-query-en-bucle
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: "Posible N+1: consulta dentro de bucle"
+    metadata:
+      pillar: data
+      why: "Una consulta por elemento multiplica la latencia por el tamaño de la lista."
+      fix_hint: "Trae todo en una consulta (IN / include del ORM) fuera del bucle."
+    patterns:
+      - pattern-inside: |
+          for (...) { ... }
+      - pattern-either:
+          - pattern: "await $DB.query(...)"
+          - pattern: "await $M.findMany(...)"
+          - pattern: "await $M.findUnique(...)"
+          - pattern: "await $M.findFirst(...)"
+
+  - id: python-orm-en-bucle
+    languages: [python]
+    severity: WARNING
+    message: "Posible N+1: consulta al ORM dentro de bucle"
+    metadata:
+      pillar: data
+      why: "Django dispara una consulta por iteración; con 1000 filas son 1000 consultas."
+      fix_hint: "Usa select_related/prefetch_related o filtra con __in antes del bucle."
+    patterns:
+      - pattern-inside: |
+          for $X in $ITER:
+              ...
+      - pattern-either:
+          - pattern: "$M.objects.get(...)"
+          - pattern: "$M.objects.filter(...)"
+
+# (log-dato-sensible migró a datos-ext.yaml, subido a ERROR por LFPDPPP/GDPR)
+
+  - id: catch-vacio-ts
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "catch vacío traga la excepción"
+    metadata:
+      pillar: quality
+      why: "OWASP A10 2025: el fallo desaparece sin rastro y el sistema queda en estado inconsistente."
+      fix_hint: "Registra el error y decide: recuperar, reintentar o propagar."
+    pattern: "try { ... } catch ($E) {}"
+
+  - id: python-except-pass
+    languages: [python]
+    severity: ERROR
+    message: "except que traga la excepción con pass"
+    metadata:
+      pillar: quality
+      why: "El error desaparece en silencio; depurarlo después cuesta horas."
+      fix_hint: "Captura la excepción específica y al menos registra qué pasó."
+    # curación 2026-08-11: esto eran dos `- pattern:` hermanos bajo `patterns:`,
+    # que en semgrep es AND — un except no puede ser a la vez pelón y tipado,
+    # así que la regla nació muerta y jamás matcheó nada. La descubrió el
+    # corpus de --test, no un incidente. OR explícito y la variante con alias.
+    pattern-either:
+      - pattern: |
+          try:
+              ...
+          except:
+              pass
+      - pattern: |
+          try:
+              ...
+          except $E:
+              pass
+      - pattern: |
+          try:
+              ...
+          except $E as $ALIAS:
+              pass
+
+# (todo-sin-ticket migró a calidad-ext.yaml — cubre también FIXME/HACK/XXX)

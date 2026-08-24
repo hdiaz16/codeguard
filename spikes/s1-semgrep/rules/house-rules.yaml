@@ -1,0 +1,49 @@
+rules:
+  - id: ts-explicit-any
+    languages: [typescript]
+    severity: ERROR
+    message: "'any' explícito prohibido por regla de la casa"
+    patterns:
+      - pattern: "function $F($X: any) { ... }"
+
+  - id: go-ignored-error
+    languages: [go]
+    severity: ERROR
+    message: "Error ignorado con blank identifier"
+    pattern: "_ = $F(...)"
+
+  - id: python-eval
+    languages: [python]
+    severity: ERROR
+    message: "eval() sobre entrada — inyección de código"
+    pattern: "eval(...)"
+
+  - id: csharp-empty-catch
+    languages: [csharp]
+    severity: ERROR
+    message: "Bloque catch vacío traga la excepción"
+    pattern: |
+      try { ... } catch ($T $E) { }
+
+  - id: java-empty-catch
+    languages: [java]
+    severity: ERROR
+    message: "Bloque catch vacío traga la excepción"
+    pattern: |
+      try { ... } catch ($T $E) { }
+
+  - id: sql-in-loop-ts
+    languages: [typescript]
+    severity: WARNING
+    message: "Posible N+1: consulta dentro de bucle"
+    patterns:
+      - pattern-inside: |
+          for (...) { ... }
+      - pattern: "await $DB.query(...)"
+
+  - id: hardcoded-connstring
+    languages: [csharp, java, typescript, python, go]
+    severity: ERROR
+    message: "Cadena de conexión hardcodeada"
+    patterns:
+      - pattern-regex: "(Server|Data Source)=.*;.*(Password|Pwd)=[^;\"']+"

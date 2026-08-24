@@ -1,0 +1,30 @@
+# Fixture de semgrep --test — no es código del producto.
+# Las reglas SQL son de lenguaje generic (pattern-regex sobre texto plano), así
+# que las sentencias van como escalares YAML: la extensión .sql no está mapeada
+# a ningún lenguaje de semgrep y en modo test el archivo se escanearía con los
+# parsers de todas las reglas del config (python/ts), generando PartialParsing
+# fatal. El sufijo .test.yaml es la convención de semgrep para targets YAML.
+sentencias:
+  # ruleid: sql-delete-sin-where
+  - DELETE FROM sesiones;
+
+  # ok: sql-delete-sin-where
+  - DELETE FROM sesiones WHERE creado_en < '2026-01-01';
+
+  # ruleid: sql-update-sin-where
+  - UPDATE usuarios SET activo = 0;
+
+  # ok: sql-update-sin-where
+  - UPDATE usuarios SET activo = 0 WHERE id = 42;
+
+  # ruleid: sql-select-star
+  - SELECT * FROM pedidos;
+
+  # ok: sql-select-star
+  - SELECT id, total FROM pedidos;
+
+  # ruleid: sql-like-comodin-inicial
+  - SELECT id FROM clientes WHERE nombre LIKE '%garcia';
+
+  # ok: sql-like-comodin-inicial
+  - SELECT id FROM clientes WHERE nombre LIKE 'garcia%';

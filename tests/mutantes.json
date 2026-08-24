@@ -1,0 +1,200 @@
+[
+  {
+    "id": "runTool-verde-silencioso",
+    "porque": "La guarda ExitError+0bytes de runTool es el cierre de [21]; si un refactor la desactiva, un linter averiado vuelve a reportarse como analisis limpio.",
+    "archivo": "internal/engines/linters/exec.go",
+    "busca": "if exitErr != nil && strings.TrimSpace(combinada) == \"\" {",
+    "reemplaza": "if false && exitErr != nil && strings.TrimSpace(combinada) == \"\" {",
+    "paquete": "./internal/engines/linters/",
+    "test": "TestRunToolExitSinSalidaEsAveria"
+  },
+  {
+    "id": "runToolConSalida-fallo-mudo",
+    "porque": "La bandera fallo es lo unico que separa 'salio 0 limpio' de 'salio !=0 sin diagnosticos' en tsc/bandit/gosec; apagarla revive el verde silencioso original de tsc.",
+    "archivo": "internal/engines/linters/exec.go",
+    "busca": "return r.Combinada(), exitErr != nil || errors.Is(r.Err, proc.ErrRecortada), nil",
+    "reemplaza": "return r.Combinada(), false, nil",
+    "paquete": "./internal/daemon/",
+    "test": "TestNingunMotorPuedeDecirLimpioSinHaberMirado"
+  },
+  {
+    "id": "semgrep-salto-callado",
+    "porque": "noAnalizados es la guarda contra el salto callado de semgrep (objetivo sin analizar reportado como limpio, medido en el CI con -race); si un refactor la vacia, el falso verde vuelve.",
+    "archivo": "internal/engines/semgrep/semgrep_types.go",
+    "busca": "\t\tif strings.EqualFold(e.Level, \"error\") {",
+    "reemplaza": "\t\tif false {",
+    "paquete": "./internal/engines/semgrep/",
+    "test": "TestUnObjetivoSaltadoNoEsLimpio"
+  },
+  {
+    "id": "worktree-cambiado-sin-avisar",
+    "porque": "El aviso 'cambio durante el analisis' es la mitad del bug #8 que el cache no cubre: el reporte de la corrida en ventana describe un disco que ya no es el del commit, y callarlo es servir hallazgos con procedencia falsa.",
+    "archivo": "internal/pipeline/pipeline.go",
+    "busca": "\tif len(cambiados) > 0 {",
+    "reemplaza": "\tif false {",
+    "paquete": "./internal/pipeline/",
+    "test": "TestBug8ElVenenoDelTOCTOUNoSePuedeCachear"
+  },
+  {
+    "id": "cache-veneno-toctou",
+    "porque": "La consulta de Vigente en cacheArchivos.Guardar es LA guarda del bug #8: sin ella, una mutacion del archivo entre el diff y el analisis etiqueta hallazgos de un contenido con la clave de otro, y el veneno sirve lineas falsas en cada acierto futuro.",
+    "archivo": "internal/daemon/cachearchivos.go",
+    "busca": "\t\tif e.Vigente == nil || !e.Vigente() {",
+    "reemplaza": "\t\tif false {",
+    "paquete": "./internal/pipeline/",
+    "test": "TestBug8ElVenenoDelTOCTOUNoSePuedeCachear"
+  },
+  {
+    "id": "ejecutar-started-asumido",
+    "porque": "Started debe ser el hecho Salida.Arranco del transporte; asumirlo true convierte 'no hubo ejecucion' (binario ausente, ctx pre-cancelado) en un proceso que existio.",
+    "archivo": "internal/engines/linters/exec.go",
+    "busca": "Started:   salida.Arranco,",
+    "reemplaza": "Started:   true,",
+    "paquete": "./internal/engines/linters/",
+    "test": "TestEjecutarEntregaLosHechos"
+  },
+  {
+    "id": "outcome-degradado-invisible",
+    "porque": "La prioridad de Degradado en la derivacion unica (Finalizar) es lo que impide que 'no halle nada' sin haber mirado todo se presente como limpio — la mentira medida de garantia.go, ahora en el vocabulario tipado. Si un refactor la apaga, toda superficie miente a la vez, porque todas LEEN este resultado.",
+    "archivo": "internal/pipeline/outcome.go",
+    "busca": "\tcase len(o.GarantiaRota) > 0:",
+    "reemplaza": "\tcase false:",
+    "paquete": "./internal/pipeline/",
+    "test": "TestElVeredictoSeDerivaUnaSolaVezYSinEufemismos"
+  },
+  {
+    "id": "ci-garantia-callada-bajo-bloqueo",
+    "porque": "El invariante de render del consejo (turno 67): la garantia rota se nombra TAMBIEN cuando el estado es Bloqueado. Sin esta linea el dev arregla el bloqueante, commitea otra vez, y la compuerta que no miro le llega de sorpresa — el orden OK-antes-de-garantia renaceria como omision.",
+    "archivo": "cmd/codeguard/main.go",
+    "busca": "\tif len(o.GarantiaRota) > 0 {",
+    "reemplaza": "\tif false {",
+    "paquete": "./cmd/codeguard/",
+    "test": "TestUnAnalisisSinGarantiaYaNoAbreConOK"
+  },
+  {
+    "id": "sombra-acierto-sin-aduana",
+    "porque": "El acierto del diff_cache LLM re-verifica con el MISMO verify() de la etapa 6; la aduana del archivo-en-diff es lo que impide que una entrada envenenada en la BD llegue al informe (aceptacion literal del plan W1). Sin ella, inyectar una fila en diff_cache planta hallazgos en cualquier repo.",
+    "archivo": "internal/shadow/shadow_verify.go",
+    "busca": "\t\tcase !inDiff[strings.ToLower(file)]: // ¿el archivo citado está en el diff?",
+    "reemplaza": "\t\tcase false:",
+    "paquete": "./internal/shadow/",
+    "test": "TestUnaEntradaEnvenenadaNoLlegaAlInforme"
+  },
+  {
+    "id": "sombra-hit-de-otra-version",
+    "porque": "La guarda de version del formato cacheado impide que un v3 futuro (o una BD manipulada) se interprete con las reglas de v2 en silencio; lo desconocido se re-analiza, jamas se finge entendido.",
+    "archivo": "internal/shadow/shadow.go",
+    "busca": "\t\t\tentrada.Version != versionVerificador || len(entrada.Crudas) == 0 {",
+    "reemplaza": "\t\t\tlen(entrada.Crudas) == 0 {",
+    "paquete": "./internal/shadow/",
+    "test": "TestUnaEntradaDeOtraVersionSeReanaliza"
+  },
+  {
+    "id": "huella-ambiguedad-apagada",
+    "porque": "La regla de ambiguedad (dos hallazgos indistinguibles => ninguno se suprime) es la mitad de #9 que el ancla no cubre; sin la marca, baselinear uno entierra al otro en silencio.",
+    "archivo": "internal/finding/huella.go",
+    "busca": "\t\tif len(g) > 1 {",
+    "reemplaza": "\t\tif false {",
+    "paquete": "./internal/finding/",
+    "test": "TestLosIndistinguiblesSeMarcanAmbiguosYNadieLosSuprime"
+  },
+  {
+    "id": "huella-v2-malformada-aceptada",
+    "porque": "ParseHuella jamas adivina: un v2 con hex invalido (mayusculas, recortes) aceptado como valido es la clase de fallo mudo del fpRe viejo — el formato desconocido debe avisar y NO suprimir.",
+    "archivo": "internal/finding/huella.go",
+    "busca": "\t\tif esHex64(resto) {",
+    "reemplaza": "\t\tif esHex64(resto) || true {",
+    "paquete": "./internal/finding/",
+    "test": "TestParseHuellaNoAdivinaJamas"
+  },
+  {
+    "id": "huella-sin-ancla",
+    "porque": "El ancla contextual es lo que separa las cuatro ocurrencias identicas de #9 (medido en baseline.txt:33); sin ella, v2 colapsa igual que v1 y el prefijo nuevo solo decora la misma mentira.",
+    "archivo": "internal/finding/huella.go",
+    "busca": "\tif len(lineas) == 0 || n < 1 || n > len(lineas) {",
+    "reemplaza": "\tif true {",
+    "paquete": "./internal/finding/",
+    "test": "TestLosCuatroEscDeMainJSYaNoColapsan"
+  },
+  {
+    "id": "supresion-sin-ventana-dual",
+    "porque": "La supresion consulta la PAREJA v2+legacy (HuellasDeBusqueda); solo la primaria, y el dia del despliegue TODA baseline v1 deja de suprimir — la deuda aceptada del mundo entero vuelve a bloquear de golpe.",
+    "archivo": "internal/pipeline/pipeline.go",
+    "busca": "\tfor _, h := range f.HuellasDeBusqueda() {",
+    "reemplaza": "\tfor _, h := range []string{f.Fingerprint} {",
+    "paquete": "./internal/pipeline/",
+    "test": "TestBaselineSuprimePeroNuncaSecretos"
+  },
+  {
+    "id": "manifest-firma-truncada-indistinguible",
+    "porque": "Una firma truncada debe tener su error PROPIO (ErrFirmaMalformada), distinto de la firma invalida: sin la guarda de tamano, ed25519.Verify la reporta como 'invalida' y el diagnostico de un release corrupto se pierde — y la guarda es la mitad del fail-closed que mato la rama 'clave rara => sin verificacion'.",
+    "archivo": "internal/manifest/verifier.go",
+    "busca": "\tif len(firma) != ed25519.SignatureSize {",
+    "reemplaza": "\tif false {",
+    "paquete": "./internal/manifest/",
+    "test": "TestManifestFailClosed"
+  },
+  {
+    "id": "manifest-esquema-futuro-aceptado",
+    "porque": "Un manifiesto version=2 leido por un binario que solo entiende version=1 debe RECHAZARSE: interpretarlo con las reglas de v1 es el mismo fallo mudo que el hit-de-otra-version de la sombra. La compuerta del esquema es la que hace evolutivo el formato sin mentir.",
+    "archivo": "internal/manifest/verifier.go",
+    "busca": "\tif m.Version != VersionSoportada {",
+    "reemplaza": "\tif false {",
+    "paquete": "./internal/manifest/",
+    "test": "TestManifestInvalidoSeRechazaAunqueLaFirmaValga"
+  },
+  {
+    "id": "rulepack-verificacion-apagada",
+    "porque": "La exigencia de manifiesto firmado en rulepacks INSTALADOS es el corazon de W3: sin esta rama, un arbol adulterado en LOCALAPPDATA carga con Verified=false pero SIN error — el bit-flip vuelve a correr en silencio con el nombre de la version legitima.",
+    "archivo": "internal/rulepack/resolver.go",
+    "busca": "\t\tif c.src == SourceInstalled && len(claves) > 0 {",
+    "reemplaza": "\t\tif false {",
+    "paquete": "./internal/rulepack/",
+    "test": "TestInstaladoFirmadoSeVerificaYLoAdulteradoSeRechaza"
+  },
+  {
+    "id": "rulepack-misbinding-tolerado",
+    "porque": "La version viaja DENTRO de lo firmado y debe coincidir con el nombre del directorio: sin esta comparacion, copiar un rulepack viejo COMPLETO (manifest y firma validos incluidos) sobre el directorio de la version nueva pasa la verificacion — el replay entre versiones que Q5 promete matar.",
+    "archivo": "internal/rulepack/resolver.go",
+    "busca": "\tif m.Rulepack != version {",
+    "reemplaza": "\tif false {",
+    "paquete": "./internal/rulepack/",
+    "test": "TestReplayDeOtraVersionRechaza"
+  },
+  {
+    "id": "aislamiento-invisible",
+    "porque": "El reporte de contencion es TODO el fail-visible de W4: sin la anotacion al recolector, un sandbox caido vuelve a correr anos en silencio — el estado exacto que se midio el 2026-08-23 (el fallo del job se descartaba sin log siquiera).",
+    "archivo": "internal/engines/proc/proc.go",
+    "busca": "\tif r := recolectorDe(ctx); r != nil {\n\t\tr.Anotar(rep)\n\t}",
+    "reemplaza": "\t_ = rep",
+    "paquete": "./internal/engines/proc/",
+    "test": "TestCorrerReportaContencionCompleta"
+  },
+  {
+    "id": "confianza-desactivada",
+    "porque": "El guardian de confianza es el cierre de W4-Q3: sin la degradacion por defecto, eslint/tsc/mypy/dotnet vuelven a EJECUTAR config y binarios del repo sin permiso — y esa config toca fuera del arbol (probado en proc). Es el hueco de la clase config-ejecutable reabierto.",
+    "archivo": "internal/confianza/confianza.go",
+    "busca": "func Requiere(motor string) bool { return motoresQueEjecutanConfig[motor] }",
+    "reemplaza": "func Requiere(motor string) bool { return false }",
+    "paquete": "./internal/confianza/",
+    "test": "TestConfigEjecutableSeDegradaHastaQueSeConfia"
+  },
+  {
+    "id": "outbox-veneno-vuelve-a-bloquear",
+    "porque": "Fila a fila con clasificacion es lo que mata el poison pill: si un error de fila ABORTA la pasada (como el lote de 500 viejo) en vez de aislar la fila en retry/cuarentena, una sola fila envenenada vuelve a bloquear toda la cola de telemetria — el hueco mas grave que W5 cerro.",
+    "archivo": "internal/store/sync_outbox.go",
+    "busca": "\t\tclase := s.clasificar(perr, es, fila[0])\n\t\ts.aplicarFallo(e.seq, clase, perr.Error(), e.intentos+1, ahora)",
+    "reemplaza": "\t\treturn perr",
+    "paquete": "./internal/store/",
+    "test": "TestUnEventoEnvenenadoNoBloqueaElResto"
+  },
+  {
+    "id": "gitleaks-degradable-por-votos",
+    "porque": "La exencion de gitleaks en la auto-calibracion es una promesa del producto: un secreto jamas deja de bloquear, ni con feedback de sobra. stats acaba de aprender a DECIR esta exencion (preguntando a DemotedRules); si el pipeline la pierde, stats la anunciaria sobre un producto que ya no la cumple.",
+    "archivo": "internal/pipeline/pipeline.go",
+    "busca": "\t\t\tif f.Engine != \"gitleaks\" && f.Blocking && opt.DemotedRules[f.Engine+\"/\"+f.RuleKey] {",
+    "reemplaza": "\t\t\tif f.Blocking && opt.DemotedRules[f.Engine+\"/\"+f.RuleKey] {",
+    "paquete": "./internal/pipeline/",
+    "test": "TestAutoCalibracionDegradaPeroNuncaSecretos"
+  }
+]

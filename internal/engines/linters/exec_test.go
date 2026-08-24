@@ -1,0 +1,191 @@
+package linters
+
+import (
+	"context"
+	"errors"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"codeguard/internal/engines/proc"
+)
+
+// topeChico baja el tope de salida de runTool durante una prueba, para poder
+// provocar un recorte sin generar 64 MB.
+//
+// Muta topeSalida, que es estado global del paquete, así que NINGUNA prueba que
+// llame aquí puede usar t.Parallel(): dos en paralelo se pisarían el tope y una
+// correría runTool con el de la otra, con recortes fantasma imposibles de
+// atribuir. Hoy ninguna lo hace, y no se pone candado porque un candado que
+// nadie contiende no impide que la próxima añada t.Parallel sin tomarlo: el
+// cierre real es que runTool reciba el tope por parámetro, y eso vive en exec.go.
+func topeChico(t *testing.T, n int64) {
+	t.Helper()
+	previo := topeSalida
+	topeSalida = n
+	t.Cleanup(func() { topeSalida = previo })
+}
+
+// Un análisis abortado no puede parecerse a un análisis exitoso.
+//
+// Cuando vence el plazo con la salida ya recortada pasan las dos cosas a la
+// vez: proc.Correr devuelve Recortada==true Y el error del plazo. runTool
+// toleraba el recorte mirando la bandera Salida.Recortada —el ESTADO de la
+// salida— en vez de la IDENTIDAD del error, así que en ese cruce se tragaba el
+// plazo agotado y devolvía la salida PARCIAL con err nil.
+//
+// Lo que se pierde ahí no es un mensaje: govet.go cachea los hallazgos bajo la
+// clave de contenido, así que el análisis a medias queda congelado y se sirve
+// en las corridas siguientes; y pipeline.go distingue "degradado" de "error"
+// con errors.Is(err, context.DeadlineExceeded), señal que sólo viaja si el
+// error llega entero.
+func TestRunToolPropagaTimeoutAunqueRecorte(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("la prueba usa cmd.exe")
+	}
+	// Tope diminuto: basta el primer echo para marcar el recorte, sin depender
+	// de cuánto alcanza a escribir el proceso antes de que lo maten.
+	topeChico(t, 16)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	inicio := time.Now()
+	// Escupe de inmediato más de lo que cabe y se queda colgado: el plazo lo
+	// corta con la salida ya recortada. El cuelgue es ping y no waitfor:
+	// waitfor falla intermitente («Cannot wait for the specified signal») y
+	// muere al instante con exit 1 — el test se quedaba sin proceso que matar.
+	out, err := runTool(ctx, t.TempDir(), "cmd", "/c",
+		"echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa & ping 127.0.0.1 -n 30 >nul")
+
+	if d := time.Since(inicio); d > 8*time.Second {
+		t.Fatalf("runTool tardó %v: el plazo no cortó el proceso", d)
+	}
+	if err == nil {
+		t.Fatalf("runTool devolvió err nil con salida %q: un plazo agotado se está reportando como análisis exitoso", out)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("el error fue %v; tiene que envolver context.DeadlineExceeded para que el pipeline lo clasifique como degradado y no como error", err)
+	}
+}
+
+// El caso que la cláusula original SÍ quería tolerar: la salida no cupo pero el
+// proceso terminó bien. Un texto recortado se sigue leyendo línea por línea, así
+// que vale más que nada.
+func TestRunToolToleraRecortePuro(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("la prueba usa cmd.exe")
+	}
+	topeChico(t, 16)
+
+	out, err := runTool(context.Background(), t.TempDir(), "cmd", "/c",
+		"echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("un recorte con salida limpia no es un fallo: %v", err)
+	}
+	if len(out) == 0 {
+		t.Error("se tiró la salida parcial, que era lo único que había")
+	}
+	if int64(len(out)) > 16 {
+		t.Errorf("devolvió %d bytes pese al tope de 16", len(out))
+	}
+}
+
+// ejecutar es el contrato tipado sobre el que se apoyan las tres cáscaras:
+// estos son los HECHOS que promete en cada situación, medidos con procesos
+// reales. Si un campo miente aquí, mienten todos los adaptadores a la vez.
+func TestEjecutarEntregaLosHechos(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("la prueba usa cmd.exe")
+	}
+	ctx := context.Background()
+
+	t.Run("exito con salida", func(t *testing.T) {
+		r := ejecutar(ctx, t.TempDir(), "cmd", "/c", "echo hola")
+		if !r.Started || r.ExitCode != 0 || r.TimedOut || r.Truncated || r.Err != nil {
+			t.Fatalf("hechos equivocados: %+v", r)
+		}
+		if !strings.Contains(string(r.Stdout), "hola") {
+			t.Errorf("stdout = %q, se esperaba el eco", r.Stdout)
+		}
+	})
+	t.Run("exit 3 mudo", func(t *testing.T) {
+		r := ejecutar(ctx, t.TempDir(), "cmd", "/c", "exit /b 3")
+		if !r.Started || r.ExitCode != 3 {
+			t.Fatalf("hechos equivocados: %+v", r)
+		}
+	})
+	t.Run("binario ausente", func(t *testing.T) {
+		r := ejecutar(ctx, t.TempDir(), "no-existe-esta-herramienta-cg")
+		if r.Started || r.ExitCode != -1 || r.Err == nil {
+			t.Fatalf("un binario ausente tiene que decir Started=false y ExitCode=-1: %+v", r)
+		}
+	})
+	t.Run("plazo vencido", func(t *testing.T) {
+		corto, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+		defer cancel()
+		// ping y no waitfor: waitfor falla intermitente y muere al instante,
+		// dejando al plazo sin proceso colgado que cortar.
+		r := ejecutar(corto, t.TempDir(), "cmd", "/c", "ping 127.0.0.1 -n 30 >nul")
+		if !r.TimedOut || r.ExitCode != -1 {
+			t.Fatalf("un plazo agotado tiene que decir TimedOut y ExitCode=-1: %+v", r)
+		}
+	})
+	t.Run("contexto cancelado antes de arrancar", func(t *testing.T) {
+		muerto, cancel := context.WithCancel(ctx)
+		cancel()
+		r := ejecutar(muerto, t.TempDir(), "cmd", "/c", "echo hola")
+		if r.Started || !r.TimedOut || r.ExitCode != -1 {
+			t.Fatalf("sin proceso no puede haber Started=true ni código legible: %+v", r)
+		}
+	})
+	t.Run("recorte puro", func(t *testing.T) {
+		topeChico(t, 16)
+		r := ejecutar(ctx, t.TempDir(), "cmd", "/c",
+			"echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+		if !r.Truncated || !r.Started || r.ExitCode != 0 {
+			t.Fatalf("hechos equivocados: %+v", r)
+		}
+		if !errors.Is(r.Err, proc.ErrRecortada) {
+			t.Errorf("Err = %v; el recorte tiene que viajar por identidad", r.Err)
+		}
+	})
+}
+
+// La otra mitad del contrato: el exit != 0 se tolera PORQUE hay salida que
+// leer. Sin un byte no hay análisis — devolver ("", nil) es el mismo verde
+// silencioso que runToolConSalida nació para cerrar, por otra puerta. Este
+// cruce (ExitError + 0 bytes) vivió prometido en el comentario de runTool y
+// sin comprobar en su cuerpo.
+func TestRunToolExitSinSalidaEsAveria(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("la prueba usa cmd.exe")
+	}
+	out, err := runTool(context.Background(), t.TempDir(), "cmd", "/c", "exit /b 3")
+	if err == nil {
+		t.Fatalf("runTool devolvió err nil con salida %q: un exit 3 mudo se está reportando como análisis limpio", out)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("el error fue %v; una avería de ejecución no debe disfrazarse de plazo vencido", err)
+	}
+	if !strings.Contains(err.Error(), "3") {
+		t.Errorf("el error %q no dice el código de salida; el diagnóstico debe viajar entero", err)
+	}
+}
+
+// Un código de salida distinto de cero es la forma NORMAL de decir "encontré
+// problemas" en un linter; la respuesta está en la salida, no en el código.
+func TestRunToolToleraExitCodeConSalida(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("la prueba usa cmd.exe")
+	}
+	out, err := runTool(context.Background(), t.TempDir(), "cmd", "/c",
+		"echo hallazgo & exit /b 3")
+	if err != nil {
+		t.Fatalf("un exit code != 0 con salida no es un fallo de ejecución: %v", err)
+	}
+	if !strings.Contains(out, "hallazgo") {
+		t.Errorf("la salida fue %q, se esperaba el texto del linter", out)
+	}
+}

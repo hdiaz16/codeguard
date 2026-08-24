@@ -1,0 +1,126 @@
+# El guardián que faltaba: hasta este archivo, NINGÚN go test corría en CI —
+# los dos workflows existentes compilan, prueban el rulepack y corren la sombra,
+# y todo el rigor de mutaciones vivía en la disciplina de una sola máquina.
+#
+# Decisiones medidas en el debate del plan (remediacion/PLAN-CALIDAD-MUNDIAL.md):
+# - Un solo job windows-latest con -race sobre TODO: el runner trae mingw/gcc
+#   (el paso `gcc --version` lo confirma en cada corrida, no lo asume), y las
+#   carreras que importan viven en daemon/ipc — separar "paquetes portables"
+#   habría corrido race justo donde NO están las carreras.
+# - Los motores se aprovisionan con la MISMA receta medida de codeguard.yml
+#   (versiones y hashes de motores.json — los mismos bytes que las máquinas):
+#   la primera corrida sin motores enrojeció 20+ tests e2e de pipeline/daemon
+#   porque la compuerta hizo fail-closed sin gitleaks. Ese es el producto
+#   comportándose bien en un entorno cojo; los tests e2e son los valiosos y
+#   se corren de verdad, no se saltan. (Deduplicar esta receta en una acción
+#   compuesta queda anotado en W6 del plan.)
+# - Las pruebas de integración que necesitan proyectos de juguete se saltan
+#   solas sin CODEGUARD_TOY_* (comportamiento diseñado, ver README).
+# - Sin continue-on-error: un fallo ambiental se clasifica (fix o skip con
+#   motivo), no se tolera para siempre.
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: go test -race (windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: gcc presente (requisito de -race en windows)
+        run: gcc --version
+
+      # La base de vulnerabilidades de trivy (~60 MB de ghcr) se cachea entre
+      # corridas: bajarla en cada run tropezaba con el rate limit del registro
+      # y trivy salía DEGRADADO intermitente en los e2e. La clave por run_id +
+      # restore-keys de prefijo hace que cada corrida restaure la más reciente
+      # y guarde la suya; trivydb.Actualizar la refresca si envejeció.
+      #
+      # restore/save partidos y NO el action combinado: aquel solo guarda si el
+      # job sale verde, y mientras el job estuvo rojo la base jamás se guardaba
+      # — el círculo exacto que este caché venía a romper.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~\AppData\Local\trivy
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: |
+            trivy-db-
+
+      - name: Instalar motores (versiones fijadas en motores.json)
+        shell: pwsh
+        run: |
+          $m = Get-Content internal/engines/identidad/motores.json -Raw | ConvertFrom-Json
+          $engines = "$env:LOCALAPPDATA\CodeGuard\engines"
+          New-Item -ItemType Directory -Force $engines | Out-Null
+
+          foreach ($n in @("gitleaks", "trivy")) {
+            $v = $m.motores.$n.versiones | Select-Object -Last 1
+            Write-Host "descargando $n $($v.version)"
+            Invoke-WebRequest -Uri $v.url -OutFile "$env:TEMP\$n.zip" -UseBasicParsing
+            $h = (Get-FileHash "$env:TEMP\$n.zip" -Algorithm SHA256).Hash.ToLower()
+            if ($h -ne $v.sha256_zip) {
+              Write-Host "::error::el zip de $n no coincide con el checksum fijado ($h)"
+              exit 1
+            }
+            Expand-Archive "$env:TEMP\$n.zip" "$env:TEMP\$n" -Force
+            Copy-Item "$env:TEMP\$n\$n.exe" $engines -Force
+          }
+
+          # Desde el modulo de herramientas (tools/), no con modulo@version:
+          # los go.mod upstream fijan pisos de dependencias que van por detras
+          # de las correcciones (x/mod 0.35/0.39 con CVE corregidos en 0.40);
+          # nuestro go.sum firma el arbol completo. La version embebida se
+          # comprueba contra la declarada en motores.json.
+          foreach ($n in @("govulncheck", "staticcheck")) {
+            $spec = $m.paquetes.go.$n
+            Write-Host "go -C tools install $($spec.modulo) (declarada $($spec.version))"
+            go -C tools install "$($spec.modulo)"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $emb = (go version -m "$(go env GOPATH)\bin\$n.exe" | Select-String -Pattern ("^\s*mod\s+" + [regex]::Escape($spec.modulo_raiz) + "\s") | Select-Object -First 1)
+            if ($emb -notmatch [regex]::Escape($spec.version)) {
+              Write-Host "::error::$n embebe otra version que la declarada ($($spec.version)): $emb"
+              exit 1
+            }
+          }
+          Copy-Item "$(go env GOPATH)\bin\govulncheck.exe" $engines -Force
+          Copy-Item "$(go env GOPATH)\bin\staticcheck.exe" $engines -Force
+
+          $pins = @()
+          foreach ($q in $m.paquetes.pip.PSObject.Properties) { $pins += "$($q.Name)==$($q.Value)" }
+          Write-Host "pip install $($pins -join ' ')"
+          pip install @pins
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          echo "$(go env GOPATH)/bin" >> $env:GITHUB_PATH
+          echo "$engines" >> $env:GITHUB_PATH
+
+      - name: go test -race
+        env:
+          CGO_ENABLED: "1"
+        # -timeout 30m: el de go test por paquete (10m por defecto) se quedó
+        # corto para internal/pipeline bajo -race (9.4 min sin margen; los
+        # e2e del bug #8 lo empujaron al límite). El techo real del job son
+        # los timeout-minutes de arriba.
+        run: go test ./... -race -count=1 -shuffle=on -timeout 30m
+
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always()
+        with:
+          path: ~\AppData\Local\trivy
+          key: trivy-db-${{ github.run_id }}

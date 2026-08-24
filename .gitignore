@@ -1,0 +1,26 @@
+spikes/*/testrepo/
+spikes/*/tsproject/
+spikes/**/*.exe
+spikes/**/run*.json
+node_modules/
+codeguard.exe
+*.db
+codeguard-daemon.exe
+codeguard-daemon.exe~
+dist/*.exe
+dist/rulepacks/
+# generados por build-dist / build-wizard-art (la fuente es el .ps1)
+dist/motores.json
+dist/splash/
+dist/*.bmp
+docs/explorador/
+tests/ultimo-resultado.csv
+
+daemon.exe
+
+# lo genera build-dist.ps1 contando el rulepack
+dist/reglas.iss
+# lo genera build-dist.ps1 con las versiones del paquete (limpieza anti-fusion)
+dist/rulepacks-limpieza.iss
+# copia del modulo de herramientas que build-dist mete al paquete
+dist/tools/

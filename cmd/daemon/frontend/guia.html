@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>CodeGuard — guía de uso</title>
+<style>
+  :root {
+    --d0:#1a1c20; --d1:#25272c; --d2:#2e3138; --d3:#383c44;
+    --ink:#eaf3f0; --ink-2:#a7b3b0; --ink-3:#78847f;
+    --accent:#b8f7e4; --block:#e4604b; --warn:#e5b54a; --ok:#6fdcb4;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--d0); color:var(--ink);
+    font-family:"Segoe UI",system-ui,sans-serif; font-size:14px; line-height:1.6; }
+  .marco { display:flex; height:100%; }
+
+  /* índice lateral */
+  nav { width:230px; flex:none; background:var(--d1); padding:20px 0; overflow-y:auto; }
+  nav h1 { font-size:12px; text-transform:uppercase; letter-spacing:.13em; color:var(--ink-3);
+    margin:0 0 14px 20px; font-weight:650; }
+  nav a {
+    display:flex; gap:10px; align-items:baseline; padding:8px 20px; cursor:pointer;
+    color:var(--ink-2); font-size:13px; border-left:2px solid transparent; transition:.15s;
+  }
+  nav a:hover { background:var(--d2); color:var(--ink); }
+  nav a.activo { background:var(--d2); color:var(--ink); border-left-color:var(--accent); font-weight:600; }
+  nav a .n { color:var(--ink-3); font-variant-numeric:tabular-nums; font-size:11px; min-width:14px; }
+  nav a.activo .n { color:var(--accent); }
+
+  /* contenido */
+  main { flex:1; overflow-y:auto; padding:34px 42px 90px; max-width:760px; }
+  .paso { display:none; animation:entra .3s ease both; }
+  .paso.activo { display:block; }
+  @keyframes entra { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+  .eyebrow { font-size:11px; text-transform:uppercase; letter-spacing:.13em; color:var(--accent);
+    font-weight:650; margin-bottom:6px; }
+  h2 { font-size:24px; margin:0 0 14px; font-weight:650; letter-spacing:-.01em; }
+  h3 { font-size:15px; margin:26px 0 8px; font-weight:650; }
+  p { margin:12px 0; color:var(--ink-2); }
+  p strong, li strong { color:var(--ink); font-weight:600; }
+  ul,ol { color:var(--ink-2); padding-left:22px; }
+  li { margin:7px 0; }
+  code { background:var(--d2); padding:2px 7px; border-radius:5px; font-family:Consolas,monospace; font-size:12.5px; color:var(--ink); }
+  pre { background:var(--d2); padding:13px 16px; border-radius:10px; overflow-x:auto;
+    font-family:Consolas,monospace; font-size:12.5px; margin:14px 0; }
+  pre code { background:none; padding:0; }
+  .caja { background:var(--d1); border-radius:12px; padding:15px 18px; margin:16px 0; }
+  .caja.ok  { border-left:3px solid var(--ok); }
+  .caja.mal { border-left:3px solid var(--block); }
+  .caja.tip { border-left:3px solid var(--accent); }
+  .caja b:first-child { display:block; margin-bottom:4px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; margin:14px 0; }
+  th { text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.09em;
+    color:var(--ink-3); font-weight:650; padding:6px 12px 6px 0; border-bottom:1.5px solid var(--d3); }
+  td { padding:8px 12px 8px 0; border-bottom:1px solid var(--d2); vertical-align:top; color:var(--ink-2); }
+  .orbe { display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:7px; vertical-align:middle; }
+
+  /* barra de navegación inferior */
+  footer {
+    position:fixed; bottom:0; left:230px; right:0; background:var(--d1);
+    padding:12px 42px; display:flex; align-items:center; gap:12px;
+    box-shadow:0 -8px 20px -12px rgba(0,0,0,.7);
+  }
+  button {
+    background:var(--d3); border:none; color:var(--ink); border-radius:9px;
+    padding:9px 18px; font-size:13px; cursor:pointer; font-family:inherit; transition:.15s;
+  }
+  button:hover:not(:disabled) { background:var(--accent); color:var(--d0); }
+  button:disabled { opacity:.35; cursor:default; }
+  .progreso { flex:1; color:var(--ink-3); font-size:12px; text-align:center; }
+  ::-webkit-scrollbar { width:8px; } ::-webkit-scrollbar-thumb { background:var(--d3); border-radius:4px; }
+</style>
+</head>
+<body>
+<div class="marco">
+  <nav id="indice"></nav>
+  <main id="contenido"></main>
+</div>
+<footer>
+  <button id="ant">← Anterior</button>
+  <span class="progreso" id="progreso"></span>
+  <button id="sig">Siguiente →</button>
+</footer>
+
+<script>
+const PASOS = [
+  {
+    t: "Qué es CodeGuard",
+    eyebrow: "Empecemos por aquí",
+    html: `
+      <p><strong>CodeGuard revisa tu código en el momento del commit</strong>, en tu máquina,
+      antes de que salga a GitHub. Si tu cambio no pasaría el CI, te lo dice ahí mismo — no
+      veinte minutos después en un pipeline rojo.</p>
+      <h3>Las tres cosas que hace</h3>
+      <table>
+        <tr><td><strong>Bloquea</strong></td><td>Lo que es objetivamente un problema: secretos,
+        errores de tipos, formato, reglas del equipo, migraciones peligrosas. Exactamente lo mismo
+        que el CI rechazaría.</td></tr>
+        <tr><td><strong>Sugiere</strong></td><td>Observaciones de un modelo de IA sobre calidad,
+        seguridad y datos. <strong>Nunca bloquean</strong> — son opiniones, y las opiniones no detienen tu trabajo.</td></tr>
+        <tr><td><strong>Explica</strong></td><td>Cada hallazgo viene con el código señalado, por qué
+        importa y cómo arreglarlo, en español.</td></tr>
+      </table>
+      <div class="caja tip"><b>La regla de oro</b>
+      Si CodeGuard se rompe, tu commit pasa igual. Solo hay una excepción: si detecta un secreto,
+      bloquea sin negociar — porque un secreto filtrado no se deshace.</div>`
+  },
+  {
+    t: "El orbe y sus colores",
+    eyebrow: "Paso 1 de tu día",
+    html: `
+      <p>El orbe vive en la <strong>esquina inferior derecha</strong> de tu pantalla. Es todo lo que
+      necesitas mirar: te dice el estado del <strong>proyecto en el que acabas de commitear</strong>.</p>
+      <table>
+        <tr><td><span class="orbe" style="background:#8e979e"></span><strong>Niebla</strong></td>
+            <td>En reposo. Sin trabajo pendiente.</td></tr>
+        <tr><td><span class="orbe" style="background:#bcc5cc"></span><strong>Ventisca</strong></td>
+            <td>Analizando tu commit (2 a 6 segundos).</td></tr>
+        <tr><td><span class="orbe" style="background:#8fd4ac"></span><strong>Verde salvia</strong></td>
+            <td><strong>Commit aprobado y hecho.</strong> Dura 15 segundos y vuelve a niebla.</td></tr>
+        <tr><td><span class="orbe" style="background:#c56a55"></span><strong>Granito latiendo</strong></td>
+            <td><strong>Commit rechazado.</strong> El panel se abre solo con el detalle.</td></tr>
+        <tr><td><span class="orbe" style="background:#9e9484"></span><strong>Arenisca</strong></td>
+            <td>Analizó, pero alguna capa no pudo correr. Te dice cuál.</td></tr>
+        <tr><td><span class="orbe" style="background:#565b60"></span><strong>Gris apagado</strong></td>
+            <td>Sin conexión al modelo. Las compuertas que bloquean siguen funcionando.</td></tr>
+      </table>
+      <div class="caja tip"><b>Interacción</b>
+      <strong>Clic en el orbe</strong> abre o cierra el panel. Nunca te interrumpe: no hay ventanas
+      emergentes, sonidos ni robo de foco.</div>`
+  },
+  {
+    t: "Tu primer commit",
+    eyebrow: "Paso 2",
+    html: `
+      <p>No tienes que aprender comandos nuevos. Commitea como siempre:</p>
+      <pre><code>git add .
+git commit -m "mi cambio"</code></pre>
+      <p>CodeGuard se dispara solo. En la terminal verás algo así:</p>
+      <pre><code>CodeGuard  secretos ✓
+CodeGuard  formato/lint/tipos/reglas/migraciones ✓   (4.2 s)
+CodeGuard  listo — commit permitido</code></pre>
+      <div class="caja ok"><b>✓ Si pasa</b>
+      El commit se hace en ese instante y el orbe se pone verde. Además tu commit queda sellado con
+      un identificador de auditoría (<code>Codeguard-Run-Id</code>).</div>
+      <div class="caja mal"><b>⛔ Si bloquea</b>
+      El commit <strong>no se hace</strong>. La terminal te dice regla, archivo y línea; el panel se
+      abre con el detalle completo. Corriges, vuelves a commitear, y listo.</div>`
+  },
+  {
+    t: "Leer el panel",
+    eyebrow: "Paso 3",
+    html: `
+      <p>El panel es tu copiloto. De arriba abajo:</p>
+      <ul>
+        <li><strong>Veredicto</strong> — una línea: bloqueado con cuántos problemas, o commit realizado.</li>
+        <li><strong>Pestañas de proyecto</strong> — todos tus repos enrolados con su estado. Clic para
+        cambiar de contexto.</li>
+        <li><strong>Bloqueantes</strong> — lo que detuvo tu commit, agrupado por pilar.</li>
+        <li><strong>Sugerencias</strong> — opcionales, no bloquean.</li>
+      </ul>
+      <h3>Cada hallazgo, al expandirlo</h3>
+      <ul>
+        <li><strong>Pilar</strong>: <span style="color:#f0937d">SEGURIDAD</span>,
+        <span style="color:#9cc4de">CALIDAD</span> o <span style="color:#8fd4ae">DATOS</span>.</li>
+        <li><strong>La ruta completa</strong> del archivo — clic para copiarla.</li>
+        <li><strong>El código señalado</strong>, con la línea culpable resaltada.</li>
+        <li><strong>Por qué importa</strong> y <strong>cómo arreglarlo</strong>.</li>
+        <li><strong>En palabras simples</strong>: una explicación del modelo sobre <em>tu</em> código.</li>
+        <li>Botones <strong>útil</strong> / <strong>falso positivo</strong>.</li>
+      </ul>
+      <div class="caja tip"><b>Tu opinión cambia el sistema</b>
+      Si una regla acumula 5 votos con más de 20% de falsos positivos <em>en ese repo</em>,
+      <strong>deja de bloquear automáticamente</strong>. El agente se calibra con tu equipo.</div>`
+  },
+  {
+    t: "Trabajar en varios proyectos",
+    eyebrow: "Paso 4",
+    html: `
+      <p>Cada proyecto tiene <strong>su propio contexto</strong>. Un bloqueo en uno no afecta a los
+      demás: el orbe siempre habla del proyecto donde acabas de commitear.</p>
+      <h3>Qué significa cada marca en las pestañas</h3>
+      <table>
+        <tr><td style="color:var(--ok)"><strong>✓ nombre</strong></td>
+            <td>Limpio: su último commit pasó todas las compuertas.</td></tr>
+        <tr><td style="color:#e4604b"><strong>⛔ nombre</strong></td>
+            <td>Bloqueado: su último commit tiene problemas por resolver.</td></tr>
+        <tr><td style="color:#78818a"><strong>○ nombre</strong></td>
+            <td><strong>Enrolado, pero todavía sin analizar.</strong> CodeGuard ya lo vigila —
+            simplemente no has commiteado ahí desde que arrancó el agente. No es un error ni
+            significa que falte instalarlo.</td></tr>
+      </table>
+      <div class="caja tip"><b>¿Cómo verifico que un repo está bien puesto?</b>
+      <pre style="margin:8px 0 0"><code>codeguard status --todos</code></pre>
+      Revisa config, hooks, rulepack y baseline de cada proyecto, y te dice el comando exacto para
+      arreglar lo que falte.</div>`
+  },
+  {
+    t: "Cuando bloquea: cómo salir",
+    eyebrow: "Paso 5",
+    html: `
+      <h3>1. Corrige (lo normal)</h3>
+      <p>El panel te dice exactamente qué y dónde. Muchas cosas son de un comando:</p>
+      <pre><code>gofmt -w archivo.go        # formato Go
+ruff format archivo.py     # formato Python
+npx tsc --noEmit           # ver errores de tipos</code></pre>
+      <h3>2. ¿Crees que es falso positivo?</h3>
+      <p>Pulsa <strong>falso positivo</strong> en el panel. No lo silencies con <code>@ts-ignore</code>
+      o <code>nolint</code>: eso engaña al sistema y a quien lea el código después.</p>
+      <h3>3. Emergencia real</h3>
+      <pre><code>git commit --no-verify -m "urgente"</code></pre>
+      <div class="caja mal"><b>Qué pasa si lo usas</b>
+      El commit pasa, pero queda registrado como bypass (sin el sello de auditoría) y el CI lo
+      rechazará igual. <strong>No se castiga a nadie</strong>: si el equipo lo usa seguido, es señal
+      de que el agente estorba y hay que ajustarlo.</div>
+      <h3>¿Y si CodeGuard falla?</h3>
+      <p>Tu commit pasa igual, con un aviso de qué capa no corrió. La única excepción son los
+      secretos. Si algo se rompió: <code>codeguard repair</code>.</p>`
+  },
+  {
+    t: "El explorador de código 3D",
+    eyebrow: "Paso 6",
+    html: `
+      <p>El botón <strong>🕸</strong> abre el mapa de tu proyecto en 3D: cada esfera es una función
+      o método, cada línea una llamada.</p>
+      <ul>
+        <li><strong>Arrastra</strong> para orbitar · <strong>rueda</strong> para acercar ·
+        <strong>clic derecho</strong> para desplazar.</li>
+        <li><strong>Clic en una esfera</strong>: la cámara vuela hacia ella y ves quién la llama y a
+        quién llama, navegable.</li>
+        <li>Tamaño = número de conexiones. Las esferas grandes son las piezas centrales del sistema.</li>
+      </ul>
+      <h3>Lo que lo hace distinto</h3>
+      <p>Los hallazgos de tu último commit se <strong>pintan sobre el mapa</strong>: bloqueantes en
+      rojo y agrandados, funciones que tocaste en blanco. La cámara abre <em>donde duele</em>, y el
+      panel de abajo lista los hallazgos para saltar a cada uno.</p>
+      <div class="caja tip"><b>Un mapa por proyecto</b>
+      Nunca se mezclan sistemas distintos. Arriba a la izquierda están tus proyectos: clic para ver
+      el mapa de otro. Funciona en Go y TypeScript/JavaScript.</div>`
+  },
+  {
+    t: "Trabajar con agentes de IA",
+    eyebrow: "Paso 7",
+    html: `
+      <p>Claude Code, Gemini CLI, Codex o Cursor <strong>funcionan con CodeGuard sin configurar
+      nada</strong>: ellos hacen <code>git commit</code> y el hook se dispara igual que contigo.</p>
+      <ul>
+        <li>Si bloquea, el agente <strong>lee el error en la terminal</strong>, corrige y reintenta.</li>
+        <li>CodeGuard <strong>detecta que el código lo escribió una IA</strong> y le sube el nivel de
+        escrutinio (la investigación reporta más vulnerabilidades en código generado).</li>
+      </ul>
+      <h3>Encargarle los pendientes a tu agente</h3>
+      <pre><code>codeguard report</code></pre>
+      <p>Genera <code>.codeguard/HALLAZGOS.md</code>: la lista completa con instrucciones precisas.
+      Se lo pasas a tu agente:</p>
+      <pre><code>"resuelve .codeguard/HALLAZGOS.md"</code></pre>
+      <div class="caja ok"><b>Cómo sabes que terminó de verdad</b>
+      Vuelve a correr <code>codeguard report</code>. Lo resuelto pasa a "✅ Resueltos" y, cuando no
+      queda ningún bloqueante, el informe dice <strong>COMPLETADO</strong>. El criterio no es la
+      impresión del agente: es la verificación.</div>`
+  },
+  {
+    t: "Comandos que vale la pena conocer",
+    eyebrow: "Referencia",
+    html: `
+      <table>
+        <tr><td><code>codeguard status</code></td><td>¿Está bien puesto en este repo? Agrega
+        <code>--todos</code> para revisar todos tus proyectos.</td></tr>
+        <tr><td><code>codeguard report</code></td><td>Informe de hallazgos para ti o para tu agente de IA.</td></tr>
+        <tr><td><code>codeguard stats</code></td><td>Precisión de cada regla según el feedback del equipo.</td></tr>
+        <tr><td><code>codeguard graph --deep</code></td><td>Abre el explorador de código 3D.</td></tr>
+        <tr><td><code>codeguard repair</code></td><td>Diagnostica y te dice cómo arreglar lo que falte.</td></tr>
+        <tr><td><code>codeguard baseline</code></td><td>Vuelve a marcar la deuda existente como "no bloquea".</td></tr>
+        <tr><td><code>codeguard init</code></td><td>Enrolar un proyecto nuevo (una vez por repo).</td></tr>
+      </table>
+      <h3>Enrolar un proyecto nuevo</h3>
+      <pre><code>cd mi-proyecto
+codeguard init
+git add .codeguard .githooks .gitattributes
+git commit -m "chore: CodeGuard"</code></pre>
+      <p>Tus compañeros solo hacen <code>git pull</code> y ya lo tienen. <strong>Nadie más
+      configura nada.</strong></p>
+      <div class="caja ok"><b>Ya está — eso es todo</b>
+      Commitea normal. El orbe te avisa. El panel te explica. Y si algo bloquea, ya sabes que el CI
+      lo habría rechazado igual — solo que ahora lo supiste 20 minutos antes.</div>`
+  },
+];
+
+const indice = document.getElementById("indice");
+const contenido = document.getElementById("contenido");
+indice.innerHTML = `<h1>Guía de uso</h1>` + PASOS.map((p, i) =>
+  `<a data-i="${i}"><span class="n">${i + 1}</span>${p.t}</a>`).join("");
+contenido.innerHTML = PASOS.map((p, i) =>
+  `<section class="paso" data-i="${i}">
+     <div class="eyebrow">${p.eyebrow}</div>
+     <h2>${p.t}</h2>${p.html}
+   </section>`).join("");
+
+let actual = 0;
+function ir(i) {
+  actual = Math.max(0, Math.min(PASOS.length - 1, i));
+  document.querySelectorAll(".paso").forEach(s => s.classList.toggle("activo", +s.dataset.i === actual));
+  document.querySelectorAll("nav a").forEach(a => a.classList.toggle("activo", +a.dataset.i === actual));
+  document.getElementById("progreso").textContent = `${actual + 1} de ${PASOS.length} · ${PASOS[actual].t}`;
+  document.getElementById("ant").disabled = actual === 0;
+  document.getElementById("sig").disabled = actual === PASOS.length - 1;
+  contenido.scrollTop = 0;
+  document.querySelector("nav a.activo")?.scrollIntoView({ block: "nearest" });
+}
+indice.addEventListener("click", e => { const a = e.target.closest("a[data-i]"); if (a) ir(+a.dataset.i); });
+document.getElementById("ant").addEventListener("click", () => ir(actual - 1));
+document.getElementById("sig").addEventListener("click", () => ir(actual + 1));
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowRight" || e.key === "PageDown") ir(actual + 1);
+  if (e.key === "ArrowLeft" || e.key === "PageUp") ir(actual - 1);
+});
+ir(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+# CodeQL — análisis de seguridad de GitHub sobre el código del producto.
+#
+# Sustituye al "default setup", que no admite excluir rutas: escaneaba también
+# el corpus de pruebas del rulepack —130 reglas de código deliberadamente
+# vulnerable— y levantaba alertas críticas sobre fixtures que existen
+# justamente para ser vulnerables. Ver .github/codeql/codeql-config.yml.
+#
+# Al activar este workflow hay que APAGAR el default setup en
+# Settings > Code security, o corren los dos y las alertas salen duplicadas.
+name: CodeQL
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Lunes a las 6:00 UTC: las bases de CodeQL cambian y un repo que no se
+    # vuelve a escanear envejece sin que nadie lo note.
+    - cron: "0 6 * * 1"
+
+jobs:
+  analyze:
+    name: analizar (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      # En un repositorio PRIVADO la acción de CodeQL consulta la API de
+      # Actions para adjuntar los resultados a su corrida, y descarga los packs
+      # de consultas del registro. Sin estos dos permisos el análisis corre
+      # entero y falla justo al subir el SARIF, con un "Resource not accessible
+      # by integration" que no dice qué permiso falta.
+      actions: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Los mismos lenguajes que traía el default setup. El corpus aporta
+        # además C#, Java y TypeScript, pero está excluido y sería analizar
+        # fixtures.
+        language: [go, python, actions]
+
+    steps:
+      # Acciones ancladas por SHA, no por etiqueta: una etiqueta es un puntero
+      # movible y quien controle el repo de la acción puede reapuntarla a otro
+      # código. Es la regla gha-action-sin-sha del propio rulepack.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: github/codeql-action/init@c16c0f3f2812ec4bb3750a5ed64873fe2ce0fbef # codeql-bundle-v2.26.3
+        with:
+          languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
+          # Seguridad + calidad, que es lo que corría el default setup.
+          #
+          # Con sólo la suite de seguridad, las alertas de calidad que había
+          # levantado el default setup quedaban huérfanas: su configuración ya
+          # no existía, nadie las volvía a evaluar y GitHub avisaba de que
+          # CodeQL reportaba warnings. Y no se podían limpiar — los análisis del
+          # default setup vienen marcados deletable=false y sus alertas de
+          # calidad no están en la API.
+          #
+          # Corriéndolas aquí se cierran solas: el corpus está excluido y las
+          # cinco que había eran fixtures nuestros, así que el análisis da cero
+          # y GitHub las marca como resueltas.
+          queries: security-and-quality
+
+      - uses: github/codeql-action/autobuild@c16c0f3f2812ec4bb3750a5ed64873fe2ce0fbef # codeql-bundle-v2.26.3
+
+      - uses: github/codeql-action/analyze@c16c0f3f2812ec4bb3750a5ed64873fe2ce0fbef # codeql-bundle-v2.26.3
+        with:
+          category: "/language:${{ matrix.language }}"

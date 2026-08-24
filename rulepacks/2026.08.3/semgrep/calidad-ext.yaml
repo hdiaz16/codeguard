@@ -1,0 +1,311 @@
+# =============================================================================
+# PILAR CALIDAD
+# Las reglas de formateo, tipos y linters viven en config/ (herramientas
+# nativas). Aquí van las que ninguna herramienta estándar cubre.
+# =============================================================================
+rules:
+  # Idea tomada de CodeQL (go/unhandled-writable-file-close), que la encontró
+  # en este mismo proyecto y nosotros no teníamos.
+  - id: go-close-sin-comprobar-en-escritura
+    languages: [go]
+    severity: WARNING
+    message: "Se cierra un archivo abierto para escritura sin comprobar el error"
+    metadata:
+      pillar: quality
+      why: >-
+        Close es donde afloran los errores de escritura diferidos: disco lleno,
+        unidad de red caída, cuota agotada. Ignorarlo convierte una escritura
+        perdida en un silencio, y el archivo queda a medias sin que nadie se
+        entere hasta que algo falla mucho después por otra razón.
+      fix_hint: >-
+        Comprueba el error: `if cerr := f.Close(); cerr != nil { ... }`. Si de
+        verdad no importa, dilo con un comentario que explique por qué.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $F, $ERR = os.OpenFile($P, $FLAGS, $M)
+              ...
+              defer $F.Close()
+          - pattern: |
+              $F, $ERR := os.OpenFile($P, $FLAGS, $M)
+              ...
+              defer $F.Close()
+          - pattern: |
+              $F, $ERR := os.Create($P)
+              ...
+              defer $F.Close()
+      # Abrir en solo lectura no arriesga nada al cerrar.
+      - pattern-not: |
+          $F, $ERR := os.OpenFile($P, os.O_RDONLY, $M)
+          ...
+          defer $F.Close()
+
+
+# ---------------------------------------------------------------------------
+# ERRORES TRAGADOS — extensión de tus reglas de catch vacío
+# ---------------------------------------------------------------------------
+  - id: go-ignored-error-completo
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Capturaste un valor en una variable y lo tiras a "_". Si es un error, o
+      lo manejas o explicas por qué no importa; si no lo era, es código muerto.
+    metadata: { pilar: calidad, owasp: "A09:2021" }
+    # Caza SÓLO "_ = variable" (tirar algo ya capturado). NO caza "_ = fn()":
+    # descartar el retorno de una llamada a propósito es el silenciador
+    # idiomático de Go —lo que errcheck recomienda— y penalizarlo enfrentaba
+    # esta regla con golangci-lint, que el propio proyecto ahora usa. Las
+    # llamadas cuyo error se ignora las cubre errcheck, que conoce los tipos.
+    patterns:
+      - pattern: _ = $VAR
+      - pattern-not: _ = $F(...)      # llamada simple:  _ = fn()
+      - pattern-not: _ = $X.$M(...)   # llamada con selector: _ = os.MkdirAll()
+      - pattern-not: _ = <... $F(...) ...>  # la llamada envuelta en algo más
+      # Un literal de struct no es trabajo capturado que se tira: es una
+      # referencia en tiempo de compilación (`var _ = finding.Finding{}` sujeta
+      # el modelo del contrato). Sin esta línea la regla acusaba dos veces al
+      # propio agente, y ninguna era un error ignorado.
+      - pattern-not: _ = $T{...}
+
+  - id: ts-promesa-sin-await
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Promesa sin await ni catch. Es el fallo silencioso número uno en Node:
+      el rechazo no se ve y el proceso puede morir sin traza.
+    metadata: { pilar: calidad }
+    # curación 2026-08-11: pattern-not sólo descarta matches de rango IGUAL, y
+    # el .then() positivo es un sub-rango del encadenado con .catch() — esos
+    # pattern-not jamás suprimieron nada y el idioma .then().catch() era falso
+    # positivo desde el nacimiento de la regla (lo destapó el corpus de --test).
+    # pattern-not-inside sí excluye por contención.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              async function $F(...) { ... }
+              ...
+              $F(...);
+          - pattern: $OBJ.$M(...).then(...)
+      - pattern-not-inside: $OBJ.$M(...).then(...).catch(...)
+      - pattern-not-inside: await $EXPR
+      - pattern-not: void $OBJ.$M(...)
+
+  - id: python-except-broad
+    languages: [python]
+    severity: ERROR
+    message: >-
+      except desnudo o Exception genérica sin re-lanzar. Captura el tipo
+      concreto o registra con contexto y vuelve a lanzar.
+    metadata: { pilar: calidad, owasp: "A09:2021" }
+    patterns:
+      - pattern-either:
+          - pattern: |
+              try:
+                ...
+              except:
+                ...
+          - pattern: |
+              try:
+                ...
+              except Exception:
+                ...
+      - pattern-not: |
+          try:
+            ...
+          except Exception:
+            ...
+            raise
+      - pattern-not: |
+          try:
+            ...
+          except Exception as $E:
+            ...
+            raise ...
+
+  - id: csharp-catch-swallow
+    languages: [csharp]
+    severity: ERROR
+    message: "Excepción capturada y descartada sin registrar ni re-lanzar."
+    metadata: { pilar: calidad, owasp: "A09:2021" }
+    # curación: la forma original no parseaba; se acota a los casos ciertos
+    pattern-either:
+      - pattern: "try { ... } catch { }"
+      - pattern: "try { ... } catch ($T) { }"
+
+# ---------------------------------------------------------------------------
+# TESTS — dimensión completamente ausente en tu configuración actual
+# ---------------------------------------------------------------------------
+  - id: test-saltado
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Test saltado o enfocado. .only deja el resto de la suite sin ejecutar y
+      pasa el pipeline en verde con un solo test corriendo.
+    metadata: { pilar: calidad }
+    pattern-either:
+      - pattern: it.only(...)
+      - pattern: describe.only(...)
+      - pattern: test.only(...)
+      - pattern: it.skip(...)
+      - pattern: describe.skip(...)
+      - pattern: xit(...)
+      - pattern: xdescribe(...)
+
+  - id: python-test-saltado
+    languages: [python]
+    severity: WARNING
+    message: "Test saltado sin ticket. Añade el motivo y un enlace al issue."
+    metadata: { pilar: calidad }
+    patterns:
+      - pattern-either:
+          - pattern: "@pytest.mark.skip"
+          - pattern: "@pytest.mark.skip(...)"
+          - pattern: "@unittest.skip(...)"
+          - pattern: pytest.skip(...)
+      - pattern-not-regex: .*(#|reason=).*[A-Z]+-[0-9]+.*
+
+  - id: go-test-saltado
+    languages: [go]
+    severity: WARNING
+    message: "t.Skip sin ticket asociado."
+    metadata: { pilar: calidad }
+    patterns:
+      - pattern-either:
+          - pattern: t.Skip(...)
+          - pattern: t.SkipNow()
+      - pattern-not-regex: .*[A-Z]+-[0-9]+.*
+
+  - id: java-test-saltado
+    languages: [generic]
+    paths:
+      include: ["*.java"]
+    severity: WARNING
+    message: "@Ignore / @Disabled sin motivo documentado."
+    metadata: { pilar: calidad }
+    # curación: las anotaciones sueltas no parsean como patrón java; regex
+    patterns:
+      - pattern-regex: '@(Ignore|Disabled)\s*($|\n)'
+
+# curación: dividida por lenguaje — los patrones cruzados no parsean
+  - id: assert-siempre-verdadero-ts
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Aserción tautológica: el test pasa siempre y no verifica nada."
+    metadata: { pilar: calidad }
+    pattern-either:
+      - pattern: expect(true).toBe(true)
+      - pattern: expect($X).toBeDefined()
+
+  - id: assert-siempre-verdadero-py
+    languages: [python]
+    severity: WARNING
+    message: "Aserción tautológica: el test pasa siempre y no verifica nada."
+    metadata: { pilar: calidad }
+    pattern-either:
+      - pattern: assert True
+      - pattern: assert 1 == 1
+
+# ---------------------------------------------------------------------------
+# COMPLEJIDAD Y TAMAÑO
+# El umbral numérico lo aplican los linters nativos (ruff C901,
+# golangci gocyclo, eslint complexity). Aquí solo las señales estructurales.
+# ---------------------------------------------------------------------------
+# curación: dividida por lenguaje — los patrones cruzados no parsean
+  - id: parametros-excesivos-py
+    languages: [python]
+    severity: WARNING
+    message: "Más de 5 parámetros posicionales. Agrupa en un objeto con nombres."
+    metadata: { pilar: calidad }
+    pattern: 'def $F($A, $B, $C, $D, $E, $G, ...): ...'
+
+  - id: parametros-excesivos-ts
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Más de 5 parámetros posicionales. Agrupa en un objeto con nombres."
+    metadata: { pilar: calidad }
+    pattern: function $F($A, $B, $C, $D, $E, $G, ...) { ... }
+
+  - id: parametros-excesivos-go
+    languages: [go]
+    severity: WARNING
+    message: "Más de 5 parámetros posicionales. Agrupa en un struct con nombres."
+    metadata: { pilar: calidad }
+    pattern: func $F($A $T1, $B $T2, $C $T3, $D $T4, $E $T5, $G $T6, ...) { ... }
+
+# curación: dividida por lenguaje — los patrones cruzados no parsean
+  - id: anidamiento-profundo-py
+    languages: [python]
+    severity: WARNING
+    message: "Cuatro niveles de anidamiento. Extrae a función o usa cláusulas de guarda."
+    metadata: { pilar: calidad }
+    pattern: |
+      if $A:
+          ...
+          if $B:
+              ...
+              if $C:
+                  ...
+                  if $D:
+                      ...
+
+  - id: anidamiento-profundo-ts
+    # curación: listar go mataba la regla entera — `if ($A)` con paréntesis no
+    # parsea en Go, y semgrep exige que el patrón parsee en todos los lenguajes
+    # de la regla. El anidamiento en Go ya lo vigila la complejidad ciclomática
+    # del playbook, que no depende de la forma sintáctica.
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Cuatro niveles de anidamiento. Extrae a función o usa cláusulas de guarda."
+    metadata: { pilar: calidad }
+    pattern: |
+      if ($A) { ... if ($B) { ... if ($C) { ... if ($D) { ... } } } }
+
+# ---------------------------------------------------------------------------
+# HIGIENE
+# ---------------------------------------------------------------------------
+  - id: todo-sin-ticket
+    languages: [generic]
+    severity: WARNING
+    message: "TODO/FIXME/HACK sin ticket. Formato: TODO(ABC-123): descripción."
+    metadata: { pilar: calidad }
+    # curación: SIN (?i) — en español "todo" es palabra común; solo mayúsculas
+    patterns:
+      - pattern-regex: \b(TODO|FIXME|HACK|XXX)\b(?!\s*\([A-Z]+-[0-9]+\))
+    paths:
+      exclude: ["**/vendor/**", "**/node_modules/**", "**/*.min.js", "**/*.md"]
+
+  - id: ts-ignore-sin-justificar
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      @ts-ignore silencia el compilador sin dejar rastro. Usa @ts-expect-error
+      con explicación: falla si el error desaparece, lo cual mantiene limpia
+      la supresión.
+    metadata: { pilar: calidad }
+    patterns:
+      - pattern-regex: "@ts-ignore"
+
+  - id: console-log-en-produccion
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "console.* en código de producción. Usa el logger estructurado."
+    metadata: { pilar: calidad }
+    patterns:
+      - pattern-either:
+          - pattern: console.log(...)
+          - pattern: console.debug(...)
+          - pattern: console.info(...)
+    paths:
+      exclude: ["**/*.test.ts", "**/*.spec.ts", "**/scripts/**", "**/*.config.*"]
+
+  - id: python-mutable-default
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Argumento por defecto mutable: se comparte entre llamadas. Usa None y
+      construye dentro.
+    metadata: { pilar: calidad }
+    pattern-either:
+      - pattern: 'def $F(..., $A=[], ...): ...'
+      - pattern: 'def $F(..., $A={}, ...): ...'
+      - pattern: 'def $F(..., $A=set(), ...): ...'

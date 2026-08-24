@@ -1,0 +1,28 @@
+{
+  "name": "codeguard-sitio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Sitio de producto de CodeGuard",
+  "comentario": [
+    "dev sirve SÓLO en localhost: sin --host, que exponía el sitio en",
+    "construcción a toda la red local. Para publicar se usa `npm run build` y",
+    "se sube el contenido de dist/, que es un sitio estático — nunca el",
+    "servidor de desarrollo."
+  ],
+  "scripts": {
+    "dev": "vite --port 5175",
+    "build": "vite build",
+    "preview": "vite preview --port 5175"
+  },
+  "devDependencies": {
+    "vite": "^7.3.6"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@vercel/analytics": "^2.0.1",
+    "gsap": "^3.12.5",
+    "lenis": "^1.1.14"
+  }
+}

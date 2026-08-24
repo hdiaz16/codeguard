@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>CodeGuard — explorador de código 3D</title>
+<style>
+  :root {
+    --d0:#1a1c20; --d1:#25272c; --d2:#2e3138; --d3:#383c44;
+    --ink:#eaf3f0; --ink-2:#a7b3b0; --ink-3:#78847f;
+    --fn:#6fdcb4; --method:#e5b54a; --class:#b49ae0; --query:#e08a72; --hot:#e4604b;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--d0); color:var(--ink);
+    font-family:"Segoe UI",system-ui,sans-serif; overflow:hidden; }
+  #graph { position:absolute; inset:0; }
+
+  .panel, .detail {
+    position:absolute; z-index:5; background:rgba(21,26,31,.94);
+    border-radius:14px; padding:14px 16px; font-size:13px;
+    box-shadow:0 10px 34px rgba(0,0,0,.6); backdrop-filter:blur(8px);
+  }
+  .panel { top:14px; left:14px; width:270px; }
+  .detail { top:14px; right:14px; width:330px; display:none; }
+  .detail.on { display:block; }
+
+  .panel h1 { font-size:14px; margin:0 0 2px; font-weight:650; }
+  .panel .sub { color:var(--ink-3); font-size:11px; margin-bottom:12px; }
+  .row { display:flex; align-items:center; gap:8px; margin:8px 0; }
+  .row label { flex:1; color:var(--ink-2); font-size:12px; }
+  input[type=range] { width:105px; accent-color:var(--fn); }
+  input[type=search] {
+    width:100%; background:var(--d2); border:none; border-radius:8px;
+    padding:7px 10px; color:var(--ink); font-family:inherit; font-size:12px;
+  }
+  input[type=search]:focus { outline:1px solid var(--fn); }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .chip {
+    font-size:10.5px; padding:4px 9px; border-radius:999px; cursor:pointer;
+    background:var(--d3); color:var(--ink-2); user-select:none; transition:.15s;
+  }
+  .chip.on { color:var(--d0); font-weight:650; }
+  .chip[data-k=func].on   { background:var(--fn); }
+  .chip[data-k=method].on { background:var(--method); }
+  .chip[data-k=class].on  { background:var(--class); }
+  .chip[data-k=query].on  { background:var(--query); }
+  .projs { display:flex; gap:5px; flex-wrap:wrap; margin:0 0 11px; }
+  .projs .p {
+    font-size:10.5px; padding:4px 9px; border-radius:999px; cursor:pointer;
+    background:var(--d2); color:var(--ink-3); transition:.15s; white-space:nowrap;
+  }
+  .projs .p:hover { background:var(--d3); color:var(--ink); }
+  .projs .p.activo { background:var(--fn); color:var(--d0); font-weight:650; cursor:default; }
+  .projs .p.blk { color:var(--hot); }
+  .stats { color:var(--ink-3); font-size:11px; margin-top:11px; line-height:1.55; }
+  .stats b { color:var(--ink); font-variant-numeric:tabular-nums; }
+  .stats .nota { display:block; margin-top:6px; color:var(--ink-3); opacity:.85; }
+  .btn {
+    background:var(--d3); border:none; color:var(--ink-2); border-radius:8px;
+    padding:6px 11px; font-size:11px; cursor:pointer; font-family:inherit; transition:.15s;
+  }
+  .btn:hover { background:var(--fn); color:var(--d0); }
+
+  .detail h2 { font-size:13.5px; margin:0 0 3px; font-weight:650; word-break:break-all; }
+  .detail .loc { color:var(--ink-3); font-size:11px; font-family:Consolas,monospace; margin-bottom:10px; word-break:break-all; }
+  .detail h3 {
+    font-size:10px; text-transform:uppercase; letter-spacing:.1em; color:var(--ink-3);
+    margin:12px 0 5px; font-weight:650;
+  }
+  .detail ul { margin:0; padding:0; list-style:none; max-height:150px; overflow-y:auto; }
+  .detail li {
+    font-size:11.5px; font-family:Consolas,monospace; color:var(--ink-2);
+    padding:3px 7px; border-radius:5px; cursor:pointer; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis;
+  }
+  .detail li:hover { background:var(--d3); color:var(--ink); }
+  .empty { color:var(--ink-3); font-style:italic; }
+  .hint {
+    position:absolute; bottom:14px; left:50%; transform:translateX(-50%); z-index:5;
+    color:var(--ink-3); font-size:11px; background:rgba(21,26,31,.9); padding:7px 16px;
+    border-radius:999px; backdrop-filter:blur(8px);
+  }
+  /* radar del análisis */
+  .radar {
+    position:absolute; left:14px; bottom:14px; z-index:5; width:270px;
+    background:rgba(21,26,31,.94); border-radius:14px; padding:12px 15px;
+    box-shadow:0 10px 34px rgba(0,0,0,.6); backdrop-filter:blur(8px); display:none;
+  }
+  .radar.on { display:block; }
+  .rtitle { font-size:12.5px; font-weight:650; margin-bottom:2px; }
+  .rtitle.block { color:var(--hot); }
+  .rtitle.pass  { color:var(--fn); }
+  .rsub { color:var(--ink-3); font-size:10.5px; margin-bottom:8px; }
+  .radar ul { margin:0; padding:0; list-style:none; max-height:150px; overflow-y:auto; }
+  .radar li {
+    font-size:11px; padding:4px 7px; border-radius:6px; cursor:pointer;
+    color:var(--ink-2); display:flex; gap:6px; align-items:baseline;
+  }
+  .radar li:hover { background:var(--d3); color:var(--ink); }
+  .radar li .dot { width:6px; height:6px; border-radius:50%; flex:none; }
+  .radar li .txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  ::-webkit-scrollbar { width:7px; } ::-webkit-scrollbar-thumb { background:var(--d3); border-radius:4px; }
+</style>
+<script>
+// Una ventana muda es el peor error posible: si algo revienta, que se vea.
+(function () {
+  function pintar(titulo, detalle) {
+    var g = document.getElementById("graph");
+    if (!g) { return; }
+    g.innerHTML =
+      '<div style="display:grid;place-items:center;height:100%;text-align:center;' +
+      'font:14px \'Segoe UI\';color:#a7b3b0;padding:40px"><div>' +
+      '<b style="color:#eaf3f0;font-size:16px">' + titulo + '</b><br><br>' +
+      '<span style="color:#78847f;font-size:12px;font-family:Consolas,monospace">' +
+      String(detalle).replace(/</g, "&lt;") + '</span><br><br>' +
+      '<span style="color:#78847f;font-size:12px">Reporta esto con: codeguard graph --deep</span>' +
+      '</div></div>';
+  }
+  window.addEventListener("error", function (e) {
+    pintar("El explorador no pudo iniciar", (e.message || e.error) + "\n" + (e.filename || "") + ":" + (e.lineno || ""));
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    pintar("El explorador no pudo iniciar", e.reason && e.reason.message ? e.reason.message : e.reason);
+  });
+})();
+</script>
+</head>
+<body>
+<div id="graph"></div>
+
+<div class="panel">
+  <h1>Explorador de código 3D</h1>
+  <div class="sub" id="repo-name">—</div>
+  <!-- un grafo por proyecto: nunca se mezclan sistemas distintos -->
+  <div class="projs" id="projs"></div>
+
+  <input type="search" id="search" placeholder="buscar función…" autocomplete="off">
+
+  <div class="chips" id="kinds">
+    <span class="chip on" data-k="func">funciones</span>
+    <span class="chip on" data-k="method">métodos</span>
+    <span class="chip on" data-k="class">clases</span>
+    <span class="chip on" data-k="query">consultas</span>
+  </div>
+
+  <div class="row" style="margin-top:12px">
+    <label>mínimo de conexiones</label>
+    <input type="range" id="mindeg" min="0" max="12" value="0">
+    <b id="mindeg-v" style="font-size:11px;width:14px">0</b>
+  </div>
+  <div class="row">
+    <label>separación</label>
+    <input type="range" id="spread" min="20" max="220" value="90">
+  </div>
+  <div class="row">
+    <label>girar solo</label>
+    <input type="checkbox" id="spin" checked>
+  </div>
+  <div class="row" id="row-issues" style="display:none">
+    <label style="color:var(--hot)">solo lo del commit</label>
+    <input type="checkbox" id="onlyissues">
+  </div>
+  <div class="row" style="gap:6px">
+    <button class="btn" id="btn-fit">encuadrar</button>
+    <button class="btn" id="btn-reheat">reacomodar</button>
+  </div>
+
+  <div class="stats" id="stats">—</div>
+</div>
+
+<!-- radar del último análisis: el grafo como instrumento, no como adorno -->
+<div class="radar" id="radar">
+  <div class="rtitle" id="r-title">—</div>
+  <div class="rsub" id="r-sub">—</div>
+  <ul id="r-list"></ul>
+</div>
+
+<div class="detail" id="detail">
+  <h2 id="d-name">—</h2>
+  <div class="loc" id="d-loc">—</div>
+  <h3>llama a (<span id="d-out-n">0</span>)</h3>
+  <ul id="d-out"></ul>
+  <h3>lo llaman (<span id="d-in-n">0</span>)</h3>
+  <ul id="d-in"></ul>
+</div>
+
+<div class="hint">arrastra para orbitar · rueda para acercar · clic derecho arrastra para desplazar · clic en un nodo para inspeccionar</div>
+
+<script src="/3d-force-graph.js"></script>
+<script type="module">
+// El runtime de Wails solo hace falta para cambiar de repo desde aquí.
+// Si no carga, el grafo debe dibujarse igual: import tolerante, no fatal.
+let Events = null;
+try { ({ Events } = await import("/wails/runtime.js")); }
+catch (e) { console.warn("runtime de Wails no disponible:", e); }
+
+// Los datos llegan por HTTP interno: cientos de KB por el bus de eventos
+// llegaban vacíos. Si algo falla, se dice en pantalla — nunca ventana muda.
+let DATA;
+try {
+  const r = await fetch("/graph.json?t=" + Date.now());
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  DATA = await r.json();
+  if (DATA.error) throw new Error(DATA.error);
+  if (!DATA.nodes || !DATA.nodes.length) throw new Error("el grafo llegó vacío");
+} catch (err) {
+  // Quedarse sin grafo no debe dejar al dev encerrado: se mantiene la lista de
+  // proyectos para que pueda saltar a otro sin cerrar la ventana.
+  const otros = (DATA && DATA.proyectos || []).filter(p => !p.activo);
+  const lista = otros.length
+    ? `<div style="margin-top:26px"><div style="color:#78847f;font-size:12px;margin-bottom:9px">
+         Otros proyectos con contexto:</div>
+       <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">${
+         otros.map(p => `<button data-root="${p.root}" style="background:#161b20;border:0;
+           color:#c8d2da;padding:7px 13px;border-radius:7px;cursor:pointer;font:13px 'Segoe UI'">
+           ${p.estado === "block" ? "⛔ " : ""}${p.nombre}</button>`).join("")}</div></div>`
+    : "";
+  document.body.innerHTML =
+    `<div style="display:grid;place-items:center;height:100%;text-align:center;
+       font:14px 'Segoe UI';color:#a7b3b0;padding:40px">
+       <div style="max-width:620px">
+       <b style="color:#eaf3f0;font-size:16px">No se pudo mostrar el grafo</b><br><br>
+       <span style="white-space:pre-line">${String(err.message || err)}</span><br><br>
+       <span style="color:#78847f;font-size:12px">Detalle técnico en
+       %LOCALAPPDATA%\\codeguard\\daemon.log</span>
+       ${lista}</div></div>`;
+  document.body.addEventListener("click", e => {
+    const b = e.target.closest("button[data-root]");
+    if (!b) return;
+    try { Events.Emit("graph-switch", [b.dataset.root]); }
+    catch { location.reload(); }
+  });
+  throw err;
+}
+
+const COLORS = { func:"#6fdcb4", method:"#e5b54a", class:"#b49ae0", query:"#e08a72" };
+const DIM = "#2b343c";
+
+// grados y adyacencia
+const deg = new Map(), adjOut = new Map(), adjIn = new Map();
+DATA.nodes.forEach(n => { deg.set(n.id, 0); adjOut.set(n.id, []); adjIn.set(n.id, []); });
+DATA.edges.forEach(e => {
+  if (!deg.has(e.from) || !deg.has(e.to)) return;
+  deg.set(e.from, deg.get(e.from) + 1);
+  deg.set(e.to, deg.get(e.to) + 1);
+  adjOut.get(e.from).push(e.to);
+  adjIn.get(e.to).push(e.from);
+});
+
+const gData = {
+  nodes: DATA.nodes.map(n => ({ ...n, deg: deg.get(n.id) || 0 })),
+  links: DATA.edges
+    .filter(e => deg.has(e.from) && deg.has(e.to))
+    .map(e => ({ source: e.from, target: e.to, kind: e.kind })),
+};
+
+const byId = new Map(gData.nodes.map(n => [n.id, n]));
+const state = { kinds:new Set(["func","method","class","query"]), minDeg:0, query:"", selected:null, onlyIssues:false };
+
+// ── overlay del análisis: hallazgos y zona tocada sobre el grafo ────────────
+const OV = DATA.overlay || null;
+const issueOf = new Map();   // nodeId -> hallazgo más grave
+const touched = new Set((OV && OV.touched) || []);
+if (OV) {
+  for (const f of (OV.findings || [])) {
+    const prev = issueOf.get(f.node_id);
+    if (!prev || (f.blocking && !prev.blocking)) issueOf.set(f.node_id, f);
+  }
+}
+
+function visible(n) {
+  if (state.onlyIssues && !issueOf.has(n.id) && !touched.has(n.id)) return false;
+  if (!state.kinds.has(n.kind)) return false;
+  if (n.deg < state.minDeg) return false;
+  if (state.query && !n.label.toLowerCase().includes(state.query)) return false;
+  return true;
+}
+function related(id) {
+  if (!state.selected) return false;
+  return id === state.selected ||
+    adjOut.get(state.selected).includes(id) || adjIn.get(state.selected).includes(id);
+}
+
+const el = document.getElementById("graph");
+// Sin la librería no hay grafo: decirlo en pantalla, no morir en silencio.
+if (typeof ForceGraph3D !== "function") {
+  el.innerHTML = `<div style="display:grid;place-items:center;height:100%;text-align:center;
+    font:14px 'Segoe UI';color:#a7b3b0;padding:40px">
+    <div><b style="color:#eaf3f0;font-size:16px">No se pudo iniciar el motor 3D</b><br><br>
+    La librería de render no cargó (3d-force-graph.js).<br>
+    <span style="color:#78847f;font-size:12px">Datos del grafo: ${DATA.nodes.length} funciones,
+    ${DATA.edges.length} relaciones — el análisis sí funcionó.</span></div></div>`;
+  throw new Error("ForceGraph3D no disponible");
+}
+const Graph = ForceGraph3D()(el)
+  .backgroundColor("#1a1c20")
+  .graphData(gData)
+  .nodeId("id")
+  .nodeLabel(n => {
+    const f = issueOf.get(n.id);
+    const issue = f
+      ? `<br><span style="color:${f.blocking ? "#e4604b" : "#e5b54a"};font-size:11px">
+           ${f.blocking ? "⛔ BLOQUEA" : "⚠ aviso"} · ${f.rule}: ${f.message}</span>`
+      : (touched.has(n.id) ? `<br><span style="color:#a7b3b0;font-size:10.5px">✎ tocada en este commit</span>` : "");
+    return `<div style="background:#25272ce6;padding:6px 10px;border-radius:8px;
+      font:12px 'Segoe UI';color:#eaf3f0;box-shadow:0 4px 14px #000a;max-width:340px;white-space:normal">
+      <b>${n.label}</b><br><span style="color:#78847f;font-size:10.5px">${n.pkg} · ${n.file}:${n.line}</span>${issue}</div>`;
+  })
+  .nodeVal(n => {
+    let v = 1 + Math.min(n.deg * 0.7, 14);
+    if (issueOf.has(n.id)) v *= 2.2;     // los hallazgos se ven de lejos
+    else if (touched.has(n.id)) v *= 1.4; // la zona tocada, un poco más
+    return v;
+  })
+  .nodeColor(n => {
+    if (state.selected) return related(n.id) ? (n.id === state.selected ? "#e4604b" : COLORS[n.kind]) : DIM;
+    if (!visible(n)) return DIM;
+    const f = issueOf.get(n.id);
+    if (f) return f.blocking ? "#ff4b38" : "#e5b54a";      // bloqueante / aviso
+    if (touched.has(n.id)) return "#ffffff";                 // función tocada
+    return COLORS[n.kind];
+  })
+  .nodeOpacity(0.92)
+  .nodeResolution(12)
+  // Un filtro debe filtrar: antes sólo atenuaba y la vista seguía igual de sucia.
+  .nodeVisibility(visible)
+  .linkVisibility(l => {
+    const s = l.source.id ?? l.source, t = l.target.id ?? l.target;
+    const ns = byId.get(s), nt = byId.get(t);
+    return !!(ns && nt && visible(ns) && visible(nt));
+  })
+  .linkColor(l => {
+    const s = l.source.id ?? l.source, t = l.target.id ?? l.target;
+    if (state.selected) return related(s) && related(t) ? "#e4604b" : "#1a2026";
+    return l.kind === "query" ? "rgba(224,138,114,.7)" : "rgba(130,160,185,.42)";
+  })
+  .linkWidth(l => {
+    const s = l.source.id ?? l.source, t = l.target.id ?? l.target;
+    return (state.selected && related(s) && related(t)) ? 1.8 : (l.kind === "query" ? 1 : .6);
+  })
+  .linkDirectionalArrowLength(3.2)
+  .linkDirectionalArrowRelPos(1)
+  .linkDirectionalParticles(l => (state.selected && related(l.source.id ?? l.source) && related(l.target.id ?? l.target)) ? 3 : 0)
+  .linkDirectionalParticleSpeed(0.008)
+  .linkDirectionalParticleWidth(1.8)
+  .onNodeClick(n => { select(n.id); focusOn(n); })
+  .onBackgroundClick(() => { state.selected = null; document.getElementById("detail").classList.remove("on"); repaint(); })
+  .warmupTicks(60)
+  .cooldownTicks(220);
+
+// separación entre nodos
+// distanceMax: sin él la repulsión actúa a distancia infinita y las funciones
+// sin aristas salen disparadas al borde, dejando el grafo del tamaño de un punto.
+Graph.d3Force("charge").strength(-90).distanceMax(300);
+Graph.d3Force("link").distance(l => l.kind === "query" ? 55 : 38);
+
+// rotación automática suave, se detiene al interactuar
+let spin = true, angle = 0;
+const camDist = () => { const p = Graph.cameraPosition(); return Math.hypot(p.x, p.y, p.z) || 600; };
+setInterval(() => {
+  if (!spin) return;
+  angle += Math.PI / 1400;
+  const d = camDist();
+  Graph.cameraPosition({ x: d * Math.sin(angle), z: d * Math.cos(angle) });
+}, 30);
+el.addEventListener("pointerdown", () => { if (spin) { spin = false; document.getElementById("spin").checked = false; } });
+
+function repaint() { Graph.nodeVisibility(Graph.nodeVisibility()).linkVisibility(Graph.linkVisibility())
+  .nodeColor(Graph.nodeColor()).linkColor(Graph.linkColor()).linkWidth(Graph.linkWidth())
+  .linkDirectionalParticles(Graph.linkDirectionalParticles()); updateStats(); }
+
+function focusOn(n) {
+  const d = 120;
+  const r = Math.hypot(n.x, n.y, n.z) || 1;
+  Graph.cameraPosition({ x: n.x * (1 + d/r), y: n.y * (1 + d/r), z: n.z * (1 + d/r) }, n, 700);
+}
+
+function select(id) {
+  state.selected = id;
+  const n = gData.nodes.find(x => x.id === id);
+  const det = document.getElementById("detail");
+  det.classList.add("on");
+  document.getElementById("d-name").textContent = id;
+  document.getElementById("d-loc").textContent = `${n.file}:${n.line}`;
+  const fill = (ul, arr) => {
+    ul.innerHTML = arr.length
+      ? [...arr].sort().map(x => `<li data-id="${x}">${x}</li>`).join("")
+      : `<li class="empty">— nadie —</li>`;
+  };
+  fill(document.getElementById("d-out"), adjOut.get(id));
+  fill(document.getElementById("d-in"), adjIn.get(id));
+  document.getElementById("d-out-n").textContent = adjOut.get(id).length;
+  document.getElementById("d-in-n").textContent = adjIn.get(id).length;
+  repaint();
+}
+
+const sueltas = gData.nodes.filter(n => !n.deg).length;
+
+function updateStats() {
+  const vis = gData.nodes.filter(visible).length;
+  let html =
+    `<b>${gData.nodes.length}</b> funciones · <b>${gData.links.length}</b> relaciones<br>` +
+    `<b>${vis}</b> visibles con los filtros`;
+  // Decir por qué faltan nodos en pantalla, en vez de que el dev lo adivine.
+  if (sueltas && state.minDeg > 0) {
+    html += `<br><span class="nota"><b>${sueltas}</b> funciones sin relaciones detectadas están ` +
+            `ocultas — baja «mínimo de conexiones» a 0 para verlas.</span>`;
+  } else if (sueltas) {
+    html += `<br><span class="nota"><b>${sueltas}</b> de ellas no tienen relaciones detectadas ` +
+            `(nadie las llama dentro del repo, o son puntos de entrada).</span>`;
+  }
+  document.getElementById("stats").innerHTML = html;
+}
+
+// Cuando la mayoría flota suelta, el grafo se lee como polvo. Arrancar
+// filtrado y decirlo, que es distinto de esconderlo.
+if (gData.nodes.length && sueltas / gData.nodes.length > 0.35) {
+  state.minDeg = 1;
+  const sl = document.getElementById("mindeg");
+  sl.value = 1;
+  document.getElementById("mindeg-v").textContent = "1";
+  repaint();
+}
+
+document.getElementById("repo-name").textContent =
+  `${DATA.root.split("/").pop()} · ${DATA.lang} · nivel función`;
+
+// lista de proyectos: cada uno tiene SU grafo; cambiar recarga el del elegido
+if (DATA.proyectos && DATA.proyectos.length > 1) {
+  const esc = s => (s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  document.getElementById("projs").innerHTML = DATA.proyectos.map(p =>
+    `<span class="p ${p.activo ? "activo" : ""} ${p.estado === "block" ? "blk" : ""}"
+       data-root="${esc(p.root)}" title="${esc(p.root)}">${p.estado === "block" ? "⛔ " : ""}${esc(p.nombre)}</span>`
+  ).join("");
+  document.getElementById("projs").addEventListener("click", e => {
+    const t = e.target.closest(".p[data-root]");
+    if (!t || t.classList.contains("activo")) return;
+    if (!Events) { location.reload(); return; }
+    try { Events.Emit("graph-switch", [t.dataset.root]); }
+    catch { Events.Emit({ name:"graph-switch", data:[t.dataset.root] }); }
+  });
+}
+
+// ── controles ───────────────────────────────────────────────────────────────
+document.getElementById("kinds").addEventListener("click", e => {
+  const c = e.target.closest(".chip"); if (!c) return;
+  c.classList.toggle("on");
+  state.kinds.has(c.dataset.k) ? state.kinds.delete(c.dataset.k) : state.kinds.add(c.dataset.k);
+  repaint();
+});
+document.getElementById("mindeg").addEventListener("input", e => {
+  state.minDeg = +e.target.value;
+  document.getElementById("mindeg-v").textContent = state.minDeg;
+  repaint();
+});
+document.getElementById("search").addEventListener("input", e => {
+  state.query = e.target.value.trim().toLowerCase(); repaint();
+});
+document.getElementById("spread").addEventListener("input", e => {
+  Graph.d3Force("charge").strength(-Number(e.target.value));
+  Graph.d3ReheatSimulation();
+});
+document.getElementById("spin").addEventListener("change", e => { spin = e.target.checked; });
+document.getElementById("btn-fit").addEventListener("click", () => { yaEncuadro = false; encuadrarUnaVez(); });
+document.getElementById("btn-reheat").addEventListener("click", () => Graph.d3ReheatSimulation());
+document.getElementById("detail").addEventListener("click", e => {
+  const li = e.target.closest("li[data-id]"); if (!li) return;
+  const n = gData.nodes.find(x => x.id === li.dataset.id);
+  select(li.dataset.id); if (n) focusOn(n);
+});
+
+document.getElementById("onlyissues").addEventListener("change", e => {
+  state.onlyIssues = e.target.checked; repaint();
+});
+
+// ── radar del análisis ──────────────────────────────────────────────────────
+if (OV && (OV.findings.length || OV.touched.length)) {
+  document.getElementById("row-issues").style.display = "flex";
+  const r = document.getElementById("radar");
+  r.classList.add("on");
+  const t = document.getElementById("r-title");
+  const blocking = OV.findings.filter(f => f.blocking).length;
+  // El ✓ era para todo lo que no fuera "block": un análisis degradado,
+  // fallido u omitido se firmaba «commit limpio». El outcome tipado pone a
+  // cada estado su frase; un overlay viejo sin outcome cae al criterio de
+  // antes, que para "block" era correcto.
+  const oc = OV.outcome || (OV.verdict === "block" ? "blocked" : "");
+  const bloqueado = oc === "blocked";
+  t.textContent =
+    bloqueado          ? `⛔ ${blocking} bloqueante${blocking === 1 ? "" : "s"} en el grafo` :
+    oc === "degraded"  ? `⚠ análisis incompleto · ${OV.touched.length} función(es) tocada(s)` :
+    oc === "failed"    ? `⚠ el análisis falló — nada que afirmar` :
+    oc === "skipped"   ? `○ sin revisar · ${OV.touched.length} función(es) tocada(s)` :
+    `✓ commit limpio · ${OV.touched.length} función(es) tocada(s)`;
+  t.className = "rtitle " + (bloqueado ? "block" : "pass");
+  document.getElementById("r-sub").textContent = `${OV.repo} @ ${OV.branch} · ${OV.at}`;
+  document.getElementById("r-list").innerHTML = OV.findings.map(f =>
+    `<li data-id="${f.node_id}">
+       <span class="dot" style="background:${f.blocking ? "#ff4b38" : "#e5b54a"}"></span>
+       <span class="txt">${f.rule} · ${f.node_id.split(".").pop()}</span>
+     </li>`).join("") || `<li class="empty">sin hallazgos anclados a funciones</li>`;
+  document.getElementById("r-list").addEventListener("click", e => {
+    const li = e.target.closest("li[data-id]"); if (!li) return;
+    const n = gData.nodes.find(x => x.id === li.dataset.id);
+    if (n) { select(li.dataset.id); focusOn(n); }
+  });
+  // arranca enfocado en el primer bloqueante: el grafo abre donde duele
+  const first = OV.findings.find(f => f.blocking) || OV.findings[0];
+  if (first) setTimeout(() => {
+    const n = gData.nodes.find(x => x.id === first.node_id);
+    if (n) { select(first.node_id); focusOn(n); }
+  }, 2200);
+}
+
+// Encuadrar sólo sobre los nodos conectados: las funciones sueltas salen
+// disparadas por la repulsión y arrastraban la cámara hasta dejar el grafo
+// del tamaño de un grano de arena.
+let yaEncuadro = false;
+function encuadrarUnaVez() {
+  if (yaEncuadro) return;
+  yaEncuadro = true;
+  Graph.zoomToFit(900, 60, n => visible(n) && n.deg > 0);
+}
+Graph.onEngineStop(encuadrarUnaVez);
+setTimeout(encuadrarUnaVez, 4000); // red por si la física nunca se enfría
+updateStats();
+</script>
+</body>
+</html>

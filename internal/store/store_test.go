@@ -1,0 +1,422 @@
+package store
+
+import (
+	"encoding/csv"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"codeguard/internal/finding"
+	"codeguard/internal/pipeline"
+)
+
+func bd(t *testing.T) *Store {
+	t.Helper()
+	s, err := Open(filepath.Join(t.TempDir(), "prueba.db"))
+	if err != nil {
+		t.Fatalf("no se pudo abrir la BD (¿migraciones rotas?): %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+// La misma URL en sus tres formas habituales debe dar el MISMO id: si ssh y
+// https produjeran ids distintos, la telemetría de un repo se partiría en dos.
+func TestCanonicalRepoIDUnificaLasFormas(t *testing.T) {
+	formas := []string{
+		"git@github.com:hdiaz16/codeguard.git",
+		"https://github.com/hdiaz16/codeguard.git",
+		"https://github.com/hdiaz16/codeguard",
+		"HTTPS://GITHUB.COM/hdiaz16/codeguard",
+	}
+	primero := CanonicalRepoID(formas[0])
+	if len(primero) != 64 {
+		t.Fatalf("el id debe ser sha256 hex: %q", primero)
+	}
+	for _, f := range formas[1:] {
+		if got := CanonicalRepoID(f); got != primero {
+			t.Errorf("%s produjo un id distinto:\n  %s\n  %s", f, got, primero)
+		}
+	}
+	if CanonicalRepoID("git@github.com:otro/repo.git") == primero {
+		t.Error("repos distintos no pueden compartir id")
+	}
+}
+
+func TestMigracionesSonIdempotentes(t *testing.T) {
+	ruta := filepath.Join(t.TempDir(), "doble.db")
+	s1, err := Open(ruta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1.Close()
+	// Abrir de nuevo re-ejecuta migrate(): no debe fallar ni duplicar nada.
+	s2, err := Open(ruta)
+	if err != nil {
+		t.Fatalf("la segunda apertura falló: las migraciones no son idempotentes: %v", err)
+	}
+	s2.Close()
+}
+
+func TestUpsertRepoEsIdempotente(t *testing.T) {
+	s := bd(t)
+	id := CanonicalRepoID("https://github.com/x/y")
+	if err := s.UpsertRepo(id, "https://github.com/x/y", "y"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertRepo(id, "https://github.com/x/y", "y"); err != nil {
+		t.Fatalf("el segundo upsert del mismo repo falló: %v", err)
+	}
+}
+
+func guardarRun(t *testing.T, s *Store, runID, repoID, verdict string, findings []finding.Finding) {
+	t.Helper()
+	v := pipeline.Pass
+	if verdict == "block" {
+		v = pipeline.Block
+	}
+	err := s.SaveRun(RunMeta{
+		RunID: runID, RepoID: repoID, Branch: "master",
+		RulepackVer: "2026.08.2", ConfigHash: "abc", Environment: "local",
+	}, &pipeline.Result{Verdict: v, Degraded: []string{}, Findings: findings},
+		pipeline.Finalizar(&pipeline.Result{Verdict: v}, "", nil), len(findings))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// El ciclo completo de la calibración: run → hallazgo → feedback → la regla
+// con exceso de falsos positivos se degrada sola. Es la única palanca de
+// ajuste del sistema (§17) y no tenía prueba.
+func TestElFeedbackDegradaLaReglaRuidosa(t *testing.T) {
+	s := bd(t)
+	repoID := CanonicalRepoID("local/prueba")
+	if err := s.UpsertRepo(repoID, "", "prueba"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 5 hallazgos de la misma regla; 4 marcados como falso positivo.
+	ids := make([]string, 5)
+	for i := range ids {
+		f := finding.Finding{
+			ID: NewULID(), Engine: "semgrep", RuleKey: "regla-ruidosa",
+			Pillar: finding.Quality, Severity: finding.Warning, Source: finding.Deterministic,
+			File: "a.go", Line: i + 1, Message: "aviso", Fingerprint: NewULID(),
+		}
+		ids[i] = f.ID
+		guardarRun(t, s, NewULID(), repoID, "pass", []finding.Finding{f})
+	}
+	for i, id := range ids {
+		verdict := "false_positive"
+		if i == 0 {
+			verdict = "useful"
+		}
+		if err := s.SaveFeedback(id, verdict, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 5 votos, 80% de falsos positivos > umbral 20%: se degrada.
+	demoted, err := s.DemotedRules(repoID, 5, 0.20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !demoted["semgrep/regla-ruidosa"] {
+		t.Error("una regla con 4/5 falsos positivos debía degradarse")
+	}
+
+	// Con el mínimo de votos más alto, todavía no: pocas muestras no deciden.
+	demoted, err = s.DemotedRules(repoID, 6, 0.20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if demoted["semgrep/regla-ruidosa"] {
+		t.Error("con menos votos que el mínimo no debe degradarse nada")
+	}
+}
+
+func TestFeedbackRechazaVeredictosInventados(t *testing.T) {
+	s := bd(t)
+	if err := s.SaveFeedback("f1", "me-gusta", ""); err == nil {
+		t.Error("un veredicto fuera del contrato debe rechazarse")
+	}
+}
+
+func TestDiffCache(t *testing.T) {
+	s := bd(t)
+	repoID := CanonicalRepoID("local/cache")
+	if err := s.UpsertRepo(repoID, "", "cache"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, hit := s.DiffCacheGet(repoID, "sha1", "2026.08.2", "cfg1", "modelo"); hit {
+		t.Fatal("caché vacía no puede dar hit")
+	}
+	if err := s.DiffCachePut(repoID, "sha1", "2026.08.2", "cfg1", "modelo", `{"ok":true}`); err != nil {
+		t.Fatal(err)
+	}
+	got, hit := s.DiffCacheGet(repoID, "sha1", "2026.08.2", "cfg1", "modelo")
+	if !hit || got != `{"ok":true}` {
+		t.Errorf("hit=%v valor=%q", hit, got)
+	}
+	// La clave incluye el modelo: cambiarlo invalida el resultado cacheado.
+	if _, hit := s.DiffCacheGet(repoID, "sha1", "2026.08.2", "cfg1", "OTRO-modelo"); hit {
+		t.Error("cambiar de modelo debe invalidar la caché del diff")
+	}
+}
+
+// El tope de presupuesto se alimenta de esto: si la suma del mes se pierde,
+// el corte nunca llega y la factura tampoco tiene techo.
+func TestGastoDelMes(t *testing.T) {
+	s := bd(t)
+	repoID := CanonicalRepoID("local/gasto")
+	if err := s.UpsertRepo(repoID, "", "gasto"); err != nil {
+		t.Fatal(err)
+	}
+	guardarRun(t, s, "01RUN", repoID, "pass", nil)
+
+	// 3,500,000 micros = $3.50
+	for _, micros := range []int64{1_000_000, 2_500_000} {
+		if err := s.SaveLLMCall(LLMCall{RunID: "01RUN", Pillar: "security", Model: "m", Status: "ok", CostMicros: micros}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gastado, err := s.GastoDelMesUSD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gastado != 3.5 {
+		t.Errorf("gasto del mes: %.6f, se esperaban 3.50", gastado)
+	}
+}
+
+func TestExportarRunsFiltraYEscribeCSV(t *testing.T) {
+	s := bd(t)
+	repoID := CanonicalRepoID("local/export")
+	if err := s.UpsertRepo(repoID, "", "export"); err != nil {
+		t.Fatal(err)
+	}
+	guardarRun(t, s, "01A", repoID, "block", []finding.Finding{{
+		ID: NewULID(), Engine: "semgrep", RuleKey: "r", Pillar: finding.Security,
+		Severity: finding.Error, Source: finding.Deterministic, Blocking: true,
+		File: "a.go", Line: 1, Message: "m", Fingerprint: NewULID(),
+	}})
+	guardarRun(t, s, "01B", repoID, "pass", nil)
+
+	destino := filepath.Join(t.TempDir(), "runs.csv")
+	n, err := s.ExportarRuns(destino, FiltroExport{Repo: repoID, Solo: "block"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("con filtro block debía exportar 1 run, exportó %d", n)
+	}
+	f, err := os.Open(destino)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	filas, err := csv.NewReader(f).ReadAll()
+	if err != nil {
+		t.Fatalf("el CSV no es legible: %v", err)
+	}
+	if len(filas) != 2 { // cabecera + 1
+		t.Fatalf("filas en el CSV: %d", len(filas))
+	}
+	if filas[1][3] != "block" {
+		t.Errorf("veredicto exportado: %q", filas[1][3])
+	}
+
+	// Y el punto de la parametrización: un valor hostil es un VALOR, no SQL.
+	n, err = s.ExportarRuns(filepath.Join(t.TempDir(), "h.csv"),
+		FiltroExport{Repo: "x' OR '1'='1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("una inyección en el filtro devolvió %d filas: la consulta no está parametrizada", n)
+	}
+}
+
+func TestResumenSemanal(t *testing.T) {
+	s := bd(t)
+	repoID := CanonicalRepoID("local/resumen")
+	if err := s.UpsertRepo(repoID, "", "resumen"); err != nil {
+		t.Fatal(err)
+	}
+
+	if r, err := s.ResumenSemanal(repoID); err != nil || !strings.Contains(r, "sin análisis") {
+		t.Errorf("sin runs: %q (err=%v)", r, err)
+	}
+	guardarRun(t, s, "01C", repoID, "pass", nil)
+	r, err := s.ResumenSemanal(repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r, "1") {
+		t.Errorf("con un run limpio el resumen debe contarlo: %q", r)
+	}
+
+	// Un run con la garantía rota (outcome degraded) ya no se esconde en
+	// «omitidos» — la mentira medida del resumen viejo: corrió, no cubrió lo
+	// que promete, y el resumen lo dice con su nombre.
+	resDeg := &pipeline.Result{Verdict: pipeline.Pass, Degraded: []string{"falta:semgrep"}}
+	if err := s.SaveRun(RunMeta{
+		RunID: "01D", RepoID: repoID, Branch: "master",
+		RulepackVer: "2026.08.2", ConfigHash: "abc", Environment: "local",
+	}, resDeg, pipeline.Finalizar(resDeg, "", nil), 1); err != nil {
+		t.Fatal(err)
+	}
+	r, err = s.ResumenSemanal(repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r, "1 sin garantía completa") {
+		t.Errorf("el run degradado no se contó como lo que es: %q", r)
+	}
+}
+
+// El caché por archivo (§9): mismo contenido + mismo rulepack + misma config
+// acierta; cambiar CUALQUIERA de las tres llaves es un miss. La poda respeta
+// a los demás repos de la máquina.
+func TestFileCache(t *testing.T) {
+	s := bd(t)
+	if err := s.UpsertRepo("r1", "", "uno"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertRepo("r2", "", "dos"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.FileCachePut("r1", "2026.08.2", "cfgA", map[string]string{
+		"sha-limpio":   "[]",
+		"sha-con-eval": `[{"rule_key":"python-eval"}]`,
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	got, err := s.FileCacheGet("r1", "2026.08.2", "cfgA",
+		[]string{"sha-limpio", "sha-con-eval", "sha-desconocido"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got) != 2 || got["sha-limpio"] != "[]" || !strings.Contains(got["sha-con-eval"], "python-eval") {
+		t.Fatalf("aciertos inesperados: %v", got)
+	}
+
+	// Otra config u otro rulepack: cero aciertos — la clave es triple.
+	if m, _ := s.FileCacheGet("r1", "2026.08.2", "cfgB", []string{"sha-limpio"}); len(m) != 0 {
+		t.Errorf("otra config no puede acertar: %v", m)
+	}
+	if m, _ := s.FileCacheGet("r1", "2026.09.1", "cfgA", []string{"sha-limpio"}); len(m) != 0 {
+		t.Errorf("otro rulepack no puede acertar: %v", m)
+	}
+
+	// Upsert: el mismo sha se sobrescribe, no se duplica.
+	if err := s.FileCachePut("r1", "2026.08.2", "cfgA", map[string]string{"sha-limpio": `[{"rule_key":"x"}]`}); err != nil {
+		t.Fatalf("Put de nuevo: %v", err)
+	}
+	got, _ = s.FileCacheGet("r1", "2026.08.2", "cfgA", []string{"sha-limpio"})
+	if !strings.Contains(got["sha-limpio"], `"x"`) {
+		t.Errorf("el upsert no sobrescribió: %v", got)
+	}
+
+	// La poda barre entradas de rulepacks viejos del repo dado y NADA del vecino.
+	if err := s.FileCachePut("r1", "2026.07.9", "cfgA", map[string]string{"sha-viejo": "[]"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FileCachePut("r2", "2026.07.9", "cfgA", map[string]string{"sha-ajeno": "[]"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FileCachePrune("r1", "2026.08.2", 24*365*10*time.Hour); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if m, _ := s.FileCacheGet("r1", "2026.07.9", "cfgA", []string{"sha-viejo"}); len(m) != 0 {
+		t.Error("la poda debió barrer el rulepack viejo de r1")
+	}
+	if m, _ := s.FileCacheGet("r1", "2026.08.2", "cfgA", []string{"sha-con-eval"}); len(m) != 1 {
+		t.Error("la poda barrió el rulepack vigente de r1")
+	}
+	if m, _ := s.FileCacheGet("r2", "2026.07.9", "cfgA", []string{"sha-ajeno"}); len(m) != 1 {
+		t.Error("la poda tocó a otro repo: es POR REPO a propósito")
+	}
+}
+
+// Cientos de shas en una sola consulta: json_each los expande dentro de
+// SQLite sin concatenar SQL ni chocar con el tope de parámetros.
+func TestFileCacheGetPorTandas(t *testing.T) {
+	s := bd(t)
+	if err := s.UpsertRepo("r1", "", "uno"); err != nil {
+		t.Fatal(err)
+	}
+	lote := map[string]string{}
+	var shas []string
+	for i := 0; i < 950; i++ {
+		sha := fmt.Sprintf("sha-%04d", i)
+		lote[sha] = "[]"
+		shas = append(shas, sha)
+	}
+	if err := s.FileCachePut("r1", "v", "c", lote); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.FileCacheGet("r1", "v", "c", shas)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 950 {
+		t.Fatalf("se perdieron aciertos entre tandas: %d de 950", len(got))
+	}
+}
+
+// Un hallazgo del modelo NUNCA se guarda como bloqueante, diga lo que diga el
+// struct que llega.
+//
+// P2 se defiende en dos sitios: shadow.verify() construye el hallazgo con
+// Blocking:false, y este INSERT escribe blocking = 0 literal. La segunda capa
+// existe porque la primera está a un descuido de distancia — basta que alguien
+// copie el campo del modelo "para no perder información".
+//
+// Esta prueba pide la segunda capa a propósito: se le pasa un hallazgo marcado
+// como bloqueante y se comprueba que en la base entra como aviso. Se escribió
+// después de descubrir que la prueba de extremo a extremo NO cazaba una
+// regresión en verify() sola, porque este literal la tapaba: cada capa necesita
+// su propio control.
+func TestUnHallazgoDelModeloNuncaSeGuardaComoBloqueante(t *testing.T) {
+	s := bd(t)
+	repoID := CanonicalRepoID("local/prueba")
+	if err := s.UpsertRepo(repoID, "", "prueba"); err != nil {
+		t.Fatal(err)
+	}
+	guardarRun(t, s, "run-llm", repoID, "pass", nil)
+
+	insistente := finding.Finding{
+		Engine: "llm", RuleKey: "ad-hoc", Pillar: finding.Security,
+		Severity: finding.Error, Blocking: true, // el modelo insiste
+		File: "app/x.py", Line: 1, Message: "el modelo dice que esto es gravísimo",
+		Source: finding.LLM, Verified: true,
+	}
+	if err := s.SaveLLMFindings("run-llm", []finding.Finding{insistente}); err != nil {
+		t.Fatal(err)
+	}
+
+	var blocking int
+	var source string
+	err := s.db.QueryRow(
+		`SELECT blocking, source FROM findings WHERE run_id = ? AND engine = 'llm'`,
+		"run-llm").Scan(&blocking, &source)
+	if err != nil {
+		t.Fatalf("el hallazgo del modelo no se guardó: %v", err)
+	}
+	if blocking != 0 {
+		t.Error("un hallazgo del modelo entró a la base como BLOQUEANTE.\n" +
+			"El modelo aconseja, no decide: con esto, un modelo que se pone " +
+			"nervioso empieza a rechazar commits buenos y nadie sabe por qué.")
+	}
+	if source != "llm" {
+		t.Errorf("el hallazgo se guardó con source=%q y debe ser 'llm': "+
+			"si se confunde con uno determinista, deja de poder filtrarse", source)
+	}
+}

@@ -1,0 +1,562 @@
+# =============================================================================
+# PILAR DATOS
+# Tu set actual cubre rendimiento y disponibilidad (squawk, N+1, SELECT *).
+# Esto añade las dos dimensiones que faltaban: corrección y cumplimiento.
+# =============================================================================
+rules:
+
+# ---------------------------------------------------------------------------
+# DINERO EN PUNTO FLOTANTE — corrupción silenciosa de datos financieros
+# ---------------------------------------------------------------------------
+  - id: python-dinero-float
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Importe monetario en float. 0.1 + 0.2 != 0.3. Usa Decimal, o enteros en
+      la unidad mínima (centavos).
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: '$VAR: float = ...'
+          - pattern: '$VAR: float'
+          - pattern: $VAR = float(...)
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|sueldo|pago|payment|refund|descuento|discount).*
+
+  - id: ts-dinero-float
+    # curación 2026-08-11: '$VAR: number' suelto no parsea como ninguna
+    # construcción real de TS y la regla nació muerta (0 matches en cualquier
+    # forma del lenguaje; lo descubrió el corpus de --test). Las anotaciones de
+    # tipo sólo se cazan dentro de una construcción anfitriona: declaración,
+    # parámetro o arrow. Sólo TS: en JS puro no hay anotaciones de tipo.
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      Importe monetario en number. Usa enteros en centavos, o una librería
+      decimal (dinero.js, decimal.js).
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: 'const $VAR: number = $X'
+          - pattern: 'let $VAR: number = $X'
+          - pattern: 'var $VAR: number = $X'
+          - pattern: 'function $F(..., $VAR: number, ...) { ... }'
+          - pattern: '($VAR: number) => $BODY'
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)^(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|sueldo|pago|payment|refund|descuento|discount).*
+
+  - id: java-dinero-float
+    languages: [java]
+    severity: ERROR
+    message: "Importe monetario en double/float. Usa BigDecimal."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: double $VAR = ...;
+          - pattern: float $VAR = ...;
+          - pattern: private double $VAR;
+          - pattern: private float $VAR;
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|pago|payment|refund).*
+
+  - id: csharp-dinero-float
+    languages: [csharp]
+    severity: ERROR
+    message: "Importe monetario en double/float. Usa decimal."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: double $VAR = $X;
+          - pattern: float $VAR = $X;
+          - pattern: double $VAR;
+          - pattern: float $VAR;
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|salary|pago|payment|refund).*
+
+  - id: go-dinero-float
+    languages: [generic]
+    paths:
+      include: ["*.go"]
+    severity: ERROR
+    message: "Importe monetario en float64. Usa int64 en centavos o shopspring/decimal."
+    metadata: { pilar: datos }
+    # curación: el campo de struct suelto no parsea como patrón go; regex
+    patterns:
+      - pattern-regex: '(?im)^\s*\w*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|pago|payment|refund)\w*\s+float(32|64)\b'
+
+# ---------------------------------------------------------------------------
+# FECHA SIN ZONA HORARIA — el bug que aparece en producción y no en local
+# ---------------------------------------------------------------------------
+  - id: python-datetime-naive
+    languages: [python]
+    severity: ERROR
+    message: >-
+      datetime sin zona horaria. Usa datetime.now(timezone.utc). utcnow() está
+      además deprecado desde 3.12.
+    metadata: { pilar: datos }
+    pattern-either:
+      - pattern: datetime.now()
+      - pattern: datetime.datetime.now()
+      - pattern: datetime.utcnow()
+      - pattern: datetime.datetime.utcnow()
+      - pattern: datetime.fromtimestamp($X)
+
+  - id: java-datetime-naive
+    languages: [java]
+    severity: ERROR
+    message: "Usa Instant o ZonedDateTime, no LocalDateTime.now() ni new Date()."
+    metadata: { pilar: datos }
+    pattern-either:
+      - pattern: new Date()
+      - pattern: LocalDateTime.now()
+      - pattern: Calendar.getInstance()
+
+  - id: csharp-datetime-naive
+    languages: [csharp]
+    severity: ERROR
+    message: "DateTime.Now depende del huso del servidor. Usa DateTimeOffset.UtcNow."
+    metadata: { pilar: datos }
+    pattern-either:
+      - pattern: DateTime.Now
+      - pattern: DateTime.Today
+      # NOTA curación: DateTime.UtcNow se quitó — ya es UTC; marcarlo era FP.
+
+  - id: ts-datetime-naive
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      new Date(string) sin zona horaria parsea distinto según el navegador.
+      Usa ISO 8601 con offset explícito.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern: new Date($S)
+      - metavariable-regex:
+          metavariable: $S
+          regex: ^"[0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9:]+)?"$
+
+# ---------------------------------------------------------------------------
+# PII EN LOGS Y TELEMETRÍA — no es calidad, es LFPDPPP y GDPR
+# ---------------------------------------------------------------------------
+  - id: log-dato-sensible
+    languages: [python, javascript, typescript, go, java, csharp]
+    severity: ERROR   # SUBIDO desde aviso: es incumplimiento normativo
+    message: >-
+      Dato sensible hacia los logs. Los logs se replican a agregadores,
+      backups y proveedores externos, y suelen quedar fuera del alcance del
+      borrado. Enmascara en el logger, no en cada llamada.
+    metadata: { pilar: datos, cwe: "CWE-532", owasp: "A09:2021" }
+    # curación: los patrones de f-string (sólo Python) y template literal
+    # (sólo JS/TS) no parseaban en los demás lenguajes listados y la regla
+    # ENTERA llevaba muerta desde el primer día — semgrep exige que cada
+    # patrón parsee en todos los lenguajes de la regla. Además eran
+    # redundantes: $VAR liga también el literal completo como argumento, y la
+    # metavariable-regex inspecciona su TEXTO fuente, así que
+    # log.info(f"pwd {password}") ya cae por el patrón genérico.
+    patterns:
+      - pattern-either:
+          - pattern: $LOG.$LEVEL(..., $VAR, ...)
+          - pattern: console.$LEVEL(..., $VAR, ...)
+      # $LOG y $LEVEL restringidos a lo que PARECE un logger haciendo logging.
+      # Medido al resucitar la regla contra este mismo repo: sin restringir,
+      # disparaba sobre fmt.Println("...token restringido...") — salida de
+      # consola de un CLI —, sobre t.Error("...compuerta de secretos") en los
+      # tests, y sobre Sentry.setUser({email}). Doce bloqueos, doce falsos.
+      # El vector real es un LOGGER recibiendo un dato sensible, no cualquier
+      # objeto recibiendo prosa que menciona la palabra "token".
+      - metavariable-regex:
+          metavariable: $LOG
+          regex: (?i)(^|\.)(log|logger|logging|slog|zap|logrus|winston|pino|bunyan)$
+      - metavariable-regex:
+          metavariable: $LEVEL
+          regex: ^(debug|info|warn|warning|error|err|critical|fatal|trace|log|exception|Printf|Println|Print|Debug|Info|Warn|Error|Fatal)$
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(password|passwd|pwd|secret|token|api_?key|authorization|cookie|session|ssn|curp|rfc|credit_?card|card_?number|cvv|iban|clabe|email|phone|telefono|address|direccion|birth|nacimiento|dni|passport).*
+
+  - id: pii-en-telemetria
+    # curación: los objetos literales de abajo sólo parsean en python/js/ts, y
+    # listar go/java/csharp mataba la regla ENTERA en todos. Esos tres nunca
+    # estuvieron cubiertos de verdad: sus SDKs de telemetría tienen otra forma
+    # y estos patrones jamás los habrían cazado. La lista ahora dice la verdad.
+    #
+    # curación 2026-08-11: python TAMBIÉN estaba muerto en la combinación
+    # multi-lenguaje (0 matches; la misma regla en solo-python sí caza — lo
+    # destapó el corpus de --test). Python vive ahora en pii-en-telemetria-py,
+    # con los patrones en su dialecto (sentry_sdk, claves como string).
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      PII enviada a un proveedor de telemetría o analítica. Es una
+      transferencia a un tercero: requiere base legal y aparecer en el aviso
+      de privacidad.
+    metadata: { pilar: datos, cwe: "CWE-359" }
+    patterns:
+      - pattern-either:
+          - pattern: Sentry.$M(..., $VAR, ...)
+          - pattern: '$S.setUser({..., $KEY: $VAR, ...})'
+          - pattern: 'analytics.track(..., {..., $KEY: $VAR, ...})'
+          - pattern: '$MIX.track(..., {..., $KEY: $VAR, ...})'
+          - pattern: 'posthog.capture(..., {..., $KEY: $VAR, ...})'
+          - pattern: '$DD.addUserAction(..., {..., $KEY: $VAR, ...})'
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(email|phone|telefono|ssn|curp|rfc|address|direccion|name|nombre|birth|card|iban|clabe|dni).*
+
+  - id: pii-en-telemetria-py
+    # La pata python de pii-en-telemetria, en regla propia: en la combinación
+    # multi-lenguaje estos patrones producían 0 matches en python (el mismo
+    # fenómeno de des-unificación que partió escrituras-sin-transaccion). Los
+    # SDKs además difieren: en python es sentry_sdk.set_user, no $S.setUser.
+    languages: [python]
+    severity: ERROR
+    message: >-
+      PII enviada a un proveedor de telemetría o analítica. Es una
+      transferencia a un tercero: requiere base legal y aparecer en el aviso
+      de privacidad.
+    metadata: { pilar: datos, cwe: "CWE-359" }
+    patterns:
+      - pattern-either:
+          - pattern: 'sentry_sdk.set_user({..., $KEY: $VAR, ...})'
+          - pattern: 'analytics.track(..., {..., $KEY: $VAR, ...})'
+          - pattern: '$MIX.track(..., {..., $KEY: $VAR, ...})'
+          - pattern: 'posthog.capture(..., {..., $KEY: $VAR, ...})'
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(email|phone|telefono|ssn|curp|rfc|address|direccion|name|nombre|birth|card|iban|clabe|dni).*
+
+  - id: pii-en-url
+    languages: [python, javascript, typescript, go, java, csharp]
+    severity: ERROR
+    message: >-
+      PII en query string. Queda en logs de proxy, CDN, referrer e historial
+      del navegador. Muévelo al cuerpo de la petición.
+    metadata: { pilar: datos, cwe: "CWE-598" }
+    patterns:
+      - pattern-regex: '["`''][^"`'']*[?&](email|token|password|ssn|curp|rfc|api_?key|access_?token|phone)=\$?\{?[A-Za-z_]'
+
+# ---------------------------------------------------------------------------
+# INTEGRIDAD TRANSACCIONAL
+# ---------------------------------------------------------------------------
+  # curación: era UNA regla para python/js/ts/go, pero el `with` del
+  # not-inside sólo parsea en Python y el `:=` sólo en Go — y semgrep exige
+  # que cada patrón parsee en TODOS los lenguajes de la regla, así que llevaba
+  # muerta desde el primer día en los cuatro. Partida en tres, cada una con la
+  # forma idiomática de "esto ya está en una transacción" de su lenguaje.
+  - id: escrituras-sin-transaccion
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Varias escrituras consecutivas fuera de una transacción. Si la segunda
+      falla, la primera queda aplicada y los datos quedan inconsistentes.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $DB.$M1(...)
+              ...
+              $DB.$M2(...)
+      - metavariable-regex:
+          metavariable: $M1
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      - metavariable-regex:
+          metavariable: $M2
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      # $CTX y no $DB a propósito: en Django la transacción es
+      # transaction.atomic() y las escrituras van por OTRO objeto; unificar
+      # receptores dejaba la exclusión fuera justo en el idioma más común.
+      - pattern-not-inside: |
+          with $CTX.transaction(...):
+            ...
+      - pattern-not-inside: |
+          with $CTX.atomic(...):
+            ...
+      - pattern-not-inside: |
+          $CTX.transaction(...)
+
+  - id: escrituras-sin-transaccion-ts
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Varias escrituras consecutivas fuera de una transacción. Si la segunda
+      falla, la primera queda aplicada y los datos quedan inconsistentes.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $DB.$M1(...)
+              ...
+              $DB.$M2(...)
+      - metavariable-regex:
+          metavariable: $M1
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      - metavariable-regex:
+          metavariable: $M2
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      # $ORM y no $DB: sequelize.transaction(async t => { t.create(...) })
+      # cambia el receptor a t dentro del callback; unificar receptores
+      # convertía el idioma correcto en falso positivo.
+      - pattern-not-inside: |
+          $ORM.transaction(...)
+      - pattern-not-inside: |
+          $ORM.$TRANSACTION(async ($TX) => { ... })
+
+  - id: escrituras-sin-transaccion-go
+    languages: [go]
+    severity: WARNING
+    message: >-
+      Varias escrituras consecutivas fuera de una transacción. Si la segunda
+      falla, la primera queda aplicada y los datos quedan inconsistentes.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $DB.$M1(...)
+              ...
+              $DB.$M2(...)
+      - metavariable-regex:
+          metavariable: $M1
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      - metavariable-regex:
+          metavariable: $M2
+          regex: ^(save|create|insert|update|delete|destroy|upsert|Create|Save|Update|Delete)$
+      # $CONN y no $DB: tras tx := db.Begin() las escrituras van por tx, no
+      # por db. La unificación de metavariables exigía el MISMO receptor y el
+      # idioma correcto de Go salía señalado como falso positivo (medido en el
+      # caso de prueba: la función CON Begin() disparaba igual que la que no).
+      - pattern-not-inside: |
+          $TX := $CONN.Begin()
+          ...
+      - pattern-not-inside: |
+          $TX, $ERR := $CONN.Begin()
+          ...
+      - pattern-not-inside: |
+          $CONN.Transaction(...)
+
+  - id: sql-truncate-o-drop
+    languages: [generic]
+    severity: ERROR
+    message: "TRUNCATE o DROP en código de aplicación. Debe vivir en una migración revisada."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-regex: (?i)\b(TRUNCATE\s+TABLE|DROP\s+(TABLE|DATABASE|SCHEMA))\b
+    paths:
+      exclude: ["**/migrations/**", "**/migrate/**", "**/*_test.*", "**/test/**"]
+
+# ---------------------------------------------------------------------------
+# FIXTURES Y SEEDS CON DATOS REALES
+# ---------------------------------------------------------------------------
+  - id: fixtures-datos-reales
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      Dato personal con aspecto real en fixtures o seeds. Usa dominios
+      reservados (example.com), RFC/CURP sintéticos y números de tarjeta de
+      prueba.
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-either:
+          - pattern-regex: '[a-zA-Z0-9._%+-]+@(?!example\.(com|org|net)|test\.|localhost|invalid)[a-zA-Z0-9.-]+\.(com|mx|org|net|io|es)'
+          - pattern-regex: '\b4[0-9]{12}(?:[0-9]{3})?\b'
+          - pattern-regex: '\b(\+?52)?[ -]?[0-9]{3}[ -]?[0-9]{3}[ -]?[0-9]{4}\b'
+    paths:
+      include:
+        - "**/fixtures/**"
+        - "**/seeds/**"
+        - "**/seed/**"
+        - "**/factories/**"
+        - "**/testdata/**"
+        - "**/*.fixture.*"
+        - "**/*.seed.*"
+
+# ---------------------------------------------------------------------------
+# N+1 — complementa tus reglas existentes con Java y C#
+# ---------------------------------------------------------------------------
+  - id: java-orm-en-bucle
+    languages: [java]
+    severity: WARNING
+    message: "Consulta dentro de bucle (N+1). Usa fetch join o carga en lote."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-inside: |
+          for (...) { ... }
+      - pattern-either:
+          - pattern: $REPO.findBy$X(...)
+          - pattern: $REPO.getOne(...)
+          - pattern: $EM.find(...)
+
+  - id: csharp-orm-en-bucle
+    languages: [csharp]
+    severity: WARNING
+    message: "Consulta dentro de bucle (N+1). Usa Include o carga en lote."
+    metadata: { pilar: datos }
+    patterns:
+      - pattern-inside: |
+          foreach ($T $V in $COL) { ... }
+      - pattern-either:
+          - pattern: $CTX.$SET.FirstOrDefault(...)
+          - pattern: $CTX.$SET.Where(...).ToList()
+          - pattern: await $CTX.$SET.FindAsync(...)
+
+
+  # --- DDL DE BASE DE DATOS Y POSTGRESQL LOCKS ---
+  - id: pg-create-index-sin-concurrently
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "CREATE INDEX sin CONCURRENTLY — bloquea escrituras en toda la tabla (ACCESS EXCLUSIVE)"
+    metadata:
+      pillar: data
+      why: "En tablas con tráfico, un índice sin CONCURRENTLY detiene todas las escrituras y genera caídas de servicio."
+      fix_hint: "Usa 'CREATE INDEX CONCURRENTLY' fuera de transacciones BEGIN/COMMIT."
+    patterns:
+      - pattern-regex: '(?im)^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+(?!CONCURRENTLY\b)'
+
+  - id: pg-add-column-not-null-sin-default
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ADD COLUMN NOT NULL sin DEFAULT — falla en tablas no vacías y bloquea la tabla"
+    metadata:
+      pillar: data
+      why: "Agregar una columna NOT NULL sin valor por defecto falla inmediatamente si la tabla contiene filas."
+      fix_hint: "Agrega un DEFAULT o agrega la columna como nullable primero, rellena los datos y aplica NOT NULL."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+[^;]+\bNOT\s+NULL\b(?!\s+DEFAULT\b)'
+
+  - id: pg-add-constraint-sin-not-valid
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ADD CONSTRAINT FOREIGN KEY sin NOT VALID — escaneo bloqueante de tabla completa"
+    metadata:
+      pillar: data
+      why: "Validar una foreign key al momento de crearla adquiere lock SHARE ROW EXCLUSIVE sobre ambas tablas."
+      fix_hint: "Usa 'ADD CONSTRAINT ... NOT VALID' y luego valida con 'VALIDATE CONSTRAINT' en un paso separado."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ADD\s+CONSTRAINT\s+\w+\s+FOREIGN\s+KEY\s*\([^)]+\)\s*REFERENCES\s+[^;]+;'
+      - pattern-not-regex: '(?i)NOT\s+VALID'
+
+  - id: pg-drop-table-column
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+      exclude: ["*.down.sql", "*_down.sql", "*_rollback.sql"]
+    severity: ERROR
+    message: "DROP TABLE o DROP COLUMN destructivo en migración"
+    metadata:
+      pillar: data
+      why: "Eliminar tablas o columnas en migraciones activas rompe código en ejecución y destruye datos."
+      fix_hint: "Depreca la columna primero a nivel de aplicación antes de eliminarla del esquema físico."
+    patterns:
+      - pattern-regex: '(?im)(^\s*DROP\s+TABLE\s+\w+|ALTER\s+TABLE\s+\w+\s+DROP\s+COLUMN\s+\w+)'
+
+  - id: pg-alter-column-type
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ALTER COLUMN TYPE — reescribe la tabla completa y adquiere ACCESS EXCLUSIVE"
+    metadata:
+      pillar: data
+      why: "Cambiar tipos de columna reescribe todas las páginas en disco bloqueando consultas concurrentes."
+      fix_hint: "Crea una columna nueva, migra los datos en lotes y cambia el puntero en la aplicación."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ALTER\s+COLUMN\s+\w+\s+TYPE\s+[^;]+;'
+
+  - id: pg-add-bigserial
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ADD COLUMN BIGSERIAL — adquiere lock exclusivo y reescribe índices"
+    metadata:
+      pillar: data
+      why: "BIGSERIAL reescribe la tabla entera. Usa GENERATED ALWAYS AS IDENTITY."
+      fix_hint: "Usa IDENTITY o genera secuencias desacopladas."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+\w+\s+BIGSERIAL'
+
+  - id: pg-index-concurrently-in-tx
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "CREATE INDEX CONCURRENTLY dentro de transacción — inválido en PostgreSQL"
+    metadata:
+      pillar: data
+      why: "PostgreSQL rechaza CREATE INDEX CONCURRENTLY dentro de un bloque BEGIN...COMMIT."
+      fix_hint: "Ejecuta la migración de índice concurrente fuera de bloques transaccionales."
+    patterns:
+      - pattern-regex: '(?is)\bBEGIN\s*;.*?CREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY\b.*?COMMIT\s*;'
+
+  - id: pg-rename-column
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "RENAME COLUMN sin período de compatibilidad"
+    metadata:
+      pillar: data
+      why: "Renombrar columnas rompe instancias activas de la aplicación durante el despliegue."
+      fix_hint: "Usa patrón expand-and-contract: agrega nueva columna, sincroniza y luego depreca la vieja."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+RENAME\s+COLUMN\s+\w+\s+TO\s+\w+'
+
+  - id: pg-add-constraint-unique
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "ADD CONSTRAINT UNIQUE sin índice concurrente"
+    metadata:
+      pillar: data
+      why: "Crear una restricción UNIQUE directamente bloquea toda la tabla."
+      fix_hint: "Crea primero el índice con CREATE UNIQUE INDEX CONCURRENTLY y luego asocia con USING INDEX."
+    patterns:
+      - pattern-regex: '(?im)ALTER\s+TABLE\s+\w+\s+ADD\s+CONSTRAINT\s+\w+\s+UNIQUE\s*\([^)]+\)(?!\s*USING\s+INDEX)'
+
+  - id: sql-seed-password
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "Contraseña hardcodeada en script o semilla SQL"
+    metadata:
+      pillar: security
+      why: "Credenciales en archivos de migración o semillas quedan expuestas en el repositorio."
+      fix_hint: "Usa variables de entorno o almacenes de secretos."
+    patterns:
+      - pattern-regex: '(?im)INSERT\s+INTO\s+\w+.*VALUES\s*\(.*(password|secret|pass|passwd|superp@ss).*'
+
+  - id: pg-grant-all-privileges
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "GRANT ALL PRIVILEGES excesivo — violación de mínimos privilegios"
+    metadata:
+      pillar: security
+      why: "Otorgar ALL PRIVILEGES a usuarios de aplicación permite DDL y administración indeida."
+      fix_hint: "Otorga exclusivamente permisos SELECT, INSERT, UPDATE, DELETE según necesidad."
+    patterns:
+      - pattern-regex: '(?im)GRANT\s+ALL(\s+PRIVILEGES)?\s+ON\s+'
+
+  - id: pg-money-type-disallowed
+    languages: [generic]
+    paths:
+      include: ["*.sql"]
+    severity: ERROR
+    message: "Tipo problemático 'money' en PostgreSQL"
+    metadata:
+      pillar: data
+      why: "El tipo money tiene precisión fija, no maneja monedas múltiples y depende de locale."
+      fix_hint: "Usa numeric(p, s) o enteros en la unidad mínima (centavos)."
+    patterns:
+      - pattern-regex: '(?im)ADD\s+COLUMN\s+\w+\s+money\b'

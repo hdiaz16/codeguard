@@ -1,0 +1,5 @@
+.githooks/* text eol=lf
+# El checksum de las migraciones (schema_migrations.checksum) se calcula sobre
+# el SQL normalizado a LF; fijar eol=lf hace que dos checkouts del mismo commit
+# embeban bytes identicos y ningun build honesto denuncie divergencia falsa.
+migrations/*.sql text eol=lf

@@ -1,0 +1,143 @@
+rules:
+  - id: ts-eval
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "eval() sobre datos — inyección de código"
+    metadata:
+      cwe: "CWE-95"
+      owasp: "A03:2021"
+      pillar: security
+      why: "eval ejecuta cualquier cadena como código: entrada de usuario = ejecución remota."
+      fix_hint: "Usa JSON.parse para datos, o un mapa de funciones permitidas."
+    pattern: "eval(...)"
+
+# (ts-innerhtml-var migró a seguridad-ext.yaml, subido a ERROR con más vectores)
+
+  - id: python-subprocess-shell
+    languages: [python]
+    severity: ERROR
+    message: "subprocess con shell=True — inyección de comandos"
+    metadata:
+      cwe: "CWE-78"
+      owasp: "A03:2021"
+      pillar: security
+      why: "Con shell=True cualquier dato en el comando puede ejecutar lo que quiera en el sistema."
+      fix_hint: "Pasa el comando como lista de argumentos y quita shell=True."
+    pattern: "subprocess.$F(..., shell=True, ...)"
+
+  - id: python-yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: "yaml.load sin Loader seguro — deserialización peligrosa"
+    metadata:
+      cwe: "CWE-502"
+      owasp: "A08:2021"
+      pillar: security
+      why: "yaml.load puede instanciar objetos arbitrarios: un YAML malicioso ejecuta código."
+      fix_hint: "Usa yaml.safe_load(...)."
+    patterns:
+      - pattern: "yaml.load($X)"
+
+# (python-pickle-load migró a seguridad-ext.yaml, subido a ERROR + dill/joblib/torch)
+
+  - id: go-sql-concat
+    languages: [go]
+    severity: ERROR
+    message: "Consulta SQL construida por concatenación — inyección SQL"
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      pillar: security
+      why: "Concatenar datos en el SQL permite inyectar consultas arbitrarias."
+      fix_hint: "Usa placeholders: db.Query(\"... WHERE id = ?\", id)."
+    patterns:
+      - pattern: '$DB.Query("..." + $X, ...)'
+
+  # La de arriba sólo ve la forma de libro de texto —todo en una línea—, y en
+  # código real la consulta se arma en una variable a lo largo de varias.
+  # Se descubrió justo así: un exportador con cuatro filtros concatenados pasó
+  # el análisis sin una sola queja. Esta usa seguimiento de flujo: marca la
+  # concatenación de algo que no es literal y la sigue hasta la base de datos.
+  - id: go-sql-concat-en-variable
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    message: "Consulta SQL armada por concatenación en una variable — inyección SQL"
+    metadata:
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      pillar: security
+      why: >-
+        Da igual que la concatenación esté a veinte líneas del Query: lo que
+        llega a la base de datos es la cadena ya montada, y quien controle
+        cualquiera de esos trozos controla la consulta entera.
+      fix_hint: >-
+        Deja los huecos como placeholders y pasa los valores aparte:
+        db.Query("... WHERE repo_id = ? AND created_at >= ?", repo, desde).
+        La cláusula sigue siendo condicional; lo que se mueve son los valores.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $Q + $X
+              - pattern: $Q += $X
+          # Pegar texto fijo no es peligroso: " ORDER BY fecha DESC".
+          - pattern-not: $Q + "..."
+          - pattern-not: $Q += "..."
+          # Un entero formateado tampoco puede inyectar nada. Va excluido aquí
+          # y no como sanitizer: cuando la concatenación ES el origen, sanear
+          # una parte no le quita el marcado al conjunto.
+          - pattern-not: $Q + strconv.Itoa(...)
+          - pattern-not: $Q += strconv.Itoa(...)
+          - pattern-not: $Q + strconv.FormatInt(...)
+          - pattern-not: $Q += strconv.FormatInt(...)
+          - pattern-not: $Q + strconv.Quote(...)
+          - pattern-not: $Q += strconv.Quote(...)
+          - pattern-not: $Q + fmt.Sprintf("%d", ...)
+          - pattern-not: $Q += fmt.Sprintf("%d", ...)
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $DB.Query($SQL, ...)
+          - pattern: $DB.QueryRow($SQL, ...)
+          - pattern: $DB.QueryContext($CTX, $SQL, ...)
+          - pattern: $DB.QueryRowContext($CTX, $SQL, ...)
+          - pattern: $DB.Exec($SQL, ...)
+          - pattern: $DB.ExecContext($CTX, $SQL, ...)
+          - pattern: $DB.Prepare($SQL)
+
+  - id: csharp-binaryformatter
+    languages: [csharp]
+    severity: ERROR
+    message: "BinaryFormatter — deserialización insegura prohibida"
+    metadata:
+      cwe: "CWE-502"
+      owasp: "A08:2021"
+      pillar: security
+      why: "BinaryFormatter es vector conocido de ejecución remota; Microsoft lo declaró obsoleto e inseguro."
+      fix_hint: "Usa System.Text.Json o protobuf."
+    patterns:
+      - pattern: "new BinaryFormatter(...)"
+
+  - id: cors-wildcard
+    languages: [typescript, javascript, python, csharp, go, java]
+    severity: WARNING
+    message: "CORS con comodín * — cualquier origen puede llamar a esta API"
+    metadata:
+      cwe: "CWE-942"
+      owasp: "A05:2021"
+      pillar: security
+      why: "OWASP A02 2025 (configuración insegura): un origen comodín anula la protección del navegador."
+      fix_hint: "Lista explícita de orígenes permitidos por entorno."
+    patterns:
+      - pattern-regex: 'Access-Control-Allow-Origin[\"'']?\s*[:,]\s*[\"'']\*'
+
+  - id: ts-jwt-decode-no-verify
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "JWT decodificado sin verificar la firma"
+    metadata:
+      cwe: "CWE-347"
+      owasp: "A01:2021"
+      pillar: security
+      why: "decode sin verify acepta cualquier token fabricado: autenticación rota (BOLA)."
+      fix_hint: "Usa jwt.verify(token, secret) — nunca jwt.decode para decisiones de acceso."
+    pattern: "jwt.decode(...)"

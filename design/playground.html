@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>CodeGuard — 14 orbes para decidir</title>
+<style>
+  body {
+    margin: 0; min-height: 100vh; background: #16110e;
+    font-family: "Segoe UI", sans-serif; color: #d9cbc0;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 26px 16px 40px;
+  }
+  h1 { font-weight: 300; font-size: 20px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 20px; color: #8d7f74; font-size: 13px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 18px; justify-content: center; max-width: 1400px; }
+  .cell {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    background: #1d1713; border-radius: 18px; padding: 14px 16px 12px;
+  }
+  .cell b { font-size: 13px; color: #efe3d9; font-weight: 600; }
+  .cell span { font-size: 11px; color: #a08f82; max-width: 180px; text-align: center; }
+  canvas { width: 180px; height: 180px; }
+  .controls {
+    display: flex; gap: 8px; margin-top: 22px; flex-wrap: wrap; justify-content: center;
+    position: sticky; bottom: 12px; background: #16110ecc; padding: 10px; border-radius: 999px;
+    backdrop-filter: blur(6px);
+  }
+  button {
+    background: #2a221c; border: 1px solid #3d322a; color: #d9cbc0;
+    border-radius: 999px; padding: 8px 18px; font-size: 13px; cursor: pointer; font-family: inherit;
+  }
+  button:hover { border-color: #e0876a; color: #fff; }
+  button.active { background: #e0876a; border-color: #e0876a; color: #211611; font-weight: 600; }
+</style>
+</head>
+<body>
+  <h1>Catorce orbes — elige uno</h1>
+  <p class="sub">Los botones (abajo) cambian el estado de todos a la vez.</p>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="controls" id="controls">
+    <button data-s="idle" class="active">idle</button>
+    <button data-s="working">working</button>
+    <button data-s="pass">pass</button>
+    <button data-s="blocked">blocked</button>
+    <button data-s="offline">offline</button>
+    <button data-s="__cycle">▶ ciclar</button>
+  </div>
+
+<script>
+const STATES = {
+  idle:    { a:"#ffe3d3", b:"#e2896b", c:"#8a4630", energy:.25 },
+  working: { a:"#ffe9c2", b:"#e8a13d", c:"#9a5f10", energy:1.0 },
+  pass:    { a:"#ddf5e5", b:"#57b97e", c:"#1f6b42", energy:.35 },
+  blocked: { a:"#ffd4c9", b:"#d9503c", c:"#7e2114", energy:.75 },
+  offline: { a:"#aeb6bd", b:"#5c656d", c:"#2e353b", energy:.08 },
+};
+let TARGET = STATES.idle;
+
+const hex = h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)];
+const lerp = (x,y,t) => x + (y-x)*t;
+const lerp3 = (u,v,t) => [lerp(u[0],v[0],t), lerp(u[1],v[1],t), lerp(u[2],v[2],t)];
+const css = (c,a=1) => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+
+const grid = document.getElementById("grid");
+function orb(name, desc, draw, init) {
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  cell.innerHTML = `<b>${name}</b><canvas width="360" height="360"></canvas><span>${desc}</span>`;
+  grid.appendChild(cell);
+  const g = cell.querySelector("canvas").getContext("2d");
+  const S = 360, C = S/2;
+  const mem = init ? init() : {};
+  let A = hex(TARGET.a), B = hex(TARGET.b), D = hex(TARGET.c), E = TARGET.energy;
+  let t = 0, last = performance.now();
+  (function loop(now) {
+    const dt = Math.min((now-last)/1000, .05); last = now;
+    const k = 1 - Math.pow(.002, dt);
+    A = lerp3(A, hex(TARGET.a), k); B = lerp3(B, hex(TARGET.b), k);
+    D = lerp3(D, hex(TARGET.c), k); E = lerp(E, TARGET.energy, k);
+    t += dt * (0.4 + E * 1.4);
+    try { g.clearRect(0,0,S,S); draw(g, t, S, C, {A,B,D,E,dt}, mem); }
+    catch (err) { console.error(name, err); }
+    requestAnimationFrame(loop);
+  })(performance.now());
+}
+
+const halo = (g,S,x,y,B,r,a=.16) => {
+  const h = g.createRadialGradient(x,y,r*.6, x,y,r*2);
+  h.addColorStop(0, css(B,a)); h.addColorStop(1, css(B,0));
+  g.fillStyle = h; g.fillRect(0,0,S,S);
+};
+const body3 = (g,x,y,R,A,B) => {
+  const gr = g.createRadialGradient(x-R*.3, y-R*.35, R*.1, x, y, R*1.25);
+  gr.addColorStop(0, css(A,.97)); gr.addColorStop(.5, css(lerp3(A,B,.45),.95)); gr.addColorStop(1, css(B,.93));
+  g.fillStyle = gr;
+};
+
+// ── 1 · AURORA ──
+orb("1 · AURORA", "esfera serena, colores fluyendo dentro", (g,t,S,C,{A,B,D}) => {
+  const R = S*.26 * (1 + Math.sin(t*.9)*.03);
+  halo(g,S,C,C,B,R);
+  g.save(); g.beginPath(); g.arc(C,C,R,0,7); g.clip();
+  g.fillStyle = css(B); g.fillRect(0,0,S,S);
+  for (const [dx,dy,r,col,al] of [
+    [Math.cos(t*.50)*R*.55, Math.sin(t*.38)*R*.55, R*1.15, A, .9],
+    [Math.cos(t*.32+2.2)*R*.6, Math.sin(t*.47+1.1)*R*.55, R*.95, lerp3(A,B,.5), .75],
+    [Math.cos(t*.44+4.3)*R*.55, Math.sin(t*.30+3.0)*R*.6, R, D, .6]]) {
+    const cg = g.createRadialGradient(C+dx,C+dy,0,C+dx,C+dy,r);
+    cg.addColorStop(0, css(col,al)); cg.addColorStop(1, css(col,0));
+    g.fillStyle = cg; g.fillRect(0,0,S,S);
+  }
+  const hl = g.createRadialGradient(C-R*.35,C-R*.45,0,C-R*.35,C-R*.45,R);
+  hl.addColorStop(0,"rgba(255,255,255,.32)"); hl.addColorStop(1,"rgba(255,255,255,0)");
+  g.fillStyle = hl; g.fillRect(0,0,S,S);
+  g.restore();
+});
+
+// ── 2 · LAVA ──
+orb("2 · LAVA", "gotas que orbitan y se funden", (g,t,S,C,{A,B}) => {
+  const R = S*.21 * (1 + Math.sin(t*.8)*.03);
+  halo(g,S,C,C,B,R);
+  for (const [dx,dy,r,al] of [
+    [0,0,R,1],
+    [Math.cos(t*.55)*R*.95, Math.sin(t*.42)*R*.95, R*.5,.95],
+    [Math.cos(t*.36+2.6)*R*1.05, Math.sin(t*.5+1.4)*R*.9, R*.4,.95],
+    [Math.cos(t*.47+4.5)*R*.85, Math.sin(t*.33+3.4)*R, R*.34,.9]]) {
+    const x=C+dx, y=C+dy;
+    const cg = g.createRadialGradient(x-r*.3,y-r*.35,r*.1,x,y,r*1.35);
+    cg.addColorStop(0, css(A,.96*al)); cg.addColorStop(.55, css(lerp3(A,B,.45),.9*al)); cg.addColorStop(1, css(B,0));
+    g.fillStyle = cg; g.beginPath(); g.arc(x,y,r*1.35,0,7); g.fill();
+  }
+});
+
+// ── 3 · MEDUSA ──
+orb("3 · MEDUSA", "membrana que ondula y flota", (g,t,S,C,{A,B,E}) => {
+  const R = S*.23 * (1 + Math.sin(t*.7)*.04);
+  const cy = C + Math.sin(t*.5)*S*.03;
+  halo(g,S,C,cy,B,R);
+  const N=16, pts=[];
+  for (let i=0;i<N;i++){
+    const th=i/N*Math.PI*2;
+    const w=Math.sin(th*3+t*1.3)*.5+Math.sin(th*5-t*.9)*.3+Math.sin(th*2+t*.6)*.4;
+    const r=R*(1+w*(.05+E*.06));
+    pts.push([C+Math.cos(th)*r, cy+Math.sin(th)*r*.94]);
+  }
+  g.beginPath();
+  for(let i=0;i<N;i++){const p0=pts[i],p1=pts[(i+1)%N];const mx=(p0[0]+p1[0])/2,my=(p0[1]+p1[1])/2;i===0?g.moveTo(mx,my):g.quadraticCurveTo(p0[0],p0[1],mx,my);}
+  const pl=pts[0],pp=pts[N-1];
+  g.quadraticCurveTo(pp[0],pp[1],(pp[0]+pl[0])/2,(pp[1]+pl[1])/2); g.closePath();
+  body3(g,C,cy,R,A,B); g.fill();
+  g.strokeStyle = css(lerp3(A,[255,255,255],.4),.25); g.lineWidth=2; g.stroke();
+});
+
+// ── 4 · HALO ──
+orb("4 · HALO", "anillos que emanan al respirar", (g,t,S,C,{A,B,E,dt},mem) => {
+  mem.rings = mem.rings || []; mem.last = mem.last ?? 0;
+  const R = S*.12 * (1 + Math.sin(t*1.1)*.05);
+  if (t - mem.last > (1.6 - E*.9)) { mem.rings.push({r:R,a:.5}); mem.last = t; }
+  for (const ring of mem.rings) {
+    ring.r += dt*S*(.06+E*.1); ring.a -= dt*.22;
+    if (ring.a<=0) continue;
+    g.beginPath(); g.arc(C,C,ring.r,0,7);
+    g.strokeStyle = css(B,ring.a); g.lineWidth = 1.5; g.stroke();
+  }
+  while (mem.rings.length && mem.rings[0].a<=0) mem.rings.shift();
+  halo(g,S,C,C,B,R*1.6,.3);
+  body3(g,C,C,R,A,B); g.beginPath(); g.arc(C,C,R,0,7); g.fill();
+});
+
+// ── 5 · PULSO: discos translúcidos respirando desfasados ──
+orb("5 · PULSO", "capas de luz respirando desfasadas", (g,t,S,C,{A,B}) => {
+  for (let i=4;i>=1;i--){
+    const r = S*.09*i*(1+Math.sin(t*.9-i*.8)*.08);
+    g.beginPath(); g.arc(C,C,r,0,7);
+    g.fillStyle = css(B,.10+ .05*(4-i));
+    g.fill();
+  }
+  const R = S*.10*(1+Math.sin(t*.9)*.06);
+  body3(g,C,C,R,A,B); g.beginPath(); g.arc(C,C,R,0,7); g.fill();
+});
+
+// ── 6 · LUCIÉRNAGA: brillo que vaga y titila como vela ──
+orb("6 · LUCIÉRNAGA", "luz cálida que vaga y titila", (g,t,S,C,{A,B},mem) => {
+  mem.n = mem.n ?? Math.random()*100;
+  const flick = .8 + Math.sin(t*3.1+mem.n)*.07 + Math.sin(t*7.3)*.04;
+  const x = C + Math.sin(t*.35)*S*.06, y = C + Math.cos(t*.28)*S*.05;
+  const R = S*.14;
+  halo(g,S,x,y,B,R*1.3, .22*flick);
+  const gr = g.createRadialGradient(x,y,0,x,y,R*1.6);
+  gr.addColorStop(0, css(A,.95*flick)); gr.addColorStop(.4, css(lerp3(A,B,.5),.8*flick)); gr.addColorStop(1, css(B,0));
+  g.fillStyle = gr; g.beginPath(); g.arc(x,y,R*1.6,0,7); g.fill();
+});
+
+// ── 7 · ECLIPSE: media luna de luz girando alrededor ──
+orb("7 · ECLIPSE", "una luna de luz recorre la esfera", (g,t,S,C,{A,B,D}) => {
+  const R = S*.24*(1+Math.sin(t*.8)*.025);
+  halo(g,S,C,C,B,R);
+  g.beginPath(); g.arc(C,C,R,0,7);
+  g.fillStyle = css(lerp3(B,D,.5),.95); g.fill();
+  // la luz orbita: gradiente cuyo origen recorre el borde
+  const a = t*.55;
+  const lx = C+Math.cos(a)*R*.65, ly = C+Math.sin(a)*R*.65;
+  g.save(); g.beginPath(); g.arc(C,C,R,0,7); g.clip();
+  const gl = g.createRadialGradient(lx,ly,0,lx,ly,R*1.5);
+  gl.addColorStop(0, css(A,.95)); gl.addColorStop(.55, css(lerp3(A,B,.6),.5)); gl.addColorStop(1, css(B,0));
+  g.fillStyle = gl; g.fillRect(0,0,S,S);
+  g.restore();
+});
+
+// ── 8 · TINTA: gota que se estira y suelta gotitas ──
+orb("8 · TINTA", "gota densa que respira y gotea", (g,t,S,C,{A,B,dt},mem) => {
+  mem.drops = mem.drops || []; mem.last = mem.last ?? 0;
+  const R = S*.20;
+  const stretch = Math.max(0, Math.sin(t*.7)) ** 3;
+  halo(g,S,C,C,B,R);
+  // cuerpo: elipse que se estira hacia abajo
+  g.beginPath();
+  g.ellipse(C, C + stretch*R*.15, R*(1-stretch*.12), R*(1+stretch*.22), 0, 0, 7);
+  body3(g,C,C,R,A,B); g.fill();
+  if (stretch > .96 && t-mem.last > 2) { mem.drops.push({y: C+R*1.2, a:.8, r:R*.09}); mem.last = t; }
+  for (const d of mem.drops) {
+    d.y += dt*S*.25; d.a -= dt*.9;
+    if (d.a<=0) continue;
+    g.beginPath(); g.arc(C, d.y, d.r, 0, 7);
+    g.fillStyle = css(B, d.a); g.fill();
+  }
+  while (mem.drops.length && mem.drops[0].a<=0) mem.drops.shift();
+});
+
+// ── 9 · ÓRBITA: un satélite pequeño con estela ──
+orb("9 · ÓRBITA", "un satélite lento con estela", (g,t,S,C,{A,B,D}) => {
+  const R = S*.17*(1+Math.sin(t*.8)*.03);
+  halo(g,S,C,C,B,R);
+  body3(g,C,C,R,A,B); g.beginPath(); g.arc(C,C,R,0,7); g.fill();
+  const a = t*.8, or = R*1.9;
+  // estela
+  for (let i=1;i<=14;i++){
+    const aa = a - i*.09;
+    g.beginPath();
+    g.arc(C+Math.cos(aa)*or, C+Math.sin(aa)*or*.85, Math.max(.5, 4-(i*.28)), 0, 7);
+    g.fillStyle = css(B, .5*(1-i/15));
+    g.fill();
+  }
+  const sx = C+Math.cos(a)*or, sy = C+Math.sin(a)*or*.85;
+  const sg = g.createRadialGradient(sx,sy,0,sx,sy,9);
+  sg.addColorStop(0, css(A,.98)); sg.addColorStop(1, css(A,0));
+  g.fillStyle = sg; g.beginPath(); g.arc(sx,sy,9,0,7); g.fill();
+});
+
+// ── 10 · RESPIRO: la forma respira entre círculo y piedra ──
+orb("10 · RESPIRO", "morfa lentamente entre círculo y canto rodado", (g,t,S,C,{A,B}) => {
+  const R = S*.23;
+  const m = (Math.sin(t*.5)+1)/2; // 0=círculo 1=piedra
+  halo(g,S,C,C,B,R);
+  const N=18, pts=[];
+  for (let i=0;i<N;i++){
+    const th=i/N*Math.PI*2;
+    const w = (Math.sin(th*2+1.2)*.5 + Math.sin(th*3+.4)*.5) * m * .09;
+    const r=R*(1+w);
+    pts.push([C+Math.cos(th)*r, C+Math.sin(th)*r]);
+  }
+  g.beginPath();
+  for(let i=0;i<N;i++){const p0=pts[i],p1=pts[(i+1)%N];const mx=(p0[0]+p1[0])/2,my=(p0[1]+p1[1])/2;i===0?g.moveTo(mx,my):g.quadraticCurveTo(p0[0],p0[1],mx,my);}
+  const pl=pts[0],pp=pts[N-1];
+  g.quadraticCurveTo(pp[0],pp[1],(pp[0]+pl[0])/2,(pp[1]+pl[1])/2); g.closePath();
+  body3(g,C,C,R,A,B); g.fill();
+});
+
+// ── 11 · DUNA: nivel de líquido meciéndose dentro ──
+orb("11 · DUNA", "líquido que se mece dentro de la esfera", (g,t,S,C,{A,B,D,E}) => {
+  const R = S*.24*(1+Math.sin(t*.8)*.02);
+  halo(g,S,C,C,B,R);
+  g.save(); g.beginPath(); g.arc(C,C,R,0,7); g.clip();
+  g.fillStyle = css(lerp3(A,[255,255,255],.35),.9); g.fillRect(0,0,S,S);
+  // dos capas de "agua" con olas desfasadas
+  for (const [lvl, spd, amp, col, al] of [[.05,.9,.10,B,.85],[ .18,.6,.07,D,.7]]) {
+    g.beginPath();
+    const y0 = C + R*lvl;
+    g.moveTo(C-R, S);
+    for (let x=-R; x<=R; x+=6) {
+      const y = y0 + Math.sin(x/R*2.4 + t*spd)*R*amp + Math.sin(x/R*5+t*spd*1.7)*R*amp*.4;
+      g.lineTo(C+x, y);
+    }
+    g.lineTo(C+R, S); g.closePath();
+    g.fillStyle = css(col, al); g.fill();
+  }
+  const hl = g.createRadialGradient(C-R*.35,C-R*.45,0,C-R*.35,C-R*.45,R);
+  hl.addColorStop(0,"rgba(255,255,255,.28)"); hl.addColorStop(1,"rgba(255,255,255,0)");
+  g.fillStyle=hl; g.fillRect(0,0,S,S);
+  g.restore();
+});
+
+// ── 12 · BRUMA: capas de niebla sin núcleo duro ──
+orb("12 · BRUMA", "sin borde: solo niebla de color", (g,t,S,C,{A,B,D}) => {
+  for (const [dx,dy,r,col,al,sp] of [
+    [Math.sin(t*.4)*S*.04, Math.cos(t*.3)*S*.04, S*.30, B, .5],
+    [Math.sin(t*.5+2)*S*.05, Math.cos(t*.45+1)*S*.04, S*.22, lerp3(A,B,.5), .6],
+    [Math.sin(t*.6+4)*S*.03, Math.cos(t*.5+3)*S*.05, S*.14, A, .8]]) {
+    const x=C+dx, y=C+dy;
+    const cg = g.createRadialGradient(x,y,0,x,y,r);
+    cg.addColorStop(0, css(col,al)); cg.addColorStop(1, css(col,0));
+    g.fillStyle = cg; g.fillRect(0,0,S,S);
+  }
+});
+
+// ── 13 · FARO: un barrido de luz recorre el disco ──
+orb("13 · FARO", "un destello lento recorre la superficie", (g,t,S,C,{A,B}) => {
+  const R = S*.23*(1+Math.sin(t*.7)*.025);
+  halo(g,S,C,C,B,R);
+  g.beginPath(); g.arc(C,C,R,0,7);
+  body3(g,C,C,R,lerp3(A,B,.3),B); g.fill();
+  // barrido: banda de luz diagonal que cruza cada ~4 s
+  const sweep = ((t*.35) % 2.4) / 2.4;      // 0→1
+  const sx = C - R*1.6 + sweep * R*3.2;
+  g.save(); g.beginPath(); g.arc(C,C,R,0,7); g.clip();
+  const sg = g.createLinearGradient(sx-R*.5, 0, sx+R*.5, 0);
+  sg.addColorStop(0, css(A,0)); sg.addColorStop(.5, css(A,.5)); sg.addColorStop(1, css(A,0));
+  g.fillStyle = sg; g.fillRect(0,0,S,S);
+  g.restore();
+});
+
+// ── 14 · GEMELOS: dos orbes danzando juntos ──
+orb("14 · GEMELOS", "dos lunas danzando, casi tocándose", (g,t,S,C,{A,B,D}) => {
+  const a = t*.5, r1 = S*.11, r2 = S*.085, or = S*.10;
+  const x1 = C+Math.cos(a)*or,   y1 = C+Math.sin(a)*or*.7;
+  const x2 = C-Math.cos(a)*or,   y2 = C-Math.sin(a)*or*.7;
+  halo(g,S,C,C,B,S*.18,.2);
+  for (const [x,y,r,base] of [[x1,y1,r1,A],[x2,y2,r2,D]]) {
+    const gr = g.createRadialGradient(x-r*.3,y-r*.3,r*.1,x,y,r*1.3);
+    gr.addColorStop(0, css(base,.96)); gr.addColorStop(.6, css(lerp3(base,B,.5),.94)); gr.addColorStop(1, css(B,.3));
+    g.fillStyle = gr; g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+});
+
+// ── controles ──
+let cycling = null;
+document.getElementById("controls").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#controls button").forEach(x => x.classList.remove("active"));
+  b.classList.add("active");
+  clearInterval(cycling);
+  if (b.dataset.s === "__cycle") {
+    const order = ["idle","working","pass","blocked","offline"];
+    let i = 0; TARGET = STATES[order[0]];
+    cycling = setInterval(() => { i=(i+1)%order.length; TARGET = STATES[order[i]]; }, 3200);
+  } else {
+    TARGET = STATES[b.dataset.s];
+  }
+});
+</script>
+</body>
+</html>

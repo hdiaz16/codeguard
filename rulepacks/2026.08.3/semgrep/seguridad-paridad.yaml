@@ -1,0 +1,304 @@
+# Ola 1 de la paridad de reglas.
+#
+# El trabajo de paridad de lenguajes cubrió los MOTORES, no las reglas: un repo
+# de C# corre exactamente los mismos 16 motores que uno de Python y no tenía ni
+# una regla de XSS, ni de path traversal, ni de SSRF. Eso es cobertura que
+# creíamos tener. Se vio al construir la matriz CWE × lenguaje, no antes.
+#
+# Aquí se cierran esos huecos con patrones ya validados en otro lenguaje. Cada
+# regla entra con su positivo y su negativo en el corpus: el corpus ya cazó 5
+# reglas muertas de nacimiento, y una regla que no dispara es una compuerta que
+# aparenta cubrir sin cubrir.
+#
+# LO QUE NO SE PORTA, Y POR QUÉ. Rellenar la matriz por simetría produce reglas
+# muertas que ensucian la tabla haciéndola parecer más verde:
+#
+#   - XXE en Go: `encoding/xml` NO resuelve entidades externas, ni siquiera
+#     opcionalmente. La vulnerabilidad no existe en la biblioteca estándar, así
+#     que la casilla vacía es correcta. Escribir la regla sería fingir cobertura
+#     de algo que no puede pasar.
+#   - XXE en JS/TS: sólo aparece con librerías concretas (libxmljs con noent).
+#     No es del lenguaje, así que espera a que un repo real las use.
+#   - "Debug en producción" en Java: lo que expone stack traces es una propiedad
+#     de Spring (`server.error.include-stacktrace=always`), que vive en un
+#     .properties o .yml, no en .java. La regla tiene sentido, pero es de otro
+#     lenguaje y de otra ola.
+
+rules:
+  # -------------------------------------------------------------------------
+  # XSS (CWE-79) — faltaba en python, go y csharp; existía en ts/js y java
+  # -------------------------------------------------------------------------
+  - id: python-xss
+    languages: [python]
+    severity: ERROR
+    message: >-
+      HTML marcado como seguro sin sanitizar. Si el dato viene del usuario, esto
+      es XSS.
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      why: >-
+        mark_safe y Markup desactivan el escapado automático de la plantilla,
+        que es justo lo único que separa un dato de un script ejecutándose en
+        la sesión de quien lo lee.
+      fix_hint: >-
+        Deja que la plantilla escape sola. Si necesitas HTML del usuario,
+        sanitízalo antes con bleach.clean(...).
+    patterns:
+      - pattern-either:
+          - pattern: mark_safe($X)
+          - pattern: Markup($X)
+          - pattern: render_template_string($X, ...)
+      # Un literal escrito por el programador no es entrada de nadie.
+      - pattern-not: mark_safe("...")
+      - pattern-not: Markup("...")
+      - pattern-not: render_template_string("...", ...)
+      - pattern-not: mark_safe(bleach.clean(...))
+
+  - id: go-xss
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Conversión a template.HTML/JS/HTMLAttr sin sanitizar: desactiva el
+      escapado de html/template.
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      why: >-
+        html/template escapa solo, y esa es la razón de usarlo. Convertir a
+        template.HTML le dice "esto ya es seguro, no lo toques": si el valor
+        viene del usuario, se inyecta tal cual.
+      fix_hint: >-
+        Pasa el dato como string y deja que la plantilla lo escape. Si de
+        verdad necesitas HTML, sanitízalo antes (bluemonday).
+    patterns:
+      - pattern-either:
+          - pattern: template.HTML($X)
+          - pattern: template.JS($X)
+          - pattern: template.HTMLAttr($X)
+          - pattern: template.URL($X)
+      - pattern-not: template.HTML("...")
+      - pattern-not: template.JS("...")
+      - pattern-not: template.HTMLAttr("...")
+      - pattern-not: template.URL("...")
+
+  - id: csharp-xss
+    languages: [csharp]
+    severity: ERROR
+    message: "HTML sin escapar en la vista. Html.Raw anula la protección de Razor."
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      why: >-
+        Razor escapa por defecto; Html.Raw y HtmlString existen para saltárselo.
+        Con un dato del usuario dentro, el script se ejecuta en la sesión de
+        quien abre la página.
+      fix_hint: "Usa @modelo directamente, que Razor ya escapa, o sanitiza con HtmlSanitizer."
+    patterns:
+      - pattern-either:
+          - pattern: Html.Raw($X)
+          - pattern: new HtmlString($X)
+      - pattern-not: Html.Raw("...")
+      - pattern-not: new HtmlString("...")
+
+  # -------------------------------------------------------------------------
+  # Path traversal (CWE-22) — faltaba en csharp
+  # -------------------------------------------------------------------------
+  - id: csharp-path-traversal
+    languages: [csharp]
+    severity: WARNING
+    message: >-
+      Ruta construida con datos del request. Normaliza y comprueba que siga
+      dentro del directorio base.
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-22"
+      why: >-
+        Path.Combine NO protege de esto: si el segundo argumento es una ruta
+        absoluta o empieza por .., descarta el primero y devuelve donde apunte
+        el usuario. Es la trampa concreta de esta API.
+      fix_hint: >-
+        Combina, llama a Path.GetFullPath y comprueba que el resultado empiece
+        por la raíz permitida antes de abrir nada.
+    pattern-either:
+      - pattern: Path.Combine($BASE, $REQ.Query[$K])
+      - pattern: Path.Combine($BASE, $REQ.Form[$K])
+      - pattern: Path.Combine($BASE, $REQ.RouteValues[$K])
+      - pattern: System.IO.Path.Combine($BASE, $REQ.Query[$K])
+      - pattern: File.$M($BASE + $REQ.Query[$K])
+
+  # -------------------------------------------------------------------------
+  # SSRF (CWE-918) — faltaba en go, java y csharp
+  # -------------------------------------------------------------------------
+  - id: go-ssrf
+    languages: [go]
+    severity: WARNING
+    mode: taint
+    message: >-
+      URL controlada por el usuario llega a un cliente HTTP. Valida contra una
+      lista de permitidos y bloquea rangos internos y 169.254.169.254.
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      why: >-
+        El servidor pide la URL desde DENTRO de la red: alcanza lo que el
+        atacante no alcanza, incluido el endpoint de metadatos de la nube, que
+        entrega credenciales.
+      fix_hint: "Lista de permitidos por host, y rechaza IPs privadas tras resolver el nombre."
+    pattern-sources:
+      - pattern: $R.URL.Query().Get(...)
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+      - pattern: $R.Header.Get(...)
+    pattern-sinks:
+      - pattern: http.Get($URL)
+      - pattern: http.Head($URL)
+      - pattern: http.Post($URL, ...)
+      - pattern: http.NewRequest($M, $URL, ...)
+      - pattern: http.NewRequestWithContext($CTX, $M, $URL, ...)
+
+  - id: java-ssrf
+    languages: [java]
+    severity: WARNING
+    mode: taint
+    message: >-
+      URL controlada por el usuario llega a un cliente HTTP. Valida contra una
+      lista de permitidos antes de la llamada.
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      why: >-
+        El servidor pide la URL desde dentro de la red y alcanza lo que el
+        atacante no alcanza, incluido el endpoint de metadatos de la nube.
+      fix_hint: "Lista de permitidos por host, y rechaza IPs privadas tras resolver el nombre."
+    pattern-sources:
+      - pattern: $REQ.getParameter(...)
+      - pattern: $REQ.getHeader(...)
+    pattern-sinks:
+      - pattern: new URL($URL)
+      - pattern: new java.net.URL($URL)
+      - pattern: URI.create($URL)
+
+  - id: csharp-ssrf
+    languages: [csharp]
+    severity: WARNING
+    mode: taint
+    message: >-
+      URL controlada por el usuario llega a un cliente HTTP. Valida contra una
+      lista de permitidos antes de la llamada.
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      why: >-
+        El servidor pide la URL desde dentro de la red y alcanza lo que el
+        atacante no alcanza, incluido el endpoint de metadatos de la nube.
+      fix_hint: "Lista de permitidos por host, y rechaza IPs privadas tras resolver el nombre."
+    pattern-sources:
+      - pattern: $REQ.Query[$K]
+      - pattern: $REQ.Form[$K]
+    pattern-sinks:
+      - pattern: $CLIENT.GetAsync($URL)
+      - pattern: $CLIENT.GetStringAsync($URL)
+      - pattern: $CLIENT.PostAsync($URL, ...)
+      - pattern: WebRequest.Create($URL)
+
+  # -------------------------------------------------------------------------
+  # Cookies sin flags (CWE-1004) — faltaba en go y java
+  # -------------------------------------------------------------------------
+  - id: go-cookie-sin-httponly
+    languages: [go]
+    severity: ERROR
+    message: "Cookie sin HttpOnly: legible desde JavaScript."
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-1004"
+      owasp: "A05:2021"
+      why: >-
+        Sin HttpOnly la cookie es legible desde JavaScript, así que cualquier
+        XSS —propio o de una dependencia— se lleva la sesión. Es la diferencia
+        entre un XSS molesto y una toma de cuenta.
+      fix_hint: "http.SetCookie(w, &http.Cookie{..., HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode})"
+    patterns:
+      - pattern: 'http.SetCookie($W, &http.Cookie{...})'
+      - pattern-not: 'http.SetCookie($W, &http.Cookie{..., HttpOnly: true, ...})'
+
+  - id: java-cookie-sin-httponly
+    languages: [java]
+    severity: ERROR
+    message: "Cookie sin setHttpOnly(true): legible desde JavaScript."
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-1004"
+      owasp: "A05:2021"
+      why: >-
+        Sin HttpOnly la cookie es legible desde JavaScript y un XSS se lleva la
+        sesión.
+      fix_hint: "cookie.setHttpOnly(true); cookie.setSecure(true);"
+    # Los dos patrones ANCLAN EN LOS MISMOS EXTREMOS —de la declaración al
+    # addCookie— a propósito. `pattern-not` no suprime sub-rangos: si el
+    # positivo abarca menos que el negativo, el negativo no lo cancela y la
+    # regla dispara igual sobre el código correcto. Es la misma trampa que
+    # dejó muerta a ts-promesa-sin-await, y se ve idéntica desde fuera: la
+    # regla 'funciona', sólo que también marca lo que está bien.
+    #
+    # De paso queda más precisa: lo que importa no es declarar una cookie sin
+    # HttpOnly, sino ENVIARLA así.
+    patterns:
+      - pattern: |
+          Cookie $C = new Cookie(...);
+          ...
+          $RESP.addCookie($C);
+      - pattern-not: |
+          Cookie $C = new Cookie(...);
+          ...
+          $C.setHttpOnly(true);
+          ...
+          $RESP.addCookie($C);
+
+  # -------------------------------------------------------------------------
+  # Depuración en producción (CWE-489) — faltaba en go y csharp
+  # -------------------------------------------------------------------------
+  - id: go-debug-en-prod
+    languages: [go]
+    severity: ERROR
+    message: >-
+      net/http/pprof registrado en el mux por defecto: expone /debug/pprof a
+      quien alcance el servicio.
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-489"
+      owasp: "A05:2021"
+      why: >-
+        El import anónimo de pprof registra sus rutas en http.DefaultServeMux
+        como efecto secundario. Cualquiera que llegue al puerto puede volcar
+        memoria, goroutines y perfiles — y tumbar el proceso con un perfil caro.
+      fix_hint: >-
+        Sírvelo en un mux aparte, en un puerto que sólo escuche en localhost, o
+        detrás de autenticación.
+    pattern: |
+      import _ "net/http/pprof"
+
+  - id: csharp-debug-en-prod
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      Página de excepciones de desarrollo sin condicionar al entorno: filtra
+      stack traces y configuración.
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-489"
+      owasp: "A05:2021"
+      why: >-
+        UseDeveloperExceptionPage muestra la traza completa, la consulta SQL y
+        variables de entorno a cualquiera que provoque un error.
+      fix_hint: "if (app.Environment.IsDevelopment()) { app.UseDeveloperExceptionPage(); }"
+    patterns:
+      - pattern: $APP.UseDeveloperExceptionPage()
+      - pattern-not-inside: |
+          if ($ENV.IsDevelopment()) { ... }
