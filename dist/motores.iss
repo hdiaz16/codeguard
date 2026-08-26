@@ -1,5 +1,5 @@
 ﻿#define MyMotorTotal "22"
-#define MyMotorInstala "10"
+#define MyMotorInstala "14"
 #define MyMotorTuyos "8"
-#define MyMotorFaltan "4"
-#define MyMotorFaltanLista "actionlint, bandit, gosec, shellcheck"
+#define MyMotorFaltan "0"
+#define MyMotorFaltanFrase "Ninguno queda fuera: los que necesitan una herramienta propia los trae este asistente."

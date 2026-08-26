@@ -1,4 +1,4 @@
-﻿# Ensambla la carpeta de distribucion lista para repartir a los devs.
+# Ensambla la carpeta de distribucion lista para repartir a los devs.
 # Uso (desde la raiz del repo):  powershell -File dist\build-dist.ps1
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
@@ -79,7 +79,9 @@ Set-Content -Path "dist\reglas.iss" -Encoding UTF8 -Value "#define MyRuleCount `
 # listas se GENERAN de la fuente -- un dato escrito a mano envejece en silencio.
 Write-Host "==> inventario de motores (generado, no escrito a mano)" -ForegroundColor Cyan
 $inv = & go run ./cmd/codeguard-release inventario-motores | ConvertFrom-Json
-$mj  = Get-Content dist/motores.json -Raw | ConvertFrom-Json
+# La FUENTE, no dist/motores.json: esa es una copia que se hace mas abajo, asi
+# que leerla aqui daba el inventario de la compilacion ANTERIOR.
+$mj  = Get-Content internal/engines/identidad/motores.json -Raw | ConvertFrom-Json
 # Lo que ESTE paquete provisiona: binarios verificados por checksum, paquetes
 # pip y modulos de Go compilados con nuestro go.sum. El nombre del paquete pip
 # no siempre es el del motor (squawk-cli -> squawk).
@@ -87,6 +89,9 @@ $provisiona = @()
 $provisiona += $mj.motores.PSObject.Properties.Name
 $provisiona += $mj.paquetes.pip.PSObject.Properties.Name | ForEach-Object { $_ -replace '-cli$','' }
 $provisiona += $mj.paquetes.go.PSObject.Properties.Name
+if ($mj.paquetes.winget) {
+    $provisiona += ($mj.paquetes.winget.PSObject.Properties.Name | Where-Object { -not $_.StartsWith('_') })
+}
 $instala = @(); $tuyos = @(); $faltan = @()
 foreach ($prop in $inv.PSObject.Properties) {
     if ($provisiona -contains $prop.Name)               { $instala += $prop.Name }
@@ -100,7 +105,16 @@ $defs += ('#define MyMotorTotal "{0}"'       -f @($inv.PSObject.Properties).Coun
 $defs += ('#define MyMotorInstala "{0}"'     -f $instala.Count)
 $defs += ('#define MyMotorTuyos "{0}"'       -f $tuyos.Count)
 $defs += ('#define MyMotorFaltan "{0}"'      -f $faltan.Count)
-$defs += ('#define MyMotorFaltanLista "{0}"' -f ($faltan -join ', '))
+# Frases y no listas: con cero faltantes, «hacen falta aparte: » se leeria
+# roto. El texto que ve el usuario se genera entero.
+if ($faltan.Count -gt 0) {
+    $fraseIss = ('{0} NO los instala este asistente y hacen falta aparte: {1}. Hasta que los instales, esas capas no miran nada, y CodeGuard te lo dice en cada analisis.' -f $faltan.Count, ($faltan -join ', '))
+    $fraseTxt = ('NO se instalan y hacen falta aparte: {0}. Hasta que los instales, esas capas no miran nada.' -f ($faltan -join ', '))
+} else {
+    $fraseIss = 'Ninguno queda fuera: los que necesitan una herramienta propia los trae este asistente.'
+    $fraseTxt = 'Ninguno queda fuera: los motores que necesitan una herramienta propia los trae este instalador.'
+}
+$defs += ('#define MyMotorFaltanFrase "{0}"' -f $fraseIss)
 Set-Content -Path "dist/motores.iss" -Encoding UTF8 -Value ($defs -join "`r`n")
 # El acuerdo tambien se GENERA, por el mismo motivo que la pantalla de
 # bienvenida: llego a prometer 112 reglas cuando ya eran 130. Un numero
@@ -109,7 +123,7 @@ Set-Content -Path "dist/motores.iss" -Encoding UTF8 -Value ($defs -join "`r`n")
 $plantilla = Get-Content "dist\acuerdo.plantilla.txt" -Raw -Encoding UTF8
 if ($plantilla -notmatch "\{REGLAS\}") { throw "acuerdo.plantilla.txt ya no tiene el marcador {REGLAS}: el numero volveria a escribirse a mano" }
 if ($plantilla -notmatch "\{FALTAN\}") { throw "acuerdo.plantilla.txt ya no tiene el marcador {FALTAN}: la lista de motores que NO se instalan volveria a escribirse a mano" }
-Set-Content -Path "dist\acuerdo.txt" -Encoding UTF8 -NoNewline -Value ((($plantilla -replace "\{REGLAS\}", $reglas)) -replace "\{FALTAN\}", ($faltan -join ", "))
+Set-Content -Path "dist\acuerdo.txt" -Encoding UTF8 -NoNewline -Value ((($plantilla -replace "\{REGLAS\}", $reglas)) -replace "\{FALTAN\}", $fraseTxt)
 Write-Host "==> el asistente y el acuerdo anunciaran $reglas reglas" -ForegroundColor Cyan
 
 # motores.json: fuente de verdad de hashes, compartida con engines.ps1 y el

@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # CodeGuard - instalacion de motores (compartido por install.ps1 y el setup)
 # Descarga gitleaks/trivy verificando cada zip y cada .exe contra el SHA-256
 # publicado por sus autores, instala los motores Python (semgrep, squawk,
@@ -387,7 +387,10 @@ function Correr([string]$exe, [string[]]$argumentos) {
 }
 
 # ── motores Python (semgrep, squawk, ruff, mypy) ───────────────────────────
-Step "Motores Python (semgrep, squawk, ruff, mypy)"
+# El titulo sale de motores.json: escrito a mano se quedo sin bandit el dia
+# que bandit entro al producto.
+$nombresPy = ((Get-Content $MotoresJson -Raw | ConvertFrom-Json).paquetes.pip.PSObject.Properties.Name | ForEach-Object { $_ -replace '-cli$','' }) -join ', '
+Step "Motores Python ($nombresPy)"
 $py = Get-Command python -ErrorAction SilentlyContinue
 if (-not $py) {
     Step "Python no encontrado - instalando via winget"
@@ -433,6 +436,37 @@ if ($env:PATH -notlike "*$pyScripts*") {
     Ok "PATH de sesion: + $pyScripts"
 }
 
+# -- motores por winget (shellcheck) ---------------------------------------
+# Por que winget y no bajar el zip: shellcheck NO publica sumas SHA-256 de sus
+# releases, asi que verificarlo contra "el checksum que publico su autor" -la
+# disciplina del resto de motores- es imposible. El manifiesto de winget si
+# lleva SHA256 y el cliente lo comprueba, asi que la cadena de verificacion
+# existe aunque no sea la del autor. Se dice aqui y en motores.json.
+#
+# No es critico: si falla, se apunta y se sigue. Una capa ausente degrada; un
+# instalador que se cae por un linter de shell no.
+$wingetMotores = (Get-Content $MotoresJson -Raw | ConvertFrom-Json).paquetes.winget
+if ($wingetMotores) {
+    foreach ($prop in $wingetMotores.PSObject.Properties) {
+        if ($prop.Name.StartsWith("_")) { continue }
+        $motor = $prop.Name; $id = $prop.Value
+        if (Get-Command $motor -ErrorAction SilentlyContinue) {
+            Ok "$motor ya estaba"
+            continue
+        }
+        Step "instalando $motor via winget ($id)"
+        $w = Correr "winget" @("install", "-e", "--id", $id, "--silent",
+                               "--accept-package-agreements", "--accept-source-agreements")
+        if ($w.Codigo -ne 0) {
+            Write-Host "    $motor NO se pudo instalar (winget devolvio $($w.Codigo))" -ForegroundColor Yellow
+            $script:Faltantes += [pscustomobject]@{ Motor = $motor; Sin = "no se pudo instalar via winget" }
+            continue
+        }
+        $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [Environment]::GetEnvironmentVariable("PATH", "Machine")
+        Ok "$motor instalado"
+    }
+}
+
 # ── motores Go (govulncheck, staticcheck) ────────────────────────────────────
 # govulncheck y staticcheck no entran en motores.json: los construye el
 # toolchain de Go del usuario desde el fuente y GOSUMDB verifica las sumas,
@@ -475,12 +509,19 @@ if (-not $goBin) {
         $descripciones = @{
             govulncheck = "analisis de alcanzabilidad de CVEs"
             staticcheck = "analisis semantico sobre la forma SSA"
+            gosec       = "patrones inseguros en Go"
+            actionlint  = "inyeccion de shell en workflows de GitHub Actions"
         }
         $goMotores = @()
-        foreach ($nombre in @("govulncheck", "staticcheck")) {
+        # La lista sale de motores.json, no de aqui: escrita a mano, los motores
+        # nuevos entraban al producto y NO al instalador -- paso con gosec,
+        # actionlint, bandit y shellcheck, cuatro capas que el usuario no tenia
+        # y nadie le decia.
+        foreach ($nombre in $paquetes.go.PSObject.Properties.Name) {
             $spec = $paquetes.go.$nombre
             $goMotores += @{ nombre = $nombre; paquete = $spec.modulo;
                              raiz = $spec.modulo_raiz; version = $spec.version;
+                             aislado = [bool]$spec.aislado;
                              que = $descripciones[$nombre] }
         }
         $n = 0
@@ -489,7 +530,13 @@ if (-not $goBin) {
             Step "compilando $($m.nombre) desde el fuente ($n de $($goMotores.Count)) - $($m.que)"
             Ok "esto tarda uno o dos minutos; no se descarga un binario, se compila"
             $inicio = Get-Date
-            $r = Correr "go" @("-C", $dirTools, "install", $m.paquete)
+            if ($m.aislado) {
+                # Su propio grafo: no cabe en el modulo de herramientas (ver
+                # _por_que_aislado en motores.json). Sigue con version fijada.
+                $r = Correr "go" @("install", ($m.paquete + "@" + $m.version))
+            } else {
+                $r = Correr "go" @("-C", $dirTools, "install", $m.paquete)
+            }
             if ($r.Codigo -ne 0) {
                 # Uno que no compila no se lleva al otro por delante: se apunta
                 # y se sigue. Los dos son motores distintos con compuertas

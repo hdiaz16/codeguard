@@ -29,9 +29,10 @@ QUÉ SE INSTALA Y DÓNDE
   · Los motores corren contenidos: token restringido sin privilegios, job
     object con tope de memoria y procesos, sin acceso a tu escritorio ni al
     portapapeles, y con un entorno acotado del que se excluyen tus claves.
-  · NO se instalan, y hacen falta aparte: actionlint, bandit, gosec, shellcheck. También el módulo
-    PSScriptAnalyzer de PowerShell si quieres la capa de .ps1. Hasta que los
-    instales, esas capas no miran nada.
+  · Ninguno queda fuera: los motores que necesitan una herramienta propia los trae este instalador.
+  · El módulo PSScriptAnalyzer de PowerShell NO se instala: si quieres la
+    capa de .ps1, corre `Install-Module PSScriptAnalyzer`. Sin él esa capa no
+    mira nada, y el agente lo dice.
   · Sin todos los motores la paridad con el CI se rompe, y el agente te dice
     cuáles faltan en vez de callarlo.
 

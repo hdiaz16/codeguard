@@ -115,19 +115,18 @@
             por nuestro <code>go.sum</code>. Sin Go se instala igual y esas dos
             quedan ausentes — y CodeGuard lo dice en cada análisis.</li>
         </ul>
-        CodeGuard trae <strong>22 motores</strong>. El instalador
-        <strong>provisiona 10</strong>: gitleaks, trivy, google-java-format y pmd
-        verificados contra el checksum de sus autores; semgrep, squawk, ruff y
-        mypy por pip; govulncheck y staticcheck compilados aquí con las
-        dependencias de nuestro go.sum. <strong>8 usan herramientas que ya
-        tienes</strong>: Go, el SDK de .NET, Java, el node_modules de tu propio
-        proyecto para tsc y eslint, y el módulo PSScriptAnalyzer si quieres la
-        capa de .ps1. Y <strong>4 no los instala nadie por ti</strong>:
-        <code>actionlint</code>, <code>bandit</code>, <code>gosec</code> y
-        <code>shellcheck</code> — hasta que los instales, esas capas no miran
-        nada, y CodeGuard te lo dice en cada análisis en vez de callárselo.
-        Estos números los genera el build desde el inventario del producto:
-        no se escriben a mano.
+        CodeGuard trae <strong>22 motores</strong> y el instalador
+        <strong>provisiona 14</strong>: gitleaks, trivy, google-java-format y pmd
+        verificados contra el checksum de sus autores; semgrep, squawk, ruff,
+        mypy y bandit por pip; govulncheck, staticcheck, gosec y actionlint
+        compilados en tu máquina con versión fijada; y shellcheck por winget
+        —su autor no publica sumas SHA-256, el manifiesto de winget sí—. Los
+        <strong>8 restantes</strong> usan herramientas que ya tienes: Go, el SDK
+        de .NET, Java y el node_modules de tu propio proyecto para tsc y eslint.
+        Lo único que no instalamos es el módulo <code>PSScriptAnalyzer</code>:
+        si quieres la capa de <code>.ps1</code>, <code>Install-Module
+        PSScriptAnalyzer</code>. Estos números los genera el build desde el
+        inventario del producto: no se escriben a mano.
       </div>
 
       <h3 id="instalacion-obtener">De dónde sale</h3>

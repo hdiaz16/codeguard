@@ -217,18 +217,22 @@ dist\CodeGuard-Setup.exe        # o: powershell -File dist\install.ps1
 
 ### Qué se instala, y qué no
 
-CodeGuard trae **22 motores**. El instalador **provisiona 10**: gitleaks,
+CodeGuard trae **22 motores**, y el instalador **provisiona 14**: gitleaks,
 trivy, google-java-format y pmd verificados contra el checksum de sus autores;
-semgrep, squawk, ruff y mypy por pip; govulncheck y staticcheck compilados en
-tu máquina. **8 usan herramientas que ya tienes**: Go, el SDK de .NET, Java, el
-`node_modules` de tu propio proyecto para tsc y eslint (deliberado: es la
-versión que corre en tu CI, imponer la nuestra rompería la paridad), y el
-módulo `PSScriptAnalyzer` si quieres la capa de `.ps1`.
+semgrep, squawk, ruff, mypy y bandit por pip; govulncheck, staticcheck, gosec y
+actionlint compilados en tu máquina con versión fijada; y shellcheck por winget
+(su autor no publica sumas SHA-256, pero el manifiesto de winget sí).
 
-Y **4 no los instala nadie por ti**: `actionlint`, `bandit`, `gosec` y
-`shellcheck`. Hasta que los instales, esas capas no miran nada — y CodeGuard te
-lo dice en cada análisis en vez de callárselo. Estos números los genera el
-build desde el inventario del producto; no se escriben a mano.
+Los **8 restantes** usan herramientas que ya tienes: Go, el SDK de .NET, Java, y
+el `node_modules` de tu propio proyecto para tsc y eslint — esto último
+deliberado: es la versión que corre en tu CI, imponer la nuestra rompería la
+paridad. La única pieza que no instalamos es el módulo `PSScriptAnalyzer`; si
+quieres la capa de `.ps1`, `Install-Module PSScriptAnalyzer`.
+
+Estos números los genera el build desde el inventario del producto; no se
+escriben a mano, y si un motor nuevo entra al producto sin entrar al
+instalador, la cuenta lo delata.
+
 
 Instala binarios y motores bajo `%LOCALAPPDATA%\CodeGuard`, añade esas rutas al
 `PATH` del usuario, deja el daemon arrancando con la sesión y queda registrado

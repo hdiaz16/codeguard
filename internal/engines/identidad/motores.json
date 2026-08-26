@@ -136,7 +136,8 @@
       "semgrep": "1.172.0",
       "squawk-cli": "2.62.0",
       "ruff": "0.16.2",
-      "mypy": "2.3.0"
+      "mypy": "2.3.0",
+      "bandit": "1.9.3"
     },
     "go": {
       "govulncheck": {
@@ -148,7 +149,23 @@
         "modulo": "honnef.co/go/tools/cmd/staticcheck",
         "version": "v0.8.1",
         "modulo_raiz": "honnef.co/go/tools"
+      },
+      "gosec": {
+        "modulo": "github.com/securego/gosec/v2/cmd/gosec",
+        "version": "v2.28.0",
+        "modulo_raiz": "github.com/securego/gosec/v2"
+      },
+      "actionlint": {
+        "modulo": "github.com/rhysd/actionlint/cmd/actionlint",
+        "version": "v1.7.12",
+        "modulo_raiz": "github.com/rhysd/actionlint",
+        "aislado": true,
+        "_por_que_aislado": "exige go.yaml.in/yaml/v4 rc.3 y gosec exige rc.6, donde esa API cambio: con el MVS-maximo del modulo tools no compila (undefined: yaml.ParserError). Se instala con su propio grafo, con version fijada igual."
       }
+    },
+    "winget": {
+      "_por_que": "shellcheck NO publica sumas SHA-256 de sus releases, asi que bajar su zip romperia la disciplina de verificar contra el checksum del autor. El manifiesto de winget si lleva SHA256 y el cliente lo comprueba.",
+      "shellcheck": "koalaman.shellcheck"
     }
   }
 }

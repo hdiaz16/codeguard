@@ -13,8 +13,18 @@ paths:
   #                   propósito, así que sus hallazgos son los señuelos.
   #   3d-force-graph.js — librería vendoreada de 1.1 MB: agotaba el tiempo de
   #                   semgrep en cada análisis sin aportar nada.
+  # tools/** está fuera porque NINGÚN motor de Go puede analizarlo, por
+  # construcción: es un módulo APARTE (module codeguard/tools) y su único
+  # archivo .go lleva //go:build tools, así que existe solo para que `go mod
+  # tidy` conserve las dependencias de los motores que compilamos. Sin esta
+  # exclusión, cualquier commit que toque ese directorio degrada CUATRO capas
+  # a la vez —govet «main module does not contain package», staticcheck «build
+  # constraints exclude all Go files», govulncheck «no packages matched»,
+  # gosec «cannot find package»— y con el contrato de cobertura eso deja el
+  # commit SIN GARANTÍA por analizar algo que no es analizable. Latente desde
+  # que nació el módulo (2026-08-22); salió al añadirle gosec.
   exclude: ["**/*.db", "**/*.exe", "**/*.log", "bin/**",
-            "rulepacks/**", "spikes/**", "**/3d-force-graph.js"]
+            "rulepacks/**", "spikes/**", "tools/**", "**/3d-force-graph.js"]
   migrations: ["migrations/*.sql"]
   # SQLite, no Postgres: internal/store/store.go abre la BD con el driver
   # sqlite y ejecuta este DDL embebido dentro de una transacción. Squawk
