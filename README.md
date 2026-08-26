@@ -176,37 +176,59 @@ análisis. Todo local, sin navegador.
 CodeGuard es de **Windows** y se instala para el usuario actual, **sin permisos
 de administrador**.
 
-**Requisitos:** Windows 10/11 · `git` · **Go 1.26 o más nuevo**
-(`winget install -e --id GoLang.Go`, y reabre la terminal para que `go` quede
-en el PATH). *Opcional:* Inno Setup 6 (`winget install -e --id JRSoftware.InnoSetup`)
-sólo si quieres el asistente gráfico.
+**Requisitos:** Windows 10/11 x64 y `git`.
 
-Todavía no hay releases precompiladas: se clona el repo y se ensambla la
-distribución en tu máquina.
+*Recomendado además:* **Go 1.26 o más nuevo**
+(`winget install -e --id GoLang.Go`). No hace falta para instalar — hace falta
+para **dos capas**, `govulncheck` y `staticcheck`, que el instalador compila con
+las dependencias fijadas por nuestro `go.sum`. Sin Go se instala igual y esas
+dos quedan ausentes, y CodeGuard lo dice en cada análisis.
+
+### Desde el release (la vía normal)
+
+Baja `CodeGuard-Setup.exe` del [último release](https://github.com/hdiaz16/codeguard/releases/latest),
+**comprueba su huella** contra el `SHA256SUMS.txt` que va al lado, y ejecútalo:
+
+```powershell
+(Get-FileHash .\CodeGuard-Setup.exe -Algorithm SHA256).Hash   # debe coincidir con SHA256SUMS.txt
+.\CodeGuard-Setup.exe                                        # /VERYSILENT para reparto masivo
+```
+
+Comprobar la huella no es ceremonia: es lo único que distingue el instalador
+que publicamos de uno que te llegó por otro camino. **Todavía no lleva firma
+Authenticode** (el certificado está en trámite), así que Windows mostrará el
+aviso de SmartScreen.
+
+### Compilándolo tú
+
+Si prefieres no fiarte de un binario ajeno. Necesitas Go, y opcionalmente
+Inno Setup 6 (`winget install -e --id JRSoftware.InnoSetup`) para el asistente:
 
 ```powershell
 git clone https://github.com/hdiaz16/codeguard.git
 cd codeguard
 powershell -ExecutionPolicy Bypass -File dist\build-dist.ps1
+dist\CodeGuard-Setup.exe        # o: powershell -File dist\install.ps1
 ```
 
-`build-dist.ps1` compila los binarios con Go y deja `dist\` listo; si hay Inno
-Setup, genera además `dist\CodeGuard-Setup.exe`. Después instala —el asistente y
-el script hacen lo mismo—:
+### Qué se instala, y qué no
 
-```powershell
-dist\CodeGuard-Setup.exe            # asistente gráfico (o /VERYSILENT para reparto masivo)
-# — o, si no generaste el .exe —
-powershell -ExecutionPolicy Bypass -File dist\install.ps1   # banderas: -ApiKey "…", -SkipTrivy
-```
+CodeGuard trae **22 motores**. El instalador **provisiona 10**: gitleaks,
+trivy, google-java-format y pmd verificados contra el checksum de sus autores;
+semgrep, squawk, ruff y mypy por pip; govulncheck y staticcheck compilados en
+tu máquina. **8 usan herramientas que ya tienes**: Go, el SDK de .NET, Java, el
+`node_modules` de tu propio proyecto para tsc y eslint (deliberado: es la
+versión que corre en tu CI, imponer la nuestra rompería la paridad), y el
+módulo `PSScriptAnalyzer` si quieres la capa de `.ps1`.
+
+Y **4 no los instala nadie por ti**: `actionlint`, `bandit`, `gosec` y
+`shellcheck`. Hasta que los instales, esas capas no miran nada — y CodeGuard te
+lo dice en cada análisis en vez de callárselo. Estos números los genera el
+build desde el inventario del producto; no se escriben a mano.
 
 Instala binarios y motores bajo `%LOCALAPPDATA%\CodeGuard`, añade esas rutas al
 `PATH` del usuario, deja el daemon arrancando con la sesión y queda registrado
 en «Aplicaciones instaladas» con su desinstalador.
-
-> **El instalador todavía no está firmado** (el certificado está en trámite): un
-> EDR puede marcarlo, y con razón. Compilarlo desde el repo clonado es la forma
-> de saber exactamente qué estás corriendo.
 
 **Verifica cada motor descargable contra el SHA-256 que publicaron sus autores,
 antes de extraerlo.** Los de Python (semgrep, squawk, ruff, mypy) llegan por

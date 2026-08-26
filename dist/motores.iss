@@ -1,0 +1,5 @@
+﻿#define MyMotorTotal "22"
+#define MyMotorInstala "10"
+#define MyMotorTuyos "8"
+#define MyMotorFaltan "4"
+#define MyMotorFaltanLista "actionlint, bandit, gosec, shellcheck"

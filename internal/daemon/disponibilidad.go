@@ -152,3 +152,28 @@ func Disponibilidad(capasDelRepo []string) []NoDisponible {
 	}
 	return out
 }
+
+// InventarioDeMotores devuelve, por motor del producto, el ejecutable que
+// necesita para poder correr en esta máquina. Cadena vacía = no hace falta
+// buscar nada (gofmt formatea en proceso) o la resolución es POR PROYECTO y no
+// por máquina (tsc, eslint, psscriptanalyzer — ver los comentarios de
+// requisitos, que explican por qué comprobarlos mentiría).
+//
+// Existe para que el instalador diga la VERDAD de lo que instala. Su texto de
+// bienvenida llegó a prometer «16 motores» cuando el producto tenía 22, y a no
+// mencionar cinco que no provisiona — el usuario se llevaba capas ausentes sin
+// enterarse. El número y la lista se generan de aquí en tiempo de build, igual
+// que el conteo de reglas: lo que se le promete al usuario no se escribe a
+// mano.
+//
+// gitleaks se incluye aunque no esté en requisitos: corre en la etapa 1 (la
+// compuerta de secretos) y no en Engines(), pero el instalador SÍ lo provisiona
+// y el usuario tiene que saberlo.
+func InventarioDeMotores() map[string]string {
+	out := make(map[string]string, len(requisitos)+1)
+	for m, r := range requisitos {
+		out[m] = r
+	}
+	out["gitleaks"] = "gitleaks"
+	return out
+}

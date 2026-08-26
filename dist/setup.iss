@@ -1,4 +1,4 @@
-; =============================================================================
+﻿; =============================================================================
 ; CodeGuard - paquete instalador (Inno Setup 6)
 ; Un solo CodeGuard-Setup.exe: asistente grafico, desinstalador registrado en
 ; "Aplicaciones instaladas" y modo silencioso (/VERYSILENT) para reparto
@@ -14,6 +14,10 @@
 ; reglas.iss lo genera build-dist.ps1 contando el rulepack: el numero que se le
 ; promete al usuario no se escribe a mano (llego a decir 112 con 119 instaladas)
 #include "reglas.iss"
+; motores.iss lo genera build-dist.ps1 desde el inventario REAL del producto:
+; cuantos motores hay, cuantos provisiona este paquete y cuales NO. El texto
+; de bienvenida llego a prometer 16 con 22 en el producto y a callar cinco.
+#include "motores.iss"
 ; rulepacks-limpieza.iss tambien lo genera build-dist.ps1: una entrada
 ; [InstallDelete] por cada version que viaja en el paquete. Sin esto, Inno
 ; copia archivo-por-archivo sobre una version ya instalada y FUSIONA dos
@@ -24,13 +28,18 @@
 #include "rulepacks-limpieza.iss"
 #define MyAppExe "codeguard.exe"
 #define MyDaemonExe "codeguard-daemon.exe"
+; MyDirPorDefecto es UNA sola fuente de verdad para dónde se instala.
+; La usan DefaultDirName y el código: {app} NO existe todavía en
+; InitializeSetup —Inno la inicializa después— y expandirla allí es un error
+; fatal que impide arrancar el instalador entero.
+#define MyDirPorDefecto "{localappdata}\CodeGuard"
 
 [Setup]
 AppId={{8F4E2C7A-1B3D-4A69-9E5C-2D7F0B1C4A88}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher=CodeGuard
-DefaultDirName={localappdata}\CodeGuard
+DefaultDirName={#MyDirPorDefecto}
 DisableDirPage=yes
 DisableProgramGroupPage=yes
 ; consentimiento: pagina "Que es CodeGuard" con aceptacion obligatoria antes
@@ -63,7 +72,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Messages]
 ; copy minimo: el asistente habla claro y corto
 spanish.WelcomeLabel1=CodeGuard
-spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, sin permisos de administrador:%n%n  •  CodeGuard (CLI + orbe) y sus {#MyRuleCount} reglas%n  •  gitleaks y trivy, verificados contra el checksum de sus autores%n  •  semgrep, squawk, ruff y mypy (vía pip)%n  •  govulncheck y staticcheck, que se COMPILAN: un par de minutos%n%nSon 9 de los 16 motores. gofmt va dentro de CodeGuard, y los 6 restantes%n(go vet, tsc, eslint y los tres de .NET) usan las herramientas que YA tienes:%nGo, Node y el SDK de .NET. Para tsc y eslint es deliberado — se usa la versión%nde tu proyecto, que es la que corre en el CI; imponer la nuestra rompería la%nparidad en vez de defenderla. Si a tu repo le falta alguna, el agente te lo%ndice en cada análisis en vez de callárselo.
+spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, bajo %%LOCALAPPDATA%%\CodeGuard, sin permisos de administrador.%n%nCodeGuard trae {#MyMotorTotal} motores y {#MyRuleCount} reglas. De esos motores:%n%n  •  {#MyMotorInstala} los instala este asistente. gitleaks, trivy y los de Java se%n     verifican contra el checksum que publicaron sus autores; semgrep, squawk, ruff%n     y mypy llegan por pip; govulncheck y staticcheck se COMPILAN aquí, con las%n     dependencias fijadas por nuestro go.sum. Eso último tarda un par de minutos.%n%n  •  {#MyMotorTuyos} usan herramientas que YA tienes: Go, el SDK de .NET, Java, y el%n     node_modules de tu propio proyecto para tsc y eslint, y el módulo%n     PSScriptAnalyzer de PowerShell si quieres la capa de .ps1. Para tsc y%n     eslint es%n     deliberado: se usa la versión de tu repo, que es la que corre en tu CI —%n     imponer la nuestra rompería la paridad en vez de defenderla.%n%n  •  {#MyMotorFaltan} NO los instala este asistente y hacen falta aparte:%n     {#MyMotorFaltanLista}. Hasta que los instales, esas capas no miran nada, y%n     CodeGuard te lo dirá en cada análisis en vez de callárselo.%n%nNada de esto sale a la red durante un análisis salvo los dos motores que lo%ndeclaran (govulncheck y dotnet-vuln). Ninguna telemetría se envía a nadie.
 spanish.FinishedHeadingLabel=Listo.
 spanish.FinishedLabelNoIcons=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init
 spanish.FinishedLabel=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init
@@ -202,7 +211,12 @@ function InitializeSetup(): Boolean;
 begin
   // ya instalado antes = actualizacion: se actualiza encima, sin borrar nada;
   // los motores con hash verificado se conservan y no se vuelven a descargar
-  EsActualizacion := FileExists(ExpandConstant('{app}\bin\{#MyDaemonExe}'));
+  // OJO: aqui NO se puede usar {app} — InitializeSetup corre ANTES de que
+  // Inno la inicialice, y expandirla revienta el instalador entero con «An
+  // attempt was made to expand the "app" constant before it was
+  // initialized», sin llegar a pintar una sola pantalla. Se mira el
+  // directorio por defecto, que es donde se instala siempre (DisableDirPage).
+  EsActualizacion := FileExists(ExpandConstant('{#MyDirPorDefecto}\bin\{#MyDaemonExe}'));
   if not WizardSilent() then
     MostrarSplash();
   Result := True;

@@ -72,6 +72,36 @@ $reglas = (Select-String -Path "dist\rulepacks\*\semgrep\*.yaml" -Pattern '^\s*-
 if ($reglas -lt 1) { throw "no se pudo contar las reglas del rulepack" }
 Set-Content -Path "dist\reglas.iss" -Encoding UTF8 -Value "#define MyRuleCount `"$reglas`""
 
+# -- inventario de motores: el instalador dice la VERDAD de lo que instala ----
+# El texto de bienvenida llego a prometer "16 motores" con 22 en el producto, y
+# a no mencionar CINCO que este paquete no provisiona: el usuario se llevaba
+# capas ausentes sin enterarse. Igual que el conteo de reglas, el numero y las
+# listas se GENERAN de la fuente -- un dato escrito a mano envejece en silencio.
+Write-Host "==> inventario de motores (generado, no escrito a mano)" -ForegroundColor Cyan
+$inv = & go run ./cmd/codeguard-release inventario-motores | ConvertFrom-Json
+$mj  = Get-Content dist/motores.json -Raw | ConvertFrom-Json
+# Lo que ESTE paquete provisiona: binarios verificados por checksum, paquetes
+# pip y modulos de Go compilados con nuestro go.sum. El nombre del paquete pip
+# no siempre es el del motor (squawk-cli -> squawk).
+$provisiona = @()
+$provisiona += $mj.motores.PSObject.Properties.Name
+$provisiona += $mj.paquetes.pip.PSObject.Properties.Name | ForEach-Object { $_ -replace '-cli$','' }
+$provisiona += $mj.paquetes.go.PSObject.Properties.Name
+$instala = @(); $tuyos = @(); $faltan = @()
+foreach ($prop in $inv.PSObject.Properties) {
+    if ($provisiona -contains $prop.Name)               { $instala += $prop.Name }
+    elseif ($prop.Value -in @('go','dotnet','java',''))  { $tuyos   += $prop.Name }
+    else                                                 { $faltan  += $prop.Name }
+}
+$instala = @($instala | Sort-Object); $tuyos = @($tuyos | Sort-Object); $faltan = @($faltan | Sort-Object)
+Write-Host ("    instala {0} - usa lo tuyo {1} - NO instala {2}: {3}" -f $instala.Count, $tuyos.Count, $faltan.Count, ($faltan -join ', '))
+$defs = @()
+$defs += ('#define MyMotorTotal "{0}"'       -f @($inv.PSObject.Properties).Count)
+$defs += ('#define MyMotorInstala "{0}"'     -f $instala.Count)
+$defs += ('#define MyMotorTuyos "{0}"'       -f $tuyos.Count)
+$defs += ('#define MyMotorFaltan "{0}"'      -f $faltan.Count)
+$defs += ('#define MyMotorFaltanLista "{0}"' -f ($faltan -join ', '))
+Set-Content -Path "dist/motores.iss" -Encoding UTF8 -Value ($defs -join "`r`n")
 # El acuerdo tambien se GENERA, por el mismo motivo que la pantalla de
 # bienvenida: llego a prometer 112 reglas cuando ya eran 130. Un numero
 # escrito a mano en un documento de consentimiento envejece solo, y ese es el

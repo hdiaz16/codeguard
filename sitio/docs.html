@@ -108,51 +108,64 @@
         <ul>
           <li><strong>Windows</strong> (10 u 11).</li>
           <li><strong>git</strong> — para clonar el repositorio.</li>
-          <li><strong>Go 1.26 o más nuevo</strong> — todavía no hay releases
-            precompiladas, así que los binarios se compilan desde el repo:
-            <code>winget install -e --id GoLang.Go</code> (cierra y reabre la
-            terminal para que <code>go</code> quede en el PATH).</li>
-          <li><em>Opcional:</em> <strong>Inno Setup&nbsp;6</strong>, sólo si
-            quieres el asistente gráfico <code>CodeGuard-Setup.exe</code>:
-            <code>winget install -e --id JRSoftware.InnoSetup</code>. Sin él, el
-            script <code>install.ps1</code> instala exactamente lo mismo.</li>
+          <li><em>Recomendado:</em> <strong>Go 1.26 o más nuevo</strong>
+            (<code>winget install -e --id GoLang.Go</code>). No hace falta para
+            instalar: hace falta para <strong>dos capas</strong>, govulncheck y
+            staticcheck, que el instalador COMPILA con las dependencias fijadas
+            por nuestro <code>go.sum</code>. Sin Go se instala igual y esas dos
+            quedan ausentes — y CodeGuard lo dice en cada análisis.</li>
         </ul>
-        El instalador trae y verifica los motores propios (gitleaks, semgrep,
-        trivy y otros); los demás usan la cadena que ya tienes (tsc, eslint,
-        .NET) o se instalan aparte (actionlint, shell) — el detalle está más
-        abajo, y cada motor que falte degrada a «ausente» sin bloquear.
+        CodeGuard trae <strong>22 motores</strong>. El instalador
+        <strong>provisiona 10</strong>: gitleaks, trivy, google-java-format y pmd
+        verificados contra el checksum de sus autores; semgrep, squawk, ruff y
+        mypy por pip; govulncheck y staticcheck compilados aquí con las
+        dependencias de nuestro go.sum. <strong>8 usan herramientas que ya
+        tienes</strong>: Go, el SDK de .NET, Java, el node_modules de tu propio
+        proyecto para tsc y eslint, y el módulo PSScriptAnalyzer si quieres la
+        capa de .ps1. Y <strong>4 no los instala nadie por ti</strong>:
+        <code>actionlint</code>, <code>bandit</code>, <code>gosec</code> y
+        <code>shellcheck</code> — hasta que los instales, esas capas no miran
+        nada, y CodeGuard te lo dice en cada análisis en vez de callárselo.
+        Estos números los genera el build desde el inventario del producto:
+        no se escriben a mano.
       </div>
 
       <h3 id="instalacion-obtener">De dónde sale</h3>
       <p>
-        CodeGuard vive en
-        <a href="https://github.com/hdiaz16/codeguard" rel="noopener">github.com/hdiaz16/codeguard</a>.
-        Todavía no hay releases publicadas: el instalador se obtiene clonando
-        el repositorio y ensamblando la distribución en tu máquina.
+        Del release de
+        <a href="https://github.com/hdiaz16/codeguard/releases/latest" rel="noopener">github.com/hdiaz16/codeguard</a>.
+        Bajas <code>CodeGuard-Setup.exe</code>, <strong>compruebas su huella</strong>
+        contra el <code>SHA256SUMS.txt</code> que va al lado, y lo ejecutas.
+        Comprobar la huella no es ceremonia: es lo único que distingue el
+        instalador que publicamos de uno que te llegó por otro camino.
       </p>
-      <pre><span class="p">PS&gt;</span> git clone https://github.com/hdiaz16/codeguard.git
-<span class="p">PS&gt;</span> cd codeguard
-<span class="p">PS&gt;</span> powershell -ExecutionPolicy Bypass -File dist\build-dist.ps1</pre>
+      <pre><span class="p">PS&gt;</span> (Get-FileHash .\CodeGuard-Setup.exe -Algorithm SHA256).Hash
+<span class="c"># debe coincidir con SHA256SUMS.txt (no distingue mayúsculas)</span>
+<span class="p">PS&gt;</span> .\CodeGuard-Setup.exe</pre>
       <p>
-        <code>build-dist.ps1</code> compila los binarios con Go, deja la carpeta
-        <code>dist\</code> lista para repartir y, si la máquina tiene Inno
-        Setup&nbsp;6 (<code>winget install -e --id JRSoftware.InnoSetup</code>),
-        genera además <code>dist\CodeGuard-Setup.exe</code>. Sin Inno Setup no
-        hay asistente gráfico, pero <code>dist\install.ps1</code> instala
-        exactamente lo mismo.
+        Si prefieres no confiar en un binario ajeno, la alternativa es
+        compilarlo tú: clonar el repo y correr
+        <code>dist\build-dist.ps1</code>, que compila con Go y —si la máquina
+        tiene Inno Setup&nbsp;6— genera el mismo
+        <code>CodeGuard-Setup.exe</code>. Sin Inno Setup,
+        <code>dist\install.ps1</code> instala exactamente lo mismo.
       </p>
       <div class="nota ambar">
-        <b>El instalador todavía no está firmado.</b> Mientras el certificado
-        de firma de código esté en trámite, un EDR puede marcarlo como
-        sospechoso — y con razón. Compilarlo desde el repositorio clonado es la
-        forma de saber exactamente qué estás corriendo.
+        <b>El instalador todavía no lleva firma Authenticode.</b> El certificado
+        de firma de código está en trámite, así que Windows mostrará el aviso de
+        SmartScreen y un EDR puede marcarlo — con razón, porque no puede probar
+        quién lo publicó. Hasta entonces lo que SÍ puedes comprobar es la huella
+        SHA-256 de arriba, y compilarlo desde el repositorio sigue siendo la
+        forma de no fiarte de nadie.
       </div>
 
       <h3 id="instalacion-asistente">Con el paquete instalador</h3>
       <p>
-        Es la vía normal. <code>CodeGuard-Setup.exe</code> es un asistente
-        gráfico; lo genera <code>dist\build-dist.ps1</code> cuando la máquina
-        tiene Inno Setup.
+        Es la vía normal: el <code>CodeGuard-Setup.exe</code> del release es un
+        asistente gráfico que te dice, antes de tocar nada, qué va a instalar y
+        qué no. Instala <strong>para tu usuario</strong>, bajo
+        <code>%LOCALAPPDATA%\CodeGuard</code>, y no pide administrador en ningún
+        momento.
       </p>
       <pre><span class="k">CodeGuard-Setup.exe</span>
 <span class="c"># para reparto masivo, sin interacción:</span>

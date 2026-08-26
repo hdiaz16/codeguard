@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"codeguard/internal/daemon"
 	"codeguard/internal/dpapi"
 	"codeguard/internal/fsutil"
 	"codeguard/internal/manifest"
@@ -31,7 +33,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	raiz.AddCommand(keygenCmd(), signRulepackCmd())
+	raiz.AddCommand(keygenCmd(), signRulepackCmd(), inventarioCmd())
 	if err := raiz.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "codeguard-release:", err)
 		os.Exit(1)
@@ -209,4 +211,27 @@ func cargarPrivada(claveID string) (ed25519.PrivateKey, string, error) {
 	priv := ed25519.NewKeyFromSeed(seed)
 	id := idDeClave(priv.Public().(ed25519.PublicKey))
 	return priv, id, nil
+}
+
+// inventarioCmd imprime, en JSON, cada motor del producto con el ejecutable que
+// necesita. Lo consume build-dist.ps1 para GENERAR el texto del instalador en
+// vez de escribirlo a mano — la misma disciplina que el conteo de reglas.
+//
+// El texto de bienvenida llegó a prometer «16 motores» con 22 en el producto, y
+// a no mencionar cinco que el instalador no provisiona. Un número a mano
+// envejece en silencio; uno generado no puede.
+func inventarioCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "inventario-motores",
+		Short: "Imprime en JSON cada motor y el ejecutable que necesita",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			b, err := json.MarshalIndent(daemon.InventarioDeMotores(), "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(b))
+			return nil
+		},
+	}
 }
