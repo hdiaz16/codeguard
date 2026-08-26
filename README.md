@@ -73,17 +73,15 @@ mismas reglas.
 
 ## Qué te vigila
 
-Una compuerta de secretos y **16 motores deterministas**. De un cambio concreto
-sólo corren los que aplican: si no tocaste Go, gofmt no se ejecuta — y eso se
-llama *no aplica*, que no es lo mismo que *no corrió*.
+**22 motores deterministas**, y uno de ellos —gitleaks— es la compuerta de
+secretos que falla cerrada. De un cambio concreto sólo corren los que aplican:
+si no tocaste Go, gofmt no se ejecuta — y eso se llama *no aplica*, que no es
+lo mismo que *no corrió*.
 
-De esos 16, el instalador trae **9** (semgrep, squawk, ruff, mypy, trivy,
-govulncheck, staticcheck, google-java-format y PMD); **gofmt** corre dentro del
-propio CodeGuard; y los **6** restantes —`go vet`, `tsc`, `eslint` y los tres de
-.NET— usan la cadena de herramientas que ya tienes. En `tsc` y `eslint` es
-deliberado: se usa la versión **de tu proyecto**, que es la que corre en el CI.
-Instalar la nuestra rompería la paridad en vez de defenderla. Si a tu repo le
-falta alguna, el análisis lo dice en vez de dar un ✓ sobre una capa que no miró.
+El reparto exacto está en [Instalación](#instalación): **10** los trae el
+instalador, **8** usan herramientas que ya tienes, y **4** hay que instalarlos
+aparte. Si a tu repo le falta alguno, el análisis lo dice en vez de dar un ✓
+sobre una capa que no miró.
 
 | Motor | Pilar | Qué mira | Bloquea |
 |---|---|---|---|
@@ -103,6 +101,12 @@ falta alguna, el análisis lo dice en vez de dar un ✓ sobre una capa que no mi
 | **dotnet build** | calidad | Que el C# compile | ⛔ |
 | **google-java-format** | calidad | Formato de Java, sin compilar ni classpath | ⛔ |
 | **PMD** | calidad | Calidad de Java sobre el AST | ⛔ severidad error |
+| **gosec** | seguridad | Patrones inseguros en Go (SQL concatenado, crypto débil) | ⛔ |
+| **bandit** | seguridad | Patrones inseguros en Python | ⛔ |
+| **actionlint** | seguridad | Workflows de GitHub Actions: inyección de shell | ⛔ |
+| **shellcheck** | calidad | Scripts de shell | ⛔ |
+| **PSScriptAnalyzer** | calidad | Scripts de PowerShell (`.ps1`) | ⛔ |
+| **go vet** | calidad | Lo que el compilador de Go no mira | ⛔ |
 
 Dos decisiones que explican el resto:
 

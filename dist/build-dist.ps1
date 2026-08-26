@@ -108,7 +108,8 @@ Set-Content -Path "dist/motores.iss" -Encoding UTF8 -Value ($defs -join "`r`n")
 # peor sitio donde puede pasar: es lo que el usuario acepta.
 $plantilla = Get-Content "dist\acuerdo.plantilla.txt" -Raw -Encoding UTF8
 if ($plantilla -notmatch "\{REGLAS\}") { throw "acuerdo.plantilla.txt ya no tiene el marcador {REGLAS}: el numero volveria a escribirse a mano" }
-Set-Content -Path "dist\acuerdo.txt" -Encoding UTF8 -NoNewline -Value ($plantilla -replace "\{REGLAS\}", $reglas)
+if ($plantilla -notmatch "\{FALTAN\}") { throw "acuerdo.plantilla.txt ya no tiene el marcador {FALTAN}: la lista de motores que NO se instalan volveria a escribirse a mano" }
+Set-Content -Path "dist\acuerdo.txt" -Encoding UTF8 -NoNewline -Value ((($plantilla -replace "\{REGLAS\}", $reglas)) -replace "\{FALTAN\}", ($faltan -join ", "))
 Write-Host "==> el asistente y el acuerdo anunciaran $reglas reglas" -ForegroundColor Cyan
 
 # motores.json: fuente de verdad de hashes, compartida con engines.ps1 y el
