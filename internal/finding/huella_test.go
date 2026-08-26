@@ -78,7 +78,7 @@ func TestUnDesplazamientoPuroConservaLaIdentidad(t *testing.T) {
 
 	if fs2[0].Fingerprint != antes {
 		t.Errorf("el desplazamiento cambió la huella: %s → %s — las baselines no sobrevivirían a un import nuevo",
-			HuellaCorta(antes, 12), HuellaCorta(fs2[0].Fingerprint, 12))
+			huellaCorta(antes, 12), huellaCorta(fs2[0].Fingerprint, 12))
 	}
 }
 
@@ -140,7 +140,7 @@ func TestLaLegacyReproduceElAlgoritmoViejoByteABite(t *testing.T) {
 	AsignarHuellas(fs, fuenteFija(contenidoConCuatroEsc))
 	if fs[0].LegacyFingerprint != viejo {
 		t.Errorf("legacy %s ≠ v1 real %s: la ventana dual no casaría ni una entrada",
-			HuellaCorta(fs[0].LegacyFingerprint, 12), HuellaCorta(viejo, 12))
+			huellaCorta(fs[0].LegacyFingerprint, 12), huellaCorta(viejo, 12))
 	}
 	if fs[0].Fingerprint == viejo {
 		t.Error("la v2 no puede coincidir con la v1: el dominio del hash lleva la versión dentro")
@@ -210,15 +210,15 @@ func TestHuellasDeBusquedaTraeLaPareja(t *testing.T) {
 	}
 }
 
-// HuellaCorta conserva el prefijo y abrevia el CUERPO (turno 76): cortar el
+// huellaCorta conserva el prefijo y abrevia el CUERPO (turno 76): cortar el
 // token completo enseñaría "v2:abcde" — casi todo prefijo, casi nada de hash.
 func TestHuellaCortaAbreviaElCuerpoNoElPrefijo(t *testing.T) {
 	hex64 := strings.Repeat("ab12", 16)
-	if got := HuellaCorta("v2:"+hex64, 8); got != "v2:ab12ab12" {
-		t.Errorf("HuellaCorta v2 = %q", got)
+	if got := huellaCorta("v2:"+hex64, 8); got != "v2:ab12ab12" {
+		t.Errorf("huellaCorta v2 = %q", got)
 	}
-	if got := HuellaCorta(hex64, 8); got != "ab12ab12" {
-		t.Errorf("HuellaCorta v1 = %q", got)
+	if got := huellaCorta(hex64, 8); got != "ab12ab12" {
+		t.Errorf("huellaCorta v1 = %q", got)
 	}
 }
 

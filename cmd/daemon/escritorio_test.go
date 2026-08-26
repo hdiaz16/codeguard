@@ -15,6 +15,21 @@ import (
 	"codeguard/internal/registry"
 )
 
+// listaProyectos toma el candado y delega en listaProyectosLocked, que es
+// donde está la lógica de verdad.
+//
+// Vivía en escritorio_eventos.go, pero cuando toda publicación pasó a caber
+// en un solo Lock se quedó sin un llamador de producción: los únicos eran
+// estas pruebas. Bajó aquí en la limpieza de 2026-08-25. Se conserva como
+// envoltorio en vez de tomar el candado a mano en cada test porque el
+// candado ES parte de lo que se ejerce: quien lo tome por su cuenta acabará
+// olvidándolo el día que añada una prueba.
+func (e *escritorio) listaProyectos(raizActiva string) []proyectoEnLista {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.listaProyectosLocked(raizActiva)
+}
+
 // Estas pruebas existen porque dos fallos del daemon llegaron a producción sin
 // que nada los atrapara: el panel salía vacío tras reiniciar y la lista de
 // proyectos no se refrescaba. Todo lo que se prueba aquí vive fuera de Wails a

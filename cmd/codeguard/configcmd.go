@@ -18,7 +18,7 @@ import (
 
 func configCmd() *cobra.Command {
 	var listar, probar bool
-	var guardarClaveDe string
+	var guardarClaveDe, olvidarClaveDe string
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Abre la configuración del modelo que aconseja",
@@ -27,8 +27,14 @@ func configCmd() *cobra.Command {
 			"Tu elección se guarda fuera del repositorio: no viaja en ningún commit " +
 			"ni cambia la configuración del equipo.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if guardarClaveDe != "" && olvidarClaveDe != "" {
+				return fmt.Errorf("--guardar-clave y --olvidar-clave hacen lo contrario: elige una")
+			}
 			if guardarClaveDe != "" {
 				return guardarClaveDeStdin(guardarClaveDe)
+			}
+			if olvidarClaveDe != "" {
+				return olvidarClaveGuardada(olvidarClaveDe)
 			}
 			if probar {
 				return probarConfigActual()
@@ -58,7 +64,66 @@ func configCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&probar, "probar", false, "hacer una llamada real al modelo configurado")
 	cmd.Flags().StringVar(&guardarClaveDe, "guardar-clave", "",
 		"guarda en el Administrador de credenciales la clave que se lea por la entrada estándar (p.ej. --guardar-clave FOUNDRY_API_KEY)")
+	cmd.Flags().StringVar(&olvidarClaveDe, "olvidar-clave", "",
+		"borra del Administrador de credenciales la clave guardada (p.ej. --olvidar-clave FOUNDRY_API_KEY)")
 	return cmd
+}
+
+// olvidarClaveGuardada quita del Administrador de credenciales la clave que
+// `--guardar-clave` dejó ahí.
+//
+// Existía la mitad de la operación y no la otra: se podía meter una clave de
+// API en la bóveda de Windows desde el producto, y NO sacarla. Quien rotaba
+// su clave, dejaba el proyecto o se equivocaba de cuenta se quedaba con un
+// secreto vivo en su máquina y sin una sola orden para retirarlo — había que
+// abrir el Administrador de credenciales a mano y saber que CodeGuard guarda
+// bajo el nombre que compone secreto.Nombre. Una herramienta que ayuda a
+// guardar secretos y no sabe soltarlos deja al usuario peor de lo que lo
+// encontró.
+func olvidarClaveGuardada(variable string) error {
+	if !secreto.Disponible() {
+		return fmt.Errorf("el Administrador de credenciales no está disponible en esta máquina: " +
+			"no hay bóveda de la que borrar")
+	}
+	// Se mira ANTES para poder distinguir «la borré» de «no había nada»:
+	// Borrar es idempotente a propósito, así que sin esta lectura las dos
+	// situaciones darían el mismo mensaje y el usuario no sabría si de verdad
+	// tenía una clave guardada.
+	_, errAntes := secreto.Leer(variable)
+	habia := errAntes == nil
+	if errAntes != nil && !secreto.NoEncontrado(errAntes) {
+		return fmt.Errorf("no se pudo consultar %s en el Administrador de credenciales: %w", variable, errAntes)
+	}
+
+	if err := secreto.Borrar(variable); err != nil {
+		return fmt.Errorf("no se pudo borrar %s del Administrador de credenciales: %w", variable, err)
+	}
+
+	// Se RELEE por la misma razón que al guardar: dar por buena una escritura
+	// que no cuajó es lo que convierte un fallo en un secreto fantasma.
+	if v, err := secreto.Leer(variable); err == nil && v != "" {
+		return fmt.Errorf("%s se mandó borrar pero el Administrador de credenciales sigue devolviéndola", variable)
+	} else if err != nil && !secreto.NoEncontrado(err) {
+		return fmt.Errorf("%s se borró pero la bóveda no se pudo releer para confirmarlo: %w", variable, err)
+	}
+
+	if habia {
+		fmt.Println(variable, "borrada del Administrador de credenciales")
+	} else {
+		fmt.Println(variable, "no estaba guardada en el Administrador de credenciales: no había nada que olvidar")
+	}
+
+	// La verdad incómoda, dicha aquí y no descubierta mañana: el agente MIGRA
+	// al arrancar cualquier clave que encuentre en su entorno y no esté ya en
+	// la bóveda (MigrarClaveDelEntorno). Si la variable sigue definida en el
+	// entorno del usuario, esto no la olvida: la devuelve el próximo arranque.
+	if os.Getenv(variable) != "" {
+		fmt.Printf("  ojo: %s sigue definida en el entorno de esta terminal.\n", variable)
+		fmt.Println("  El agente vuelve a guardar en la bóveda toda clave que vea en su entorno al")
+		fmt.Println("  arrancar, así que para olvidarla de verdad quítala también de tus variables")
+		fmt.Println("  de usuario y abre una terminal nueva.")
+	}
+	return nil
 }
 
 // guardarClaveDeStdin mete la clave en la bóveda leyéndola por la ENTRADA
@@ -181,14 +246,20 @@ func mostrarConfigLLM() error {
 	case os.Getenv(cfg.LLM.APIKeyEnv) != "":
 		fmt.Printf("  clave      %s ✓ configurada (en el entorno)\n", cfg.LLM.APIKeyEnv)
 		fmt.Println("             el agente la moverá al Administrador de credenciales al arrancar")
-	case definidaEnElUsuario(cfg.LLM.APIKeyEnv):
-		// Windows sólo entrega las variables de usuario a los procesos que
-		// arrancan DESPUÉS de definirlas. Decir "vacía" aquí manda al dev a
-		// buscar una clave que ya tiene, y a redefinirla encima.
-		fmt.Printf("  clave      %s ✓ definida en tu usuario, pero esta terminal es anterior\n",
-			cfg.LLM.APIKeyEnv)
-		fmt.Println("             abre una terminal nueva (el agente sí la ve si arrancó después)")
 	default:
+		// Aquí vivía un cuarto caso: «definida en tu usuario, pero esta
+		// terminal es anterior» (Windows solo entrega las variables de usuario
+		// a los procesos que arrancan DESPUÉS de definirlas). Se apoyaba en
+		// definidaEnElUsuario, que al adoptarse Zero-Registry pasó a devolver
+		// false SIEMPRE, en los dos builds: la rama era inalcanzable y el
+		// mensaje no se imprimió nunca más. Se retiró en la limpieza de
+		// 2026-08-25 porque una rama que no puede ejecutarse miente sobre lo
+		// que el diagnóstico sabe.
+		//
+		// Si ese aviso vuelve a hacer falta, hay que LEER de verdad
+		// HKCU\Environment. Leer no contradice Zero-Registry —esa decisión es
+		// sobre no GUARDAR credenciales ahí— pero es una decisión de producto,
+		// no una reparación, y por eso no se toma de oficio.
 		fmt.Printf("  clave      %s ✗ sin definir — la capa de consejo no correrá\n", cfg.LLM.APIKeyEnv)
 		fmt.Println("             defínela desde `codeguard config` o como variable de entorno")
 	}

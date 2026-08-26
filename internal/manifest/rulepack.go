@@ -10,9 +10,9 @@ import (
 
 // RulepackManifest es lo que se firma por cada release de rulepack (W3,
 // t.95-105): la lista exacta de archivos con sus hashes y el digest del
-// árbol completo. Vive en el mismo paquete que el verificador de motores
-// para que la forma canónica de "qué bytes se firman" jamás diverja entre
-// firmador y verificador (condición de Kimi, t.98).
+// árbol completo. Firmador y verificador viven juntos a propósito, para que
+// la forma canónica de "qué bytes se firman" jamás diverja entre los dos
+// (condición de Kimi, t.98).
 //
 // La VERSIÓN del rulepack va DENTRO de lo firmado y debe coincidir con el
 // nombre del directorio donde se instala: eso mata el misbinding (presentar

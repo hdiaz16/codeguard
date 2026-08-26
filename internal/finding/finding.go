@@ -112,20 +112,3 @@ func (f *Finding) Normalizar() {
 	}
 }
 
-// HuellaCorta abrevia una huella para mostrarla: n bytes DEL CUERPO hex,
-// conservando el prefijo de versión si lo hay. Cortar el token completo
-// habría gastado el presupuesto visible en "v2:" y enseñado menos entropía
-// (condición del turno 76). Guarda de longitud para evitar panics.
-func HuellaCorta(h string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	prefijo := ""
-	if resto, con := strings.CutPrefix(h, PrefijoV2); con {
-		prefijo, h = PrefijoV2, resto
-	}
-	if len(h) <= n {
-		return prefijo + h
-	}
-	return prefijo + h[:n]
-}

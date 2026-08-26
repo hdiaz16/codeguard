@@ -103,6 +103,26 @@
         ningún momento.
       </p>
 
+      <div class="nota menta">
+        <b>Antes de empezar necesitas:</b>
+        <ul>
+          <li><strong>Windows</strong> (10 u 11).</li>
+          <li><strong>git</strong> — para clonar el repositorio.</li>
+          <li><strong>Go 1.26 o más nuevo</strong> — todavía no hay releases
+            precompiladas, así que los binarios se compilan desde el repo:
+            <code>winget install -e --id GoLang.Go</code> (cierra y reabre la
+            terminal para que <code>go</code> quede en el PATH).</li>
+          <li><em>Opcional:</em> <strong>Inno Setup&nbsp;6</strong>, sólo si
+            quieres el asistente gráfico <code>CodeGuard-Setup.exe</code>:
+            <code>winget install -e --id JRSoftware.InnoSetup</code>. Sin él, el
+            script <code>install.ps1</code> instala exactamente lo mismo.</li>
+        </ul>
+        El instalador trae y verifica los motores propios (gitleaks, semgrep,
+        trivy y otros); los demás usan la cadena que ya tienes (tsc, eslint,
+        .NET) o se instalan aparte (actionlint, shell) — el detalle está más
+        abajo, y cada motor que falte degrada a «ausente» sin bloquear.
+      </div>
+
       <h3 id="instalacion-obtener">De dónde sale</h3>
       <p>
         CodeGuard vive en

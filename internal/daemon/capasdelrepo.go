@@ -66,11 +66,8 @@ func CapasDelRepo(cfg *config.Config, repoRoot string, rastreados []string) []st
 	if cfg != nil {
 		arbol = pipeline.FiltrarExcluidos(cfg, arbol)
 	}
-	// No se rellena Input.MigrationsGl aunque exista el campo: NADIE lo lee en
-	// todo el repo (se declara en engine.go:20 y no tiene un solo lector).
-	// Squawk recibe sus globs por `Engines(cfg, …)`, en su propia estructura.
-	// Ponerlo aquí no cambiaba nada y hacía creer al que lo leyera que es lo que
-	// hace funcionar a squawk, que es peor que no ponerlo.
+	// Squawk recibe sus globs de migraciones por `Engines(cfg, …)`, en su
+	// propia estructura, no por aquí.
 	in := engines.Input{RepoRoot: repoRoot, Files: arbol}
 
 	// inCI=false: la pregunta es qué vigila el repo en la máquina del

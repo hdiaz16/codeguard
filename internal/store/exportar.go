@@ -13,12 +13,11 @@ import (
 // hoja de cálculo: cuántos commits se bloquearon, por qué regla, en qué repo.
 
 type FiltroExport struct {
-	Repo    string
-	Desde   string
-	Hasta   string
-	Solo    string // "block" | "pass" | ""
-	Limite  int
-	Detalle bool
+	Repo   string
+	Desde  string
+	Hasta  string
+	Solo   string // "block" | "pass" | ""
+	Limite int
 }
 
 func (s *Store) ExportarRuns(destino string, f FiltroExport) (int, error) {

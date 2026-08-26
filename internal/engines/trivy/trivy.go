@@ -147,7 +147,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = in.RepoRoot
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilBasico) // corre SIEMPRE con --skip-db-update; la DB la baja trivydb (Go propio), no el motor
+	cmd.Env = proc.EntornoDeMotor("trivy", proc.PerfilBasico) // declara RedSoloActualizar: corre SIEMPRE con --skip-db-update; la DB la baja trivydb (Go propio), no el motor
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	out := salida.Stdout
 	// Sin --exit-code, trivy sale con 0 aunque encuentre vulnerabilidades: un

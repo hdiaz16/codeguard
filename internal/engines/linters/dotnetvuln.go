@@ -214,7 +214,7 @@ func dnvSoportaNoRestore(ctx context.Context, dirProy string) bool {
 	// exactamente la pregunta que importa (¿este SDK conoce la bandera?).
 	cmd := exec.CommandContext(ctx, "dotnet", "list", "package", "--help")
 	cmd.Dir = dirProy
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilDotnet) // la sonda no toca red
+	cmd.Env = proc.EntornoDePerfil(proc.PerfilDotnet) // la sonda NO es el motor: --help no toca red, y EntornoDePerfil es justo el camino sin red
 	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
 	soporta := err == nil && bytes.Contains(salida.Stdout, []byte("--no-restore"))
 	dnvNoRestoreCache.Store(dirProy, soporta)
@@ -256,7 +256,7 @@ func (e DotnetVuln) revisarProyecto(ctx context.Context, repoRoot, csproj string
 	}
 	cmd := exec.CommandContext(ctx, "dotnet", args...)
 	cmd.Dir = dirProy
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilDotnetRed) // restaura y consulta nuget.org por diseno
+	cmd.Env = proc.EntornoDeMotor("dotnet-vuln", proc.PerfilDotnet) // declara RedRequerida: restaura y consulta nuget.org por diseno
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	if salida.Recortada {
 		return nil, fmt.Errorf("dotnet list package devolvió más de %d MB en %s", proc.MaxSalida>>20, csproj)

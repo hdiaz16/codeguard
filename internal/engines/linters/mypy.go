@@ -202,7 +202,7 @@ func correrMypy(ctx context.Context, repoRoot, dir string, rutas []string) ([]fi
 	cmd.Dir = abs
 	// Sin esto las herramientas de Python leen y escriben en cp1252 en Windows
 	// y rompen los acentos de los mensajes. Misma lección que semgrep y ruff.
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilPython) // UTF-8 lo impone el perfil; MYPYPATH viaja en el
+	cmd.Env = proc.EntornoDeMotor("mypy", proc.PerfilPython) // UTF-8 lo impone el perfil; MYPYPATH viaja en el
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 
 	// Sólo stdout: los avisos de configuración de mypy ("mypy.ini: [mypy]:

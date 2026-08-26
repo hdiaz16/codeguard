@@ -75,7 +75,7 @@ func (b Bandit) Run(ctx context.Context, in engines.Input) ([]finding.Finding, e
 	args := []string{"-f", "json", "-q"}
 	args = append(args, fsutil.ComoArgumentosCLI(sanitizadas)...)
 
-	salida, fallo, err := runToolConSalida(ctx, in.RepoRoot, bin, args...)
+	salida, fallo, err := runToolConSalida(ctx, "bandit", in.RepoRoot, bin, args...)
 	if err != nil {
 		return nil, fmt.Errorf("bandit no corrió: %w", err)
 	}

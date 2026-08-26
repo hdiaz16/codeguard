@@ -252,7 +252,7 @@ func dnbCompilar(ctx context.Context, repoRoot, csproj string) ([]finding.Findin
 		"-p:IntermediateOutputPath="+privado,
 		"-p:OutputPath="+privado+"bin"+string(os.PathSeparator))
 	cmd.Dir = dirProy
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilDotnet) // --no-restore: compila offline
+	cmd.Env = proc.EntornoDeMotor("dotnet-build", proc.PerfilDotnet) // --no-restore: compila offline
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	if salida.Recortada {
 		return nil, fmt.Errorf("dotnet build devolvió más de %d MB de salida en %s", proc.MaxSalida>>20, csproj)

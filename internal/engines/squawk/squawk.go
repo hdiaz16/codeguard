@@ -136,7 +136,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 	args := append([]string{"--reporter", "json", "--"}, files...)
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = in.RepoRoot
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilPython)
+	cmd.Env = proc.EntornoDeMotor("squawk", proc.PerfilPython)
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	out := salida.Stdout
 	// Si el contexto se canceló o venció, squawk pudo morir a media faena: el

@@ -90,7 +90,7 @@ func (e DotnetFormat) Run(ctx context.Context, in engines.Input) ([]finding.Find
 	for _, proy := range proyectos {
 		_ = os.Remove(report)
 		// El reporte JSON evita parsear la salida humana del comando.
-		salida, err := runTool(ctx, in.RepoRoot, "dotnet", "format", proy,
+		salida, err := runTool(ctx, "dotnet-format", in.RepoRoot, "dotnet", "format", proy,
 			"--verify-no-changes", "--no-restore", "--report", report)
 		if err != nil {
 			return nil, fmt.Errorf("dotnet format no corrió: %w", err)

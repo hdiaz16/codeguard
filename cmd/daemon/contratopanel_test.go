@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"codeguard/internal/capas"
+	"codeguard/internal/daemon"
 	"codeguard/internal/finding"
 )
 
@@ -30,12 +31,13 @@ func TestElPanelNoLeeCamposQueGoNoManda(t *testing.T) {
 	p := &panelPayload{
 		Repo: "demo", RepoRoot: "C:/repos/demo", Branch: "master",
 		AIGenerated: true, Suppressed: 1,
-		Languages:  []string{"go"},
-		Capas:      []capas.Capa{{Motor: "gitleaks", Estado: capas.Corrio, Hallazgos: 1, Ms: 2, Detalle: "x"}},
-		CapasRepo:  []string{"semgrep", "gofmt"},
-		SecretosEn: []string{"internal/pago/llave.go:3"},
-		OtrosRepos: []proyectoEnLista{{Marca: "✓", Nombre: "demo", Ruta: "C:/repos/demo", Activo: true, Verdict: "pass", Blocking: 1, Advisory: 2, Cuando: "11:00"}},
-		Verdict:    "pass", Reason: "x", Blocking: 1, Advisory: 2, CIParity: true,
+		Languages:     []string{"go"},
+		Capas:         []capas.Capa{{Motor: "gitleaks", Estado: capas.Corrio, Hallazgos: 1, Ms: 2, Detalle: "x"}},
+		CapasRepo:     []string{"semgrep", "gofmt"},
+		NoDisponibles: []daemon.NoDisponible{{Motor: "tsc", Falta: "npx", Motivo: "no encuentro npx"}},
+		SecretosEn:    []string{"internal/pago/llave.go:3"},
+		OtrosRepos:    []proyectoEnLista{{Marca: "✓", Nombre: "demo", Ruta: "C:/repos/demo", Activo: true, Verdict: "pass", Blocking: 1, Advisory: 2, Cuando: "11:00"}},
+		Verdict:       "pass", Reason: "x", Blocking: 1, Advisory: 2, CIParity: true,
 		Outcome:      "clean",
 		GarantiaRota: []string{"x"},
 		Degraded:     []string{"x"},
@@ -57,6 +59,7 @@ func TestElPanelNoLeeCamposQueGoNoManda(t *testing.T) {
 	// lista y cada capa.
 	repo := primerElemento(t, payload["otros_repos"])
 	capa := primerElemento(t, payload["capas"])
+	noDisp := primerElemento(t, payload["no_disponibles"])
 
 	for _, c := range []struct {
 		nombre   string
@@ -67,6 +70,11 @@ func TestElPanelNoLeeCamposQueGoNoManda(t *testing.T) {
 		{"payload", "p", regexp.MustCompile(`\bp\.([a-z_][a-z_0-9]*)`), payload},
 		{"proyecto de la lista", "r", regexp.MustCompile(`\br\.([a-z_][a-z_0-9]*)`), repo},
 		{"capa", "c", regexp.MustCompile(`\bc\.([a-z_][a-z_0-9]*)`), capa},
+		// La variable se llama `nd` y no `d` a propósito: `d` ya se usa en el
+		// panel para otras cosas (d.pillar, d.text…), y un ámbito de una sola
+		// letra reutilizada haría que esta prueba comparase campos de objetos
+		// distintos y fallara sin motivo.
+		{"capa que no puede correr", "nd", regexp.MustCompile(`\bnd\.([a-z_][a-z_0-9]*)`), noDisp},
 	} {
 		vistos := map[string]bool{}
 		for _, m := range c.re.FindAllStringSubmatch(string(html), -1) {

@@ -361,7 +361,7 @@ func (e *Engine) correrLote(ctx context.Context, bin, rules string, in engines.I
 	// gitdiff (rutas entrecomilladas por git). Se mantiene la separación porque
 	// quitar un recurso mutable compartido es bueno por sí solo, no porque
 	// arregle nada medido.
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilPython,
+	cmd.Env = proc.EntornoDeMotor("semgrep", proc.PerfilPython,
 		"SEMGREP_SETTINGS_FILE="+ajustesPropios())
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	out := salida.Stdout

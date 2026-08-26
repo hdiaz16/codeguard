@@ -14,10 +14,9 @@ import (
 )
 
 type Input struct {
-	RepoRoot     string
-	Files        []gitdiff.ChangedFile
-	RulepackDir  string // raíz del rulepack pinneado (rulepacks/<ver>)
-	MigrationsGl []string
+	RepoRoot    string
+	Files       []gitdiff.ChangedFile
+	RulepackDir string // raíz del rulepack pinneado (rulepacks/<ver>)
 }
 
 // Engine es un escáner determinista. Run devuelve hallazgos; un error de

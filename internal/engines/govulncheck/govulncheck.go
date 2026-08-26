@@ -133,7 +133,7 @@ func (e *Engine) Run(ctx context.Context, in engines.Input) ([]finding.Finding, 
 func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string) ([]finding.Finding, error) {
 	cmd := exec.CommandContext(ctx, bin, "-json", "./...")
 	cmd.Dir = filepath.Join(repoRoot, filepath.FromSlash(dir))
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilGoRed) // resuelve modulos y baja la vulndb por diseno
+	cmd.Env = proc.EntornoDeMotor("govulncheck", proc.PerfilGo) // declara RedRequerida: resuelve modulos y baja la vulndb por diseno
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	if runErr != nil {
 		var exit *exec.ExitError

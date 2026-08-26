@@ -1,9 +1,7 @@
 package attest_test
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -14,7 +12,6 @@ import (
 	"time"
 
 	"codeguard/internal/attest"
-	"codeguard/internal/manifest"
 )
 
 // ============================================================================
@@ -313,47 +310,6 @@ func TestE2E_AtestacionExpirada(t *testing.T) {
 	err := verifier.Verify(att, opts)
 	if !errors.Is(err, attest.ErrExpired) {
 		t.Fatalf("Atestación antigua debía ser rechazada con ErrExpired, got: %v", err)
-	}
-}
-
-// ============================================================================
-// ESCENARIO 7: MANIFIESTO DE BINARIOS — DETECCIÓN DE SUPLANTACIÓN
-// ============================================================================
-func TestE2E_Manifest_TamperDetection(t *testing.T) {
-	dir := t.TempDir()
-	binPath := filepath.Join(dir, "gosec.exe")
-
-	contenidoReal := []byte("binario-gosec-oficial-compilado-v2.18.0")
-	if err := os.WriteFile(binPath, contenidoReal, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	hashReal := sha256.Sum256(contenidoReal)
-	tamanoReal := int64(len(contenidoReal))
-	desc := manifest.EngineDescriptor{
-		ID:        "gosec",
-		Version:   "2.18.0",
-		SHA256:    hex.EncodeToString(hashReal[:]),
-		SizeBytes: &tamanoReal,
-	}
-
-	ctx := t.Context()
-
-	if err := manifest.VerificarBinario(ctx, binPath, desc); err != nil {
-		t.Fatalf("VerificarBinario falló con binario legítimo: %v", err)
-	}
-
-	contenidoMalicioso := []byte("binario-gosec-modificado-con-backdoor")
-	if err := os.WriteFile(binPath, contenidoMalicioso, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	err := manifest.VerificarBinario(ctx, binPath, desc)
-	if err == nil {
-		t.Fatal("VerificarBinario debía rechazar el binario modificado")
-	}
-	if !strings.Contains(err.Error(), "tamaño") && !strings.Contains(err.Error(), "hash") {
-		t.Fatalf("Error inesperado en VerificarBinario: %v", err)
 	}
 }
 

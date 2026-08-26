@@ -46,8 +46,25 @@ import (
 //     parser. Un test arquitectónico prohíbe calcular huellas fuera de este
 //     paquete (el llamador 37 es como vuelven a divergir).
 
-// VersionHuella es la versión vigente del contrato.
-const VersionHuella = 2
+// versionHuellaV2 es LA etiqueta del contrato vigente, y la única fuente de
+// la que salen sus dos apariciones: el prefijo textual del token y el dominio
+// del hash.
+//
+// Antes había tres representaciones del mismo "2" —una constante
+// VersionHuella numérica, el prefijo "v2:" y el dominio "v2\x00" literal— y
+// la numérica, que se presentaba como la fuente normativa, no participaba en
+// construir ni un byte de la huella: nadie la leía. Amarrar tres
+// representaciones con un test habría dejado tres sitios donde divergir; se
+// deja UNO. Un v3 futuro cambia esta etiqueta y arrastra prefijo y dominio a
+// la vez, que es justo la propiedad que se quiere.
+const (
+	versionHuellaV2 = "v2"
+	// PrefijoV2 es el prefijo textual de las huellas del contrato vigente.
+	PrefijoV2 = versionHuellaV2 + ":"
+	// dominioHuellaV2 separa el espacio de hash de cada versión: un v3 jamás
+	// colisiona con un v2 ni por accidente.
+	dominioHuellaV2 = versionHuellaV2 + "\x00"
+)
 
 // SunsetV1 es la fecha ("2026-11-30") en que la ventana dual muere: la
 // inyecta build-dist como release+90 días (reloj inyectable — nada cableado,
@@ -76,9 +93,6 @@ func VentanaDualActiva(hoy time.Time) bool {
 	}
 	return !hoy.After(corte)
 }
-
-// PrefijoV2 es el prefijo textual de las huellas del contrato vigente.
-const PrefijoV2 = "v2:"
 
 // ParseHuella clasifica un token de huella almacenado. Devuelve la versión
 // (1 o 2) y si el token es válido. La regla dura, aprendida del fpRe del
@@ -204,9 +218,10 @@ func AsignarHuellas(fs []Finding, fuente FuenteDeLineas) {
 
 // huellaV2: el dominio del hash lleva la versión DENTRO además del prefijo
 // textual — un v3 futuro cambia el dominio y ningún v2 colisiona con él ni
-// por accidente.
+// por accidente. Los dos salen de versionHuellaV2, así que no pueden
+// divergir.
 func huellaV2(f *Finding, ancla string) string {
-	h := sha256.Sum256([]byte("v2\x00" + f.Engine + "\x00" + f.RuleKey + "\x00" +
+	h := sha256.Sum256([]byte(dominioHuellaV2 + f.Engine + "\x00" + f.RuleKey + "\x00" +
 		filepath.ToSlash(f.File) + "\x00" + strings.TrimSpace(f.LineContent) + "\x00" + ancla))
 	return PrefijoV2 + hex.EncodeToString(h[:])
 }

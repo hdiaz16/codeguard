@@ -11,4 +11,3 @@ package main
 type Rect struct{ X, Y, W, H, Radio int }
 
 func RecortarA(string, []Rect) {}
-func OlvidarVentanas()         {}

@@ -72,7 +72,7 @@ func (e PSAnalyzer) Run(ctx context.Context, in engines.Input) ([]finding.Findin
 	// objetivos (dato, no código) y el PSModulePath —que la lista blanca no deja
 	// pasar— para que pwsh encuentre el módulo PSScriptAnalyzer. Sin él, el
 	// módulo no carga y el motor se veería «sin herramienta» teniéndola.
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilBasico,
+	cmd.Env = proc.EntornoDeMotor("psscriptanalyzer", proc.PerfilBasico,
 		"CG_PSSA_TARGETS="+strings.Join(sanitizadas, "\n"),
 		"PSModulePath="+os.Getenv("PSModulePath"))
 

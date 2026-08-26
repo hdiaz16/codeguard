@@ -84,7 +84,7 @@ func (e ActionLint) Run(ctx context.Context, in engines.Input) ([]finding.Findin
 	args := []string{"-format", "{{json .}}", "-no-color"}
 	args = append(args, fsutil.ComoArgumentosCLI(sanitizadas)...)
 
-	salida, fallo, err := runToolConSalida(ctx, in.RepoRoot, bin, args...)
+	salida, fallo, err := runToolConSalida(ctx, "actionlint", in.RepoRoot, bin, args...)
 	if err != nil {
 		return nil, fmt.Errorf("actionlint no corrió: %w", err)
 	}

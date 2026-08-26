@@ -1,6 +1,11 @@
 package proc
 
-import "strings"
+import (
+	"log"
+	"strings"
+
+	"codeguard/internal/engines/politicared"
+)
 
 // Perfiles de entorno por SUBPROCESO (W4, t.116, fusión Kimi+GPT): cada motor
 // declara qué familia de variables necesita ADEMÁS del piso común, y nada
@@ -25,24 +30,19 @@ const (
 	// PerfilBasico: solo el piso común. Binarios Go puros sin toolchain
 	// (gitleaks) y sondas.
 	PerfilBasico Perfil = iota
-	// PerfilGo: toolchain de Go OFFLINE (gofmt/govet/gosec/staticcheck) —
-	// cachés y raíces, sin GOPROXY: compilar el módulo no debe ir a la red
-	// en el camino del commit.
+	// PerfilGo: toolchain de Go (gofmt/govet/gosec/staticcheck/govulncheck) —
+	// cachés y raíces. Que vea o no GOPROXY y los proxies del usuario NO lo
+	// decide el perfil: lo decide la política de red del motor.
 	PerfilGo
-	// PerfilGoRed: PerfilGo + GOPROXY + proxies/CA. Para govulncheck, que
-	// baja la vulndb y resuelve módulos por diseño.
-	PerfilGoRed
 	// PerfilNode: eslint/tsc/biome — resolución de node y caché de npm.
 	PerfilNode
 	// PerfilPython: semgrep/ruff/bandit/mypy/squawk — el intérprete y sus
 	// rutas, con UTF-8 SIEMPRE fijo (la lección de los acentos en cp1252
 	// deja de ser un extra que cada llamador recuerda).
 	PerfilPython
-	// PerfilDotnet: dotnet format/build OFFLINE (--no-restore).
+	// PerfilDotnet: dotnet format/build/vuln — el SDK y sus cachés. Igual que
+	// con Go, la red la decide la política del motor y no esta familia.
 	PerfilDotnet
-	// PerfilDotnetRed: PerfilDotnet + proxies/CA. Para dotnet-vuln, que
-	// restaura y consulta nuget.org por diseño.
-	PerfilDotnetRed
 	// PerfilJava: google-java-format y PMD — solo JAVA_HOME de más.
 	PerfilJava
 	// PerfilCompleto: la unión entera (la lista histórica). SOLO para la
@@ -74,17 +74,41 @@ var piso = map[string]bool{
 var extrasDe = map[Perfil][]string{
 	PerfilBasico: {},
 	PerfilGo:     {"GOPATH", "GOROOT", "GOCACHE", "GOMODCACHE"},
-	PerfilGoRed: {"GOPATH", "GOROOT", "GOCACHE", "GOMODCACHE", "GOPROXY",
-		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-		"REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR"},
-	PerfilNode: {"NODE_PATH", "NPM_CONFIG_CACHE"},
+	PerfilNode:   {"NODE_PATH", "NPM_CONFIG_CACHE"},
 	PerfilPython: {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV",
 		"PYTHONUTF8", "PYTHONIOENCODING", "MYPYPATH"},
 	PerfilDotnet: {"DOTNET_ROOT", "DOTNET_CLI_TELEMETRY_OPTOUT", "NUGET_PACKAGES"},
-	PerfilDotnetRed: {"DOTNET_ROOT", "DOTNET_CLI_TELEMETRY_OPTOUT", "NUGET_PACKAGES",
-		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-		"REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS"},
-	PerfilJava: {"JAVA_HOME"},
+	PerfilJava:   {"JAVA_HOME"},
+}
+
+// extrasRedComunes es lo que ve CUALQUIER familia cuyo motor declare red: los
+// proxies de verdad del usuario y sus raíces de certificados. Sin las CA, un
+// equipo detrás de un proxy que inspecciona TLS no puede resolver nada.
+var extrasRedComunes = []string{
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+	"REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR",
+}
+
+// extrasRedDe es lo que añade cada familia POR ENCIMA de las comunes cuando su
+// motor declara red. Son las dos variables que antes distinguían PerfilGoRed y
+// PerfilDotnetRed de sus versiones offline.
+var extrasRedDe = map[Perfil][]string{
+	PerfilGo:     {"GOPROXY"},
+	PerfilDotnet: {"NODE_EXTRA_CA_CERTS"},
+}
+
+// reservadasDeRed son las variables que la POLÍTICA controla y que un llamador
+// no puede fijar por su cuenta.
+//
+// Sin esto, la autoridad del registro sería de mentira: entornoFiltrado añade
+// los `extra` del llamador DESPUÉS del egress-hint y sin pasarlos por la lista
+// blanca, así que un adaptador que pasara HTTP_PROXY=… (por descuido o por
+// copiar de otro sitio) se saltaría el freno de red entero. Lo señaló GPT al
+// revisar el cableado y se comprobó leyendo entornoFiltrado.
+var reservadasDeRed = map[string]bool{
+	"HTTP_PROXY": true, "HTTPS_PROXY": true, "NO_PROXY": true,
+	"GOPROXY": true, "REQUESTS_CA_BUNDLE": true, "SSL_CERT_FILE": true,
+	"SSL_CERT_DIR": true, "NODE_EXTRA_CA_CERTS": true,
 }
 
 // fijasDe: lo que el perfil IMPONE (extras con valor), pase lo que pase en el
@@ -111,22 +135,41 @@ var egressHint = []string{
 	"NO_PROXY=", "no_proxy=",
 }
 
-// conRed dice qué perfiles DECLARAN red: solo ellos ven los proxies reales
-// del usuario y se libran del freno.
-var conRed = map[Perfil]bool{
-	PerfilGoRed:     true,
-	PerfilDotnetRed: true,
-	PerfilCompleto:  true,
-}
-
-// EntornoDePerfil arma el entorno de un subproceso: piso + los extras del
-// perfil + lo impuesto por el perfil + lo que pase el llamador (que siempre
-// gana). Es LA vía de los motores; Entorno() a secas queda para
-// PerfilCompleto (contrato y git).
+// EntornoDePerfil arma el entorno de un subproceso SIN RED: piso + los extras
+// de la familia + lo que la familia impone + lo que pase el llamador.
+//
+// Ya no existe ningún perfil que conceda red, y esa ausencia es la garantía:
+// la ÚNICA puerta a los proxies reales es EntornoDeMotor consultando el
+// registro de política. Un llamador que no pase por ahí corre frenado, se
+// llame como se llame. Queda para los subprocesos que NO son motores —el
+// calentamiento del daemon y las sondas de versión—; Entorno() a secas sigue
+// siendo lo de PerfilCompleto (contrato y git).
 func EntornoDePerfil(p Perfil, extra ...string) []string {
 	if p == PerfilCompleto {
 		return Entorno(extra...)
 	}
+	return entornoDeFamilia(p, false, extra)
+}
+
+// EntornoDeMotor arma el entorno de un MOTOR: la familia la elige el llamador
+// (qué toolchain necesita), y si ve la red o no lo decide el registro de
+// política a partir del nombre del motor. Ese reparto es el punto entero del
+// cableado — el llamador ya no puede concederse red.
+//
+// Un nombre desconocido cae en denegado (fail-closed), así que equivocarse
+// escribiéndolo frena al motor en vez de soltarlo: el error se nota y no se
+// paga en seguridad. PerfilCompleto no se acepta: es la unión histórica de la
+// medición de contratos y de git, que no son motores y no tienen política.
+func EntornoDeMotor(motor string, familia Perfil, extra ...string) []string {
+	if familia == PerfilCompleto {
+		// Programación, no entrada: un motor jamás debe pedir la unión
+		// histórica, que se salta el estrechamiento por perfiles entero.
+		panic("proc: EntornoDeMotor no acepta PerfilCompleto (motor " + motor + ")")
+	}
+	return entornoDeFamilia(familia, politicared.RequiereRedDuranteAnalisis(motor), extra)
+}
+
+func entornoDeFamilia(p Perfil, conRed bool, extra []string) []string {
 	permitido := make(map[string]bool, len(piso)+16)
 	for k := range piso {
 		permitido[k] = true
@@ -134,10 +177,27 @@ func EntornoDePerfil(p Perfil, extra ...string) []string {
 	for _, k := range extrasDe[p] {
 		permitido[strings.ToUpper(k)] = true
 	}
+	if conRed {
+		for _, k := range extrasRedComunes {
+			permitido[strings.ToUpper(k)] = true
+		}
+		for _, k := range extrasRedDe[p] {
+			permitido[strings.ToUpper(k)] = true
+		}
+	}
 	todos := append([]string{}, fijasDe[p]...)
-	if !conRed[p] {
+	if !conRed {
 		todos = append(todos, egressHint...)
 	}
-	todos = append(todos, extra...)
+	// Los extras del llamador van al final —siguen ganando sobre lo demás—
+	// pero NO pueden tocar las variables que gobierna la política.
+	for _, e := range extra {
+		i := strings.IndexByte(e, '=')
+		if i > 0 && reservadasDeRed[strings.ToUpper(e[:i])] {
+			log.Printf("proc: se ignora %q en los extras: la red la manda la política del motor, no el llamador", e[:i])
+			continue
+		}
+		todos = append(todos, e)
+	}
 	return entornoFiltrado(permitido, todos)
 }

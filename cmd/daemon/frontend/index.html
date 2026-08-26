@@ -659,14 +659,27 @@
       // El estado es el mismo para todas —ninguna ha corrido aún— y se dice con
       // esas palabras, sin reutilizar los estados de un análisis: "no aplica" o
       // "ausente" aquí serían afirmaciones que nadie ha comprobado.
+      // "Le toca" y "puede correr aquí" son dos cosas distintas, y decir la
+      // primera callando la segunda es prometer una capa que no existe en
+      // esta máquina. El motivo viene escrito para quien lo lee (incluye cómo
+      // instalarlo), así que se enseña tal cual.
+      const falta = {};
+      for (const nd of (p.no_disponibles || [])) falta[nd.motor] = nd.motivo || ("no encuentro " + nd.falta);
       h += `<h3>Motores en este repo</h3>`;
       for (const motor of p.capas_repo) {
-        h += `<div class="capa"><span class="n">${esc(motor)}</span>` +
-             `<span class="e">vigila este repo · sin análisis todavía</span>` +
+        const problema = falta[motor];
+        h += `<div class="capa ${problema ? "ausente" : ""}"><span class="n">${esc(motor)}</span>` +
+             `<span class="e">${problema
+                 ? "no puede correr aquí · " + esc(problema)
+                 : "vigila este repo · sin análisis todavía"}</span>` +
              `<span class="ms"></span></div>`;
       }
+      const nFalta = Object.keys(falta).length;
       h += `<div class="empty">Estas son las capas que le tocan a tu repo por lo que hay en el
-            árbol. Haz un commit y cada una dirá qué miró y qué encontró.</div>`;
+            árbol. Haz un commit y cada una dirá qué miró y qué encontró.` +
+           (nFalta ? ` A ${nFalta === 1 ? "una le falta" : nFalta + " les falta"} su herramienta
+            en esta máquina: hasta que la instales, ${nFalta === 1 ? "esa capa no mira" : "esas capas no miran"} nada.` : ``) +
+           `</div>`;
     } else {
       h += `<h3>Motores en este repo</h3>` +
         `<div class="empty">Todavía no hay ningún análisis de este proyecto, así que no puedo
@@ -898,9 +911,23 @@
       // el stack que detectó— el panel enseñaba una cabecera vacía, como si la
       // herramienta no supiera nada del repo. Y sí lo sabe: para responder qué
       // capas lo vigilan no hace falta ningún commit.
-      const n = delRepo.length;
-      motores.innerHTML = `tu repo: <b>${n}</b> capa${n === 1 ? "" : "s"} lo ${n === 1 ? "vigila" : "vigilan"}` +
-                          ` · ${esc(delRepo.join(" · "))} — sin análisis todavía`;
+      //
+      // El número cuenta las que PUEDEN correr aquí, no las que aplican: un
+      // repo de TypeScript en una máquina sin tsc tenía "3 capas lo vigilan"
+      // y una de las tres no existía. Las que faltan se dicen aparte y nunca
+      // dentro del número — sumarlas sería prometer una vigilancia que no hay.
+      const sinPoder = (p.no_disponibles || []);
+      const n = delRepo.length - sinPoder.length;
+      let txt = `tu repo: <b>${n}</b> capa${n === 1 ? "" : "s"} lo ${n === 1 ? "vigila" : "vigilan"}`;
+      const pueden = delRepo.filter(m => !sinPoder.some(nd => nd.motor === m));
+      if (pueden.length) txt += ` · ${esc(pueden.join(" · "))}`;
+      txt += ` — sin análisis todavía`;
+      if (sinPoder.length) {
+        const u = sinPoder.length === 1;
+        txt += ` · <span class="caida">${sinPoder.length} no ${u ? "puede" : "pueden"} correr aquí: ` +
+               `${esc(sinPoder.map(nd => nd.motor + " (" + nd.falta + ")").join(", "))}</span>`;
+      }
+      motores.innerHTML = txt;
       motores.hidden = false;
     } else {
       motores.hidden = true;

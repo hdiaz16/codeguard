@@ -11,6 +11,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"codeguard/internal/capas"
+	"codeguard/internal/daemon"
 	"codeguard/internal/finding"
 	"codeguard/internal/pipeline"
 )
@@ -77,6 +78,19 @@ type panelPayload struct {
 	// nada —basta el árbol y el config— así que está desde el momento en que se
 	// enrola, antes del primer commit. Sale de daemon.CapasDelRepo.
 	CapasRepo []string `json:"capas_repo,omitempty"`
+	// NoDisponibles son las capas de CapasRepo que ESTA MÁQUINA no puede
+	// ejecutar porque falta el ejecutable que invocan, con el motivo dicho
+	// para quien lo va a leer.
+	//
+	// "Aplica" y "puede correr" son dos preguntas distintas y el panel solo
+	// contestaba la primera: decía «tu repo: 3 capas» aunque tsc no estuviera
+	// instalado. Medido sobre 10 repos reales, 5 sobre-declaraban — y el 3 de
+	// un repo de TypeScript sin tsc no se puede desmentir mirando, que es lo
+	// que lo hace peor que decir 2. daemon.Disponibilidad existía desde
+	// entonces para contestar esto y no la llamaba nadie; se cableó el
+	// 2026-08-25. Vacía cuando la máquina puede con todo, que es el caso
+	// normal y no gasta ni un píxel.
+	NoDisponibles []daemon.NoDisponible `json:"no_disponibles,omitempty"`
 	// SecretosEn: dónde estaba cada secreto que frenó el commit,
 	// "archivo:línea". Sólo se llena en el bloqueo de la etapa 1, que no pasa
 	// por el pipeline y por tanto no tiene Findings que enseñar.

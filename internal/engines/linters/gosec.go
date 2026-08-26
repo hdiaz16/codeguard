@@ -71,7 +71,7 @@ func (g Gosec) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 	args := []string{"-fmt=json", "-terse"}
 	args = append(args, fsutil.ComoArgumentosCLI(sanitizadas)...)
 
-	salida, fallo, err := runToolConSalida(ctx, in.RepoRoot, bin, args...)
+	salida, fallo, err := runToolConSalida(ctx, "gosec", in.RepoRoot, bin, args...)
 	if err != nil {
 		return nil, fmt.Errorf("gosec no corrió: %w", err)
 	}

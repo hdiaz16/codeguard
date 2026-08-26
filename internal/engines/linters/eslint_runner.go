@@ -37,7 +37,7 @@ func correrLinterJS(ctx context.Context, repoRoot, dir string, tool herramienta,
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = abs
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilNode)
+	cmd.Env = proc.EntornoDeMotor("eslint", proc.PerfilNode)
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 
 	// Se lee stdout SOLO, nunca la salida combinada: biome escribe en stderr

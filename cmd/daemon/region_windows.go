@@ -70,10 +70,12 @@ func buscarVentana(titulo string) uintptr {
 	if h, ok := hwndCache[titulo]; ok && h != 0 {
 		// Windows REUTILIZA los HWND: un handle cacheado puede seguir vivo y
 		// pertenecer ya a otra ventana, incluso de otro proceso — y entonces se
-		// le recortaría la forma a una ventana ajena. OlvidarVentanas cubre el
-		// caso en que se recrea la nuestra, pero no el cierre inesperado, así
-		// que aquí se comprueba que existe (IsWindow) y que sigue siendo de
-		// ESTE proceso, el mismo filtro que aplica la enumeración de abajo.
+		// le recortaría la forma a una ventana ajena. Por eso la validación va
+		// AQUÍ y no en un invalidador aparte: se comprueba que existe
+		// (IsWindow) y que sigue siendo de ESTE proceso, el mismo filtro que
+		// aplica la enumeración de abajo. Eso cubre por igual la ventana
+		// recreada y la cerrada de golpe, sin depender de que alguien se
+		// acuerde de avisar.
 		if r, _, _ := procIsWindow.Call(h); r != 0 {
 			var pid uint32
 			procGetWindowThreadPID.Call(h, uintptr(unsafe.Pointer(&pid)))
@@ -186,11 +188,3 @@ func RecortarA(titulo string, zonas []Rect) {
 	}
 }
 
-// OlvidarVentanas limpia el caché de handles. Se llama cuando una ventana se
-// recrea: un handle viejo apunta a una ventana que ya no existe y el recorte
-// se aplicaría al vacío.
-func OlvidarVentanas() {
-	hwndMu.Lock()
-	defer hwndMu.Unlock()
-	hwndCache = map[string]uintptr{}
-}

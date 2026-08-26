@@ -70,7 +70,7 @@ func (e ShellCheck) Run(ctx context.Context, in engines.Input) ([]finding.Findin
 	args := []string{"--format=json"}
 	args = append(args, fsutil.ComoArgumentosCLI(sanitizadas)...)
 
-	salida, fallo, err := runToolConSalida(ctx, in.RepoRoot, bin, args...)
+	salida, fallo, err := runToolConSalida(ctx, "shellcheck", in.RepoRoot, bin, args...)
 	if err != nil {
 		return nil, fmt.Errorf("shellcheck no corrió: %w", err)
 	}

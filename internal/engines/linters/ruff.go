@@ -123,7 +123,7 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 	// ── lint de errores ──
 	// El "--" separa banderas de operandos: una ruta que empiece por "-" no
 	// debe leerse como bandera de ruff. clap lo honra en `check` y `format`.
-	checkOut, err := runTool(ctx, in.RepoRoot, bin, append([]string{"check", "--output-format", "json", "--exit-zero", "--"}, paths...)...)
+	checkOut, err := runTool(ctx, "ruff", in.RepoRoot, bin, append([]string{"check", "--output-format", "json", "--exit-zero", "--"}, paths...)...)
 	if err != nil {
 		return nil, fmt.Errorf("ruff no corrió: %w", err)
 	}
@@ -165,7 +165,7 @@ func (e Ruff) Run(ctx context.Context, in engines.Input) ([]finding.Finding, err
 	// extrae nada, y sin el código de salida eso se reportaba como "formato
 	// limpio" sobre archivos que ruff no miró: el verde silencioso simétrico
 	// al que runToolConSalida cerró en tsc.
-	fmtOut, fmtFallo, err := runToolConSalida(ctx, in.RepoRoot, bin, append([]string{"format", "--check", "--"}, paths...)...)
+	fmtOut, fmtFallo, err := runToolConSalida(ctx, "ruff", in.RepoRoot, bin, append([]string{"format", "--check", "--"}, paths...)...)
 	if err != nil {
 		return nil, fmt.Errorf("ruff format no corrió: %w", err)
 	}

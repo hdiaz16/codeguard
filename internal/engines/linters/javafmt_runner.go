@@ -118,7 +118,7 @@ func jfmtNormalizar(b []byte) []byte {
 func jfmtCorrer(ctx context.Context, absProyecto, dirProyecto, jar string, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "java", args...)
 	cmd.Dir = absProyecto
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilJava)
+	cmd.Env = proc.EntornoDeMotor("google-java-format", proc.PerfilJava)
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 
 	if salida.Recortada {

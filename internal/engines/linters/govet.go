@@ -75,7 +75,7 @@ func (e GoVet) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 	// -json no es cosmético: es lo que convierte el silencio de vet en una
 	// respuesta. Ver hallazgosVet.
 	args := append([]string{"vet", "-json"}, paquetes...)
-	stdout, stderr, err := runToolSeparado(ctx, in.RepoRoot, "go", args...)
+	stdout, stderr, err := runToolSeparado(ctx, "govet", in.RepoRoot, "go", args...)
 	if err != nil {
 		return nil, fmt.Errorf("go vet no corrió: %w", err)
 	}

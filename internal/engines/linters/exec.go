@@ -82,10 +82,16 @@ func perfilPorBin(bin string) proc.Perfil {
 }
 
 // ejecutar corre una herramienta y devuelve los hechos completos.
-func ejecutar(ctx context.Context, dir, bin string, args ...string) ExecResult {
+//
+// El primer parámetro es el NOMBRE DEL MOTOR (su Engine.Name()), no el del
+// binario, y no es decoración: de él sale la política de red. El binario no
+// sirve para eso —«go» y «dotnet» los comparten varios motores con políticas
+// distintas—, así que la familia de variables se deduce del binario y la red
+// se pregunta por el motor.
+func ejecutar(ctx context.Context, motor, dir, bin string, args ...string) ExecResult {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
-	cmd.Env = proc.EntornoDePerfil(perfilPorBin(bin))
+	cmd.Env = proc.EntornoDeMotor(motor, perfilPorBin(bin))
 	salida, err := proc.Correr(ctx, cmd, topeSalida)
 	r := ExecResult{
 		Stdout:    salida.Stdout,
@@ -112,8 +118,8 @@ func ejecutar(ctx context.Context, dir, bin string, args ...string) ExecResult {
 // cuando encuentran problemas); sin salida sí es fallo de ejecución.
 //
 // Cáscara de compatibilidad sobre ejecutar(); no añadas llamadores nuevos.
-func runTool(ctx context.Context, dir, bin string, args ...string) (string, error) {
-	r := ejecutar(ctx, dir, bin, args...)
+func runTool(ctx context.Context, motor, dir, bin string, args ...string) (string, error) {
+	r := ejecutar(ctx, motor, dir, bin, args...)
 	// Por identidad del error y no por ctx.Err(): un proceso que terminó
 	// limpio justo antes de vencer el reloj es un análisis completo, y
 	// descartarlo aquí lo convertía en ("", nil) — un verde silencioso.
@@ -169,8 +175,8 @@ func runTool(ctx context.Context, dir, bin string, args ...string) (string, erro
 // El tercer caso es el que este producto no se puede permitir callar, porque
 // su silencio es idéntico al del primero.
 // Cáscara de compatibilidad sobre ejecutar(); no añadas llamadores nuevos.
-func runToolConSalida(ctx context.Context, dir, bin string, args ...string) (texto string, fallo bool, err error) {
-	r := ejecutar(ctx, dir, bin, args...)
+func runToolConSalida(ctx context.Context, motor, dir, bin string, args ...string) (texto string, fallo bool, err error) {
+	r := ejecutar(ctx, motor, dir, bin, args...)
 	var exitErr *exec.ExitError
 	if r.Err != nil && !errors.As(r.Err, &exitErr) && !errors.Is(r.Err, proc.ErrRecortada) {
 		return "", true, r.Err // no arrancó, o venció el plazo
@@ -211,8 +217,8 @@ func runToolConSalida(ctx context.Context, dir, bin string, args ...string) (tex
 // 0 aunque encuentre cosas, así que aquí el código no distingue nada que los
 // canales no digan mejor.
 // Cáscara de compatibilidad sobre ejecutar(); no añadas llamadores nuevos.
-func runToolSeparado(ctx context.Context, dir, bin string, args ...string) (stdout, stderr string, err error) {
-	r := ejecutar(ctx, dir, bin, args...)
+func runToolSeparado(ctx context.Context, motor, dir, bin string, args ...string) (stdout, stderr string, err error) {
+	r := ejecutar(ctx, motor, dir, bin, args...)
 	var exitErr *exec.ExitError
 	if r.Err != nil && !errors.As(r.Err, &exitErr) && !errors.Is(r.Err, proc.ErrRecortada) {
 		return "", "", r.Err // no arrancó (binario ausente, permisos...) o venció el plazo

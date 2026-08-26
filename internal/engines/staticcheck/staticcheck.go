@@ -200,7 +200,7 @@ func (e *Engine) correrModulo(ctx context.Context, bin, repoRoot, dir string, pa
 	args := append([]string{"-f", "json"}, paquetes...)
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = filepath.Join(repoRoot, filepath.FromSlash(dir))
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilGo) // compila el modulo OFFLINE: sin GOPROXY en el camino del commit
+	cmd.Env = proc.EntornoDeMotor("staticcheck", proc.PerfilGo) // declara RedDenegada: compila el modulo OFFLINE, sin GOPROXY en el camino del commit
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	if salida.Recortada {
 		return nil, fmt.Errorf("staticcheck devolvió más de %d MB de salida", proc.MaxSalida>>20)

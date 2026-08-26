@@ -87,8 +87,8 @@ func TestHuellaCorta(t *testing.T) {
 	}
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
-			if got := HuellaCorta(c.h, c.n); got != c.want {
-				t.Fatalf("HuellaCorta(%q, %d) = %q, want %q", c.h, c.n, got, c.want)
+			if got := huellaCorta(c.h, c.n); got != c.want {
+				t.Fatalf("huellaCorta(%q, %d) = %q, want %q", c.h, c.n, got, c.want)
 			}
 		})
 	}

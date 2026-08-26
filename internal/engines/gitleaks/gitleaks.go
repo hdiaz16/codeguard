@@ -172,7 +172,7 @@ func (e *Engine) correr(ctx context.Context, bin, dir string, args []string) ([]
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilBasico) // binario Go puro: solo el piso
+	cmd.Env = proc.EntornoDeMotor("gitleaks", proc.PerfilBasico) // binario Go puro: solo el piso
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 	out := salida.Combinada()
 

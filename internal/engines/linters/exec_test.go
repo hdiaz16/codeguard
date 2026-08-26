@@ -11,6 +11,12 @@ import (
 	"codeguard/internal/engines/proc"
 )
 
+// motorDePrueba NO está en el registro de política de red, a propósito: estas
+// pruebas ejercen el TRANSPORTE (códigos de salida, recortes, plazos) y no un
+// motor real. Un nombre desconocido corre denegado, que es el fail-closed que
+// se quiere por defecto.
+const motorDePrueba = "motor-de-prueba-del-transporte"
+
 // topeChico baja el tope de salida de runTool durante una prueba, para poder
 // provocar un recorte sin generar 64 MB.
 //
@@ -56,7 +62,7 @@ func TestRunToolPropagaTimeoutAunqueRecorte(t *testing.T) {
 	// corta con la salida ya recortada. El cuelgue es ping y no waitfor:
 	// waitfor falla intermitente («Cannot wait for the specified signal») y
 	// muere al instante con exit 1 — el test se quedaba sin proceso que matar.
-	out, err := runTool(ctx, t.TempDir(), "cmd", "/c",
+	out, err := runTool(ctx, motorDePrueba, t.TempDir(), "cmd", "/c",
 		"echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa & ping 127.0.0.1 -n 30 >nul")
 
 	if d := time.Since(inicio); d > 8*time.Second {
@@ -79,7 +85,7 @@ func TestRunToolToleraRecortePuro(t *testing.T) {
 	}
 	topeChico(t, 16)
 
-	out, err := runTool(context.Background(), t.TempDir(), "cmd", "/c",
+	out, err := runTool(context.Background(), motorDePrueba, t.TempDir(), "cmd", "/c",
 		"echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err != nil {
 		t.Fatalf("un recorte con salida limpia no es un fallo: %v", err)
@@ -102,7 +108,7 @@ func TestEjecutarEntregaLosHechos(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("exito con salida", func(t *testing.T) {
-		r := ejecutar(ctx, t.TempDir(), "cmd", "/c", "echo hola")
+		r := ejecutar(ctx, motorDePrueba, t.TempDir(), "cmd", "/c", "echo hola")
 		if !r.Started || r.ExitCode != 0 || r.TimedOut || r.Truncated || r.Err != nil {
 			t.Fatalf("hechos equivocados: %+v", r)
 		}
@@ -111,13 +117,13 @@ func TestEjecutarEntregaLosHechos(t *testing.T) {
 		}
 	})
 	t.Run("exit 3 mudo", func(t *testing.T) {
-		r := ejecutar(ctx, t.TempDir(), "cmd", "/c", "exit /b 3")
+		r := ejecutar(ctx, motorDePrueba, t.TempDir(), "cmd", "/c", "exit /b 3")
 		if !r.Started || r.ExitCode != 3 {
 			t.Fatalf("hechos equivocados: %+v", r)
 		}
 	})
 	t.Run("binario ausente", func(t *testing.T) {
-		r := ejecutar(ctx, t.TempDir(), "no-existe-esta-herramienta-cg")
+		r := ejecutar(ctx, motorDePrueba, t.TempDir(), "no-existe-esta-herramienta-cg")
 		if r.Started || r.ExitCode != -1 || r.Err == nil {
 			t.Fatalf("un binario ausente tiene que decir Started=false y ExitCode=-1: %+v", r)
 		}
@@ -127,7 +133,7 @@ func TestEjecutarEntregaLosHechos(t *testing.T) {
 		defer cancel()
 		// ping y no waitfor: waitfor falla intermitente y muere al instante,
 		// dejando al plazo sin proceso colgado que cortar.
-		r := ejecutar(corto, t.TempDir(), "cmd", "/c", "ping 127.0.0.1 -n 30 >nul")
+		r := ejecutar(corto, motorDePrueba, t.TempDir(), "cmd", "/c", "ping 127.0.0.1 -n 30 >nul")
 		if !r.TimedOut || r.ExitCode != -1 {
 			t.Fatalf("un plazo agotado tiene que decir TimedOut y ExitCode=-1: %+v", r)
 		}
@@ -135,14 +141,14 @@ func TestEjecutarEntregaLosHechos(t *testing.T) {
 	t.Run("contexto cancelado antes de arrancar", func(t *testing.T) {
 		muerto, cancel := context.WithCancel(ctx)
 		cancel()
-		r := ejecutar(muerto, t.TempDir(), "cmd", "/c", "echo hola")
+		r := ejecutar(muerto, motorDePrueba, t.TempDir(), "cmd", "/c", "echo hola")
 		if r.Started || !r.TimedOut || r.ExitCode != -1 {
 			t.Fatalf("sin proceso no puede haber Started=true ni código legible: %+v", r)
 		}
 	})
 	t.Run("recorte puro", func(t *testing.T) {
 		topeChico(t, 16)
-		r := ejecutar(ctx, t.TempDir(), "cmd", "/c",
+		r := ejecutar(ctx, motorDePrueba, t.TempDir(), "cmd", "/c",
 			"echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 		if !r.Truncated || !r.Started || r.ExitCode != 0 {
 			t.Fatalf("hechos equivocados: %+v", r)
@@ -162,7 +168,7 @@ func TestRunToolExitSinSalidaEsAveria(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("la prueba usa cmd.exe")
 	}
-	out, err := runTool(context.Background(), t.TempDir(), "cmd", "/c", "exit /b 3")
+	out, err := runTool(context.Background(), motorDePrueba, t.TempDir(), "cmd", "/c", "exit /b 3")
 	if err == nil {
 		t.Fatalf("runTool devolvió err nil con salida %q: un exit 3 mudo se está reportando como análisis limpio", out)
 	}
@@ -180,7 +186,7 @@ func TestRunToolToleraExitCodeConSalida(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("la prueba usa cmd.exe")
 	}
-	out, err := runTool(context.Background(), t.TempDir(), "cmd", "/c",
+	out, err := runTool(context.Background(), motorDePrueba, t.TempDir(), "cmd", "/c",
 		"echo hallazgo & exit /b 3")
 	if err != nil {
 		t.Fatalf("un exit code != 0 con salida no es un fallo de ejecución: %v", err)

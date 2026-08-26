@@ -522,11 +522,19 @@ func TestClaveDeArchivoDistingueConfigYHerramienta(t *testing.T) {
 	}
 }
 
-// cachéFalso registra lo que se guarda para poder afirmar que "analizado y
-// limpio" también se cachea: es el resultado que más veces se reutiliza.
+// cacheFalso sirve entradas de caché ya pobladas, para ejercitar el camino de
+// ACIERTO del motor.
+//
+// Llevaba además un Guardar y un mapa `guardados`, con un comentario que
+// decía registrar lo escrito "para poder afirmar que analizado-y-limpio
+// también se cachea". Ninguna prueba llegó a afirmarlo nunca, y su firma
+// —map[string][]Finding— se quedó en un contrato de caché que engines.Cache
+// ya no tiene (hoy es Guardar([]Cacheable)): el falso no implementaba la
+// interfaz que decía imitar. Se retiró en la limpieza de 2026-08-25. Si algún
+// día hace falta afirmar sobre lo guardado, el falso se escribe contra la
+// interfaz VIGENTE y con una aserción `var _ engines.Cache` que lo demuestre.
 type cacheFalso struct {
-	datos     map[string][]finding.Finding
-	guardados map[string][]finding.Finding
+	datos map[string][]finding.Finding
 }
 
 func (c *cacheFalso) Leer(claves []string) map[string][]finding.Finding {
@@ -537,15 +545,6 @@ func (c *cacheFalso) Leer(claves []string) map[string][]finding.Finding {
 		}
 	}
 	return out
-}
-
-func (c *cacheFalso) Guardar(porClave map[string][]finding.Finding) {
-	if c.guardados == nil {
-		c.guardados = map[string][]finding.Finding{}
-	}
-	for k, v := range porClave {
-		c.guardados[k] = v
-	}
 }
 
 // El caché está direccionado por CONTENIDO, sin la ruta en la clave: dos

@@ -79,11 +79,15 @@ func dsnSQLite(path string, busyMS int) string {
 	v.Add("_pragma", "journal_mode(WAL)")
 	v.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyMS))
 
-	base := filepath.ToSlash(path)
-	if strings.ContainsAny(base, "?#") {
-		base = url.PathEscape(base)
-	}
-	return fmt.Sprintf("%s?%s", base, v.Encode())
+	// La ruta va CRUDA al driver, y ESO es lo correcto: escaparla era el bug.
+	// url.PathEscape escapa también las barras ('/' → '%2F'), así que una ruta
+	// absoluta se convertía en un nombre RELATIVO y SQLite creaba la base en el
+	// directorio de trabajo. Medido con modernc.org/sqlite v1.56.0 sobre cuatro
+	// carpetas: con '#' el escape fugaba «%2FUsers%2F…%2Fcodeguard.db» al cwd,
+	// mientras que la ruta cruda aterrizaba bien en las cuatro. El driver parte
+	// el DSN por el primer '?' y pasa el resto tal cual, y Windows PROHÍBE '?'
+	// en un nombre de archivo: no queda nada que escapar.
+	return fmt.Sprintf("%s?%s", filepath.ToSlash(path), v.Encode())
 }
 
 func abrir(path string, busyMS int) (*Store, error) {

@@ -245,13 +245,18 @@ func (e *escritorio) altaDeProyectosEnroladosLocked() {
 			// corrió `install` y todavía no `init`. Ahí no hay stack que
 			// enseñar y no se inventa ninguno.
 			var langs, capasDelRepo []string
+			var noDisponibles []daemon.NoDisponible
 			if cfg, err := config.Load(filepath.FromSlash(root)); err == nil && cfg != nil {
 				langs = cfg.Languages
 				capasDelRepo = daemon.CapasDelRepoEn(cfg, filepath.FromSlash(root))
+				// De esas capas, cuáles NO puede ejecutar esta máquina. Cuesta
+				// microsegundos (es exec.LookPath sobre el PATH del registro) y
+				// es lo que evita prometer una capa que no existe aquí.
+				noDisponibles = daemon.Disponibilidad(capasDelRepo)
 			}
 			e.porProyecto[root] = &panelPayload{
 				Repo: r.Nombre, RepoRoot: root, Verdict: "—", At: "sin análisis",
-				Languages: langs, CapasRepo: capasDelRepo,
+				Languages: langs, CapasRepo: capasDelRepo, NoDisponibles: noDisponibles,
 				// CIParity en true a propósito: el panel enseña el aviso de
 				// paridad cuando es false, y el cero de Go es false. Sin esta
 				// línea, un proyecto que NUNCA se ha analizado aparecía
@@ -267,21 +272,19 @@ func (e *escritorio) altaDeProyectosEnroladosLocked() {
 	}
 }
 
-// listaProyectos: TODOS los proyectos con su estado (incluido el activo),
-// para que de un vistazo se vea cuál está en verde y cuál bloqueado.
-func (e *escritorio) listaProyectos(raizActiva string) []proyectoEnLista {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.listaProyectosLocked(raizActiva)
-}
-
-// listaProyectosLocked es la lista de verdad, y exige e.mu tomado.
+// listaProyectosLocked da TODOS los proyectos con su estado (incluido el
+// activo), para que de un vistazo se vea cuál está en verde y cuál bloqueado.
+// Exige e.mu tomado.
 //
-// Existe separada de listaProyectos porque sync.Mutex no es reentrante: quien
-// necesitaba la lista dentro de su propia sección crítica no podía llamar a la
-// versión que toma el candado, así que soltaba el suyo antes y publicaba
-// después. En ese hueco es donde se colaban las dos carreras que este archivo
-// tenía. Con las dos capas separadas, toda publicación cabe en un solo Lock.
+// Lleva el sufijo Locked porque nació junto a un envoltorio que tomaba el
+// candado. sync.Mutex no es reentrante, así que quien necesitaba la lista
+// dentro de su propia sección crítica no podía llamar a esa versión: soltaba
+// su candado antes y publicaba después, y en ese hueco se colaban las dos
+// carreras que este archivo tenía. Al final TODA publicación pasó a caber en
+// un solo Lock y el envoltorio se quedó sin llamadores de producción: bajó a
+// escritorio_test.go en la limpieza de 2026-08-25, que es donde se usa. El
+// sufijo se conserva porque el requisito que enuncia sigue siendo cierto y es
+// lo que hay que leer antes de llamarla.
 func (e *escritorio) listaProyectosLocked(raizActiva string) []proyectoEnLista {
 	// El registro se relee AQUÍ, no sólo al arrancar. `codeguard init`
 	// escribe en repos.json el proyecto recién enrolado, pero el daemon ya

@@ -252,7 +252,7 @@ func correrPMD(ctx context.Context, repoRoot, absProyecto, dirProyecto, home str
 
 	cmd := exec.CommandContext(ctx, "java", args...)
 	cmd.Dir = absProyecto
-	cmd.Env = proc.EntornoDePerfil(proc.PerfilJava)
+	cmd.Env = proc.EntornoDeMotor("pmd", proc.PerfilJava)
 	salida, runErr := proc.Correr(ctx, cmd, proc.MaxSalida)
 
 	if salida.Recortada {

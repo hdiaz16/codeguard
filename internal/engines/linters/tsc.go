@@ -148,9 +148,9 @@ func correrProyecto(ctx context.Context, repoRoot, dir string) ([]finding.Findin
 	// respuesta, y no cuesta nada. Ver la comprobación del final de esta función.
 	comunes := []string{"--noEmit", "--incremental", "--pretty", "false", "--extendedDiagnostics"}
 	if bin == npx {
-		out, salioMal, err = runToolConSalida(ctx, abs, npx, append([]string{"--no-install", "tsc"}, comunes...)...)
+		out, salioMal, err = runToolConSalida(ctx, "tsc", abs, npx, append([]string{"--no-install", "tsc"}, comunes...)...)
 	} else {
-		out, salioMal, err = runToolConSalida(ctx, abs, bin, comunes...)
+		out, salioMal, err = runToolConSalida(ctx, "tsc", abs, bin, comunes...)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("tsc no corrió en %s: %w", dir, err)

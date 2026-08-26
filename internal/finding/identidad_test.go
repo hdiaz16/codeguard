@@ -54,7 +54,7 @@ func TestLosSeisMotoresMensajeReproducenSuLegacyV1(t *testing.T) {
 			esperada := legacyViejaDeMensaje("R1", "a.go", mensaje)
 			if fs[0].LegacyFingerprint != esperada {
 				t.Errorf("legacy %s ≠ v1 vieja %s: la baseline anterior de %s dejaría de suprimir",
-					HuellaCorta(fs[0].LegacyFingerprint, 12), HuellaCorta(esperada, 12), eng)
+					huellaCorta(fs[0].LegacyFingerprint, 12), huellaCorta(esperada, 12), eng)
 			}
 		})
 	}
@@ -94,7 +94,7 @@ func TestLosCuatroHibridosReproducenSuLegacyV1(t *testing.T) {
 			esperada := legacyViejaDeHibrido("TS2304", "a.go", mensaje)
 			if fs[0].LegacyFingerprint != esperada {
 				t.Errorf("legacy %s ≠ v1 vieja %s: la baseline anterior de %s dejaría de suprimir",
-					HuellaCorta(fs[0].LegacyFingerprint, 12), HuellaCorta(esperada, 12), eng)
+					huellaCorta(fs[0].LegacyFingerprint, 12), huellaCorta(esperada, 12), eng)
 			}
 		})
 	}
@@ -118,7 +118,7 @@ func TestUnCambioDeMensajeNoMueveLaV2(t *testing.T) {
 
 	if fsViejo[0].Fingerprint != fsNuevo[0].Fingerprint {
 		t.Errorf("reformular el mensaje movió la v2 (%s → %s): la baseline no sobreviviría a un upgrade del linter",
-			HuellaCorta(fsViejo[0].Fingerprint, 12), HuellaCorta(fsNuevo[0].Fingerprint, 12))
+			huellaCorta(fsViejo[0].Fingerprint, 12), huellaCorta(fsNuevo[0].Fingerprint, 12))
 	}
 	if fsViejo[0].LegacyFingerprint == fsNuevo[0].LegacyFingerprint {
 		t.Error("la legacy debería DEPENDER del mensaje (así casaba la baseline vieja): si no cambia, no reproduce v1")
