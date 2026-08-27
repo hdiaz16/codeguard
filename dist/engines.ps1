@@ -14,6 +14,14 @@ param(
     # que un reintento reanude en vez de repetir la descarga entera.
     [string]$DescargasDir = (Join-Path $env:LOCALAPPDATA "CodeGuard\descargas"),
     [string]$MotoresJson = (Join-Path $PSScriptRoot "motores.json"),
+    # El asistente mueve su barra leyendo ESTE archivo, no el log. Una linea
+    # por cambio de estado de un motor (ver «El contrato CGP» mas abajo).
+    # Vacio = nadie escucha, y no se escribe nada: install.ps1 y `codeguard
+    # repair` llaman a este script sin asistente delante.
+    [string]$ProgressFile = "",
+    # Donde se deja el parte de lo que falto. Parametrizado por la misma razon
+    # que el de progreso: dos instalaciones a la vez no pueden compartirlo.
+    [string]$FaltanFile = (Join-Path $env:TEMP "codeguard-motores.faltan"),
     [switch]$SkipTrivy   # trivy pesa ~60 MB; opcional en la primera ola
 )
 $ErrorActionPreference = "Stop"
@@ -142,6 +150,90 @@ function ComprobarQueArranca([string]$name, [string]$ruta, [switch]$EsBat) {
 New-Item -ItemType Directory -Force $EnginesDir | Out-Null
 $catalogo = (Get-Content $MotoresJson -Raw | ConvertFrom-Json).motores
 
+# ── El contrato CGP: progreso que no se inventa ──────────────────────────────
+#
+# La barra del asistente pertenecia a la fase de COPIA de Inno, que dura
+# segundos. El trabajo real —descargar 130 MB y COMPILAR cuatro motores de Go—
+# ocurre despues, en ssPostInstall, con la barra ya llena y quieta. Podia estar
+# asi una hora. Para el usuario eso no es una barra de progreso: es una barra
+# verde.
+#
+# Raspar el log para deducir el progreso NO sirve, y no es opinion: los pines
+# de pip se instalan en UN solo comando para cinco motores, los motores ya
+# presentes vuelven por un camino distinto, los de Go y Java se OMITEN enteros
+# cuando falta su toolchain —y entonces no escriben ninguna linea de exito— y
+# un motor caido escribe un aviso, no un «Ok». Contar lineas «Ok» daria una
+# barra que se queda corta justo en las maquinas donde mas se omite.
+#
+# Asi que el progreso se declara aparte, en un archivo propio y en ASCII:
+#
+#     CGP|<seq>|<hechos>|<total>|<motor>|<estado>
+#
+# estados: working | ok | already-present | skipped | failed | not-attempted
+#
+# Reglas del contrato, y las tres importan:
+#
+#  1. «working» NO incrementa. Anuncia en que se esta, nada mas.
+#  2. Cada motor tiene EXACTAMENTE UN estado terminal, y el primero manda. Por
+#     eso el incremento vive aqui y no en cada sitio que llama: los caminos de
+#     exito y de fallo se cruzan (Install-Motor termina bien e Intentar no
+#     entra al catch; Install-Motor lanza e Intentar apunta el fallo) y contar
+#     a mano acabaria contando dos veces o ninguna.
+#  3. «hechos» significa MOTOR RESUELTO, no motor instalado. Un motor omitido
+#     por falta de JDK o uno que fallo estan resueltos: ya no van a pasar nada
+#     mas. Si no contaran, la barra se quedaria a medias en una maquina sin
+#     Java afirmando que sigue trabajando.
+#
+# El total sale del MISMO inventario que cuenta build-dist.ps1 para escribir
+# MyMotorInstala en motores.iss (motores + pip + go + winget). El asistente
+# compara los dos numeros: si divergen, no pinta porcentaje — prefiere no decir
+# nada a decir una fraccion falsa.
+$script:CGPSeq = 0
+$script:CGPHechos = 0
+$script:CGPTerminados = @{}
+$script:CGPUnidades = @()
+$inventario = Get-Content $MotoresJson -Raw | ConvertFrom-Json
+$script:CGPUnidades += $inventario.motores.PSObject.Properties.Name
+$script:CGPUnidades += $inventario.paquetes.pip.PSObject.Properties.Name | ForEach-Object { $_ -replace '-cli$','' }
+$script:CGPUnidades += $inventario.paquetes.go.PSObject.Properties.Name
+if ($inventario.paquetes.winget) {
+    $script:CGPUnidades += ($inventario.paquetes.winget.PSObject.Properties.Name | Where-Object { -not $_.StartsWith('_') })
+}
+$script:CGPTotal = $script:CGPUnidades.Count
+
+function CGP([string]$motor, [string]$estado) {
+    if (-not $ProgressFile) { return }
+    if ($estado -ne 'working') {
+        if ($script:CGPTerminados.ContainsKey($motor)) { return }
+        $script:CGPTerminados[$motor] = $estado
+        $script:CGPHechos++
+    }
+    $script:CGPSeq++
+    # Add-Content abre y cierra en cada linea: lo escrito queda en disco al
+    # instante y el asistente —que lee cada 250 ms— lo ve. Un Out-File abierto
+    # durante toda la corrida podria no haber vaciado su bufer todavia.
+    #
+    # Y va envuelto en try/catch VACIO a proposito, que es de las pocas veces
+    # que eso se justifica: $ErrorActionPreference vale "Stop" en este script,
+    # el asistente esta leyendo el mismo archivo, y una colision de acceso
+    # momentanea abortaria la instalacion entera por no poder pintar una barra.
+    # El progreso es cosmetico; los motores no.
+    try {
+        Add-Content -LiteralPath $ProgressFile -Encoding ASCII -Value (
+            "CGP|{0}|{1}|{2}|{3}|{4}" -f $script:CGPSeq, $script:CGPHechos, $script:CGPTotal, $motor, $estado)
+    } catch { }
+}
+
+# CGPCerrarPendientes declara lo que nunca se intento. Se llama al final del
+# camino sano: si el script muere antes, el contador se queda POR DEBAJO del
+# total y el asistente lo dice tal cual. Rellenar la barra hasta el final
+# fingiendo que se procesaron seria justo la mentira que esto viene a quitar.
+function CGPCerrarPendientes {
+    foreach ($u in $script:CGPUnidades) {
+        if (-not $script:CGPTerminados.ContainsKey($u)) { CGP $u 'not-attempted' }
+    }
+}
+
 # ── Descarga que REANUDA ─────────────────────────────────────────────────────
 # La version anterior reintentaba desde CERO y borraba el parcial entre
 # intentos. Con eso, una red que corta a mitad de archivo no falla: es
@@ -253,7 +345,9 @@ function Install-Motor($name) {
         # Presente no basta: tiene que ser el binario publicado. Si coincide,
         # una actualizacion no vuelve a descargar nada.
         if ((Sha256Archivo $exe) -eq $v.sha256_exe) {
-            Ok "$name $($v.version) ya presente y verificado"; return
+            Ok "$name $($v.version) ya presente y verificado"
+            CGP $name 'already-present'
+            return
         }
         Write-Host "    $name presente pero NO coincide con el binario publicado" -ForegroundColor Yellow
         Write-Host "    se reemplazara por la version verificada" -ForegroundColor Yellow
@@ -329,6 +423,7 @@ el trafico. No se instala nada hasta aclararlo.
         }
         Copy-Item $found.FullName $exe -Force
         Ok "$name $((Get-Item $exe).Length / 1MB -as [int]) MB - verificado"
+        CGP $name 'ok'
         # Ya instalado y verificado: el zip deja de hacer falta. Sólo aquí — en
         # cualquier otro camino se conserva para poder reanudar.
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
@@ -349,6 +444,7 @@ el trafico. No se instala nada hasta aclararlo.
 $script:Faltantes = @()
 
 function Intentar([string]$que, [scriptblock]$accion, [string]$sinEsto) {
+    CGP $que 'working'
     try { & $accion }
     catch {
         $critico = $catalogo.$que.critico -eq $true
@@ -356,12 +452,17 @@ function Intentar([string]$que, [scriptblock]$accion, [string]$sinEsto) {
         Write-Host "    $que NO quedó instalado" -ForegroundColor Yellow
         Write-Host ("    " + ($_.Exception.Message -split "`n")[0]) -ForegroundColor Yellow
         $script:Faltantes += [pscustomobject]@{ Motor = $que; Sin = $sinEsto }
+        CGP $que 'failed'
     }
 }
 
 Intentar "gitleaks" { Install-Motor "gitleaks" } "la compuerta de secretos"
 if (-not $SkipTrivy) {
     Intentar "trivy" { Install-Motor "trivy" } "la compuerta de CVE en dependencias"
+} else {
+    # Omitido a peticion, no fallido: es una unidad RESUELTA y la barra tiene
+    # que avanzar, o se quedaria corta el resto de la instalacion.
+    CGP "trivy" 'skipped'
 }
 
 # ── Blindaje 5: los comandos nativos no son excepciones ──────────────────────
@@ -429,6 +530,10 @@ if ($rutaScripts.Codigo -ne 0) {
 }
 $pyScripts = $rutaScripts.Salida.Trim()
 Ok "instalados en $pyScripts"
+# pip instala los cinco de UNA vez, pero el contrato pide un estado terminal
+# POR MOTOR: si aqui se emitiera uno solo, la barra se quedaria cuatro
+# unidades corta durante el resto de la instalacion.
+foreach ($n in $paquetes.pip.PSObject.Properties) { CGP ($n.Name -replace '-cli$','') 'ok' }
 
 # Los scripts de Python se añaden al PATH del proceso actual (sin modificar el registro).
 if ($env:PATH -notlike "*$pyScripts*") {
@@ -452,18 +557,22 @@ if ($wingetMotores) {
         $motor = $prop.Name; $id = $prop.Value
         if (Get-Command $motor -ErrorAction SilentlyContinue) {
             Ok "$motor ya estaba"
+            CGP $motor 'already-present'
             continue
         }
+        CGP $motor 'working'
         Step "instalando $motor via winget ($id)"
         $w = Correr "winget" @("install", "-e", "--id", $id, "--silent",
                                "--accept-package-agreements", "--accept-source-agreements")
         if ($w.Codigo -ne 0) {
             Write-Host "    $motor NO se pudo instalar (winget devolvio $($w.Codigo))" -ForegroundColor Yellow
             $script:Faltantes += [pscustomobject]@{ Motor = $motor; Sin = "no se pudo instalar via winget" }
+            CGP $motor 'failed'
             continue
         }
         $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [Environment]::GetEnvironmentVariable("PATH", "Machine")
         Ok "$motor instalado"
+        CGP $motor 'ok'
     }
 }
 
@@ -487,6 +596,7 @@ Step "Motores Go (govulncheck, staticcheck)"
 $goBin = Get-Command go -ErrorAction SilentlyContinue
 if (-not $goBin) {
     Ok "no hay toolchain de Go - se omite (los motores solo aplican a repos Go)"
+    foreach ($n in $paquetes.go.PSObject.Properties.Name) { CGP $n 'skipped' }
 } else {
     $previoGobin = $env:GOBIN
     $env:GOBIN = $EnginesDir
@@ -504,6 +614,7 @@ if (-not $goBin) {
         if (-not (Test-Path (Join-Path $dirTools "go.mod"))) {
             Write-Host "    falta el modulo de herramientas ($dirTools): sin el no se compilan los motores de Go" -ForegroundColor Yellow
             $script:Faltantes += [pscustomobject]@{ Motor = "staticcheck y govulncheck"; Sin = "modulo de herramientas ausente" }
+            foreach ($n in $paquetes.go.PSObject.Properties.Name) { CGP $n 'skipped' }
             return
         }
         $descripciones = @{
@@ -527,6 +638,7 @@ if (-not $goBin) {
         $n = 0
         foreach ($m in $goMotores) {
             $n++
+            CGP $m.nombre 'working'
             Step "compilando $($m.nombre) desde el fuente ($n de $($goMotores.Count)) - $($m.que)"
             Ok "esto tarda uno o dos minutos; no se descarga un binario, se compila"
             $inicio = Get-Date
@@ -548,6 +660,7 @@ if (-not $goBin) {
                     Motor = $m.nombre
                     Sin   = $m.que
                 }
+                CGP $m.nombre 'failed'
                 continue
             }
             # La version declarada en motores.json se comprueba contra el
@@ -565,9 +678,11 @@ if (-not $goBin) {
                     Motor = $m.nombre
                     Sin   = "version embebida distinta de motores.json"
                 }
+                CGP $m.nombre 'failed'
                 continue
             }
             Ok "$($m.nombre) $($m.version) listo en $([int]((Get-Date) - $inicio).TotalSeconds) s"
+            CGP $m.nombre 'ok'
         }
     } finally {
         $env:GOBIN = $previoGobin
@@ -596,25 +711,47 @@ function Install-Jar($name) {
         if ((Sha256Archivo $destino) -eq $v.sha256_exe) {
             Ok "$name $($v.version) ya presente y verificado"
             ComprobarQueArranca $name $destino
+            CGP $name 'already-present'
             return
         }
         Write-Host "    $name presente pero NO coincide con el artefacto publicado" -ForegroundColor Yellow
         Write-Host "    se reemplazara por la version verificada" -ForegroundColor Yellow
     }
-    $tmp = Join-Path $env:TEMP "cg-$name.jar"
-    if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    # El parcial vive en el cache de descargas y NO en %TEMP%, igual que el de
+    # gitleaks y trivy: sobrevive al asistente para que un reintento reanude.
+    # Antes se borraba al entrar Y en el finally, asi que la reanudacion que
+    # promete el mensaje de error era imposible: cada intento repetia el
+    # archivo entero.
+    New-Item -ItemType Directory -Force $DescargasDir | Out-Null
+    $tmp = Join-Path $DescargasDir "$name-$($v.version).jar"
     try {
         Step "Descargando $name $($v.version)"
-        DescargarConReanudacion $v.url $tmp
+        # El booleano se IGNORABA. Una descarga cortada llegaba a la
+        # comprobacion de hash y salia por el camino de "no coincide con el
+        # checksum publicado por sus autores": se acusaba al publicador —o a la
+        # red de estar alterando el trafico— de lo que era, simplemente, una
+        # descarga a medias. Son dos diagnosticos distintos y dos remedios
+        # distintos: uno se reanuda, el otro no se reintenta jamas.
+        if (-not (DescargarConReanudacion $v.url $tmp)) {
+            throw @"
+${name}: la red no dejó terminar la descarga.
+Lo bajado se CONSERVA en $tmp, así que reintentar sigue desde ahí y no
+empieza de cero:  codeguard repair
+"@
+        }
         $h = Sha256Archivo $tmp
         if ($h -ne $v.sha256_zip) {
+            # COMPLETO y aun asi no cuadra: eso ya no es la red. El parcial se
+            # borra —y solo aqui— para que el intento siguiente no herede un
+            # archivo envenenado; en los demas caminos se conserva.
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
             throw @"
 $name no coincide con el checksum publicado por sus autores.
   descargado: $h
   esperado:   $($v.sha256_zip)
-La descarga se descarto. Puede ser una version distinta a la que fijamos, un
-espejo alterado o una red que modifica el trafico. No se instala nada hasta
-aclararlo.
+La descarga llegó ENTERA y aun así no cuadra, así que no es un corte de red: es
+una version distinta a la que fijamos, un espejo alterado o una red que modifica
+el trafico. No se instala nada hasta aclararlo.
 "@
         }
         Ok "${name}: checksum del publicador verificado"
@@ -626,9 +763,15 @@ aclararlo.
         }
         Ok "$name $((Get-Item $destino).Length / 1MB -as [int]) MB - verificado"
         ComprobarQueArranca $name $destino
+        CGP $name 'ok'
+        # Instalado y verificado: el parcial ya no hace falta. Solo aqui.
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
     finally {
-        if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        # Residuo del esquema viejo (%TEMP%\cg-<name>.jar), por si esta maquina
+        # viene de una version anterior.
+        $viejo = Join-Path $env:TEMP "cg-$name.jar"
+        if (Test-Path $viejo) { Remove-Item -LiteralPath $viejo -Force -ErrorAction SilentlyContinue }
     }
 }
 
@@ -646,24 +789,41 @@ function Install-Arbol($name) {
         if ((HuellaArbol $destino) -eq $v.sha256_exe) {
             Ok "$name $($v.version) ya presente y verificado"
             ComprobarQueArranca $name (Join-Path $destino "bin\pmd.bat") -EsBat
+            CGP $name 'already-present'
             return
         }
         Write-Host "    $name presente pero su arbol NO coincide con el publicado" -ForegroundColor Yellow
         Write-Host "    se reemplazara por la version verificada" -ForegroundColor Yellow
     }
+    # Solo el arbol EXTRAIDO es temporal. El zip de 70 MB vive en el cache de
+    # descargas para que un corte de red se reanude en vez de repetirse: antes
+    # LimpiarTemporales lo borraba al entrar y otra vez en el finally, asi que
+    # cada intento empezaba de cero. En una red lenta eso es media hora tirada
+    # por intento.
     LimpiarTemporales $name
-    $tmp = Join-Path $env:TEMP "cg-$name.zip"
+    New-Item -ItemType Directory -Force $DescargasDir | Out-Null
+    $tmp = Join-Path $DescargasDir "$name-$($v.version).zip"
     $dir = Join-Path $env:TEMP "cg-$name"
     try {
         Step "Descargando $name $($v.version) (~70 MB: son 104 jars entre reglas y parsers)"
-        DescargarConReanudacion $v.url $tmp
+        # El booleano se ignoraba: una descarga cortada se presentaba como
+        # checksum alterado. Ver la misma correccion en Install-Jar.
+        if (-not (DescargarConReanudacion $v.url $tmp)) {
+            throw @"
+${name}: la red no dejó terminar la descarga.
+Lo bajado se CONSERVA en $tmp, así que reintentar sigue desde ahí y no
+empieza de cero:  codeguard repair
+"@
+        }
         $zh = Sha256Archivo $tmp
         if ($zh -ne $v.sha256_zip) {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
             throw @"
 $name no coincide con el checksum publicado por sus autores.
   descargado: $zh
   esperado:   $($v.sha256_zip)
-La descarga se descarto sin abrir. No se instala nada hasta aclararlo.
+La descarga llegó ENTERA y aun así no cuadra: no es un corte de red. Se
+descarto sin abrir. No se instala nada hasta aclararlo.
 "@
         }
         Ok "${name}: checksum del publicador verificado"
@@ -680,6 +840,8 @@ La descarga se descarto sin abrir. No se instala nada hasta aclararlo.
         Move-Item -LiteralPath $raiz -Destination $destino -Force
         Ok "$name $($v.version) - arbol completo verificado"
         ComprobarQueArranca $name (Join-Path $destino "bin\pmd.bat") -EsBat
+        CGP $name 'ok'
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
     finally { LimpiarTemporales $name }
 }
@@ -688,8 +850,12 @@ Step "Motores Java (google-java-format, PMD)"
 $javaBin = Get-Command java -ErrorAction SilentlyContinue
 if (-not $javaBin) {
     Ok "no hay JDK - se omite (los motores solo aplican a repos Java)"
+    CGP "google-java-format" 'skipped'
+    CGP "pmd" 'skipped'
 } else {
+    CGP "google-java-format" 'working'
     Install-Jar "google-java-format"
+    CGP "pmd" 'working'
     Install-Arbol "pmd"
 }
 
@@ -699,10 +865,16 @@ if (-not $javaBin) {
 # tiene un producto entero.
 #
 # Se escribe también a un archivo aparte para que el asistente lo enseñe en su
-# ventana: el log completo está en UTF-16 y con trazas de PowerShell dentro, y
-# nadie lo abre.
-$faltanTxt = Join-Path $env:TEMP "codeguard-motores.faltan"
+# ventana: el log completo lleva trazas de PowerShell dentro y nadie lo abre.
+#
+# La ruta llega por parametro ($FaltanFile): dos instalaciones a la vez
+# compartian este archivo y la segunda ensenaba el parte de la primera.
+$faltanTxt = $FaltanFile
 Remove-Item $faltanTxt -Force -ErrorAction SilentlyContinue
+
+# Lo que nunca se intento se declara antes de cerrar, para que el asistente no
+# se quede esperando un estado que ya no va a llegar.
+CGPCerrarPendientes
 
 if ($script:Faltantes.Count -gt 0) {
     Write-Host ""
@@ -724,3 +896,12 @@ if ($script:Faltantes.Count -gt 0) {
 
 Write-Host ""
 Ok "todos los motores aplicables quedaron instalados y verificados"
+
+# El 0 se declara, no se hereda.
+#
+# instalar-motores.ps1 lee $LASTEXITCODE despues de invocar este script, y sin
+# un exit explicito ese valor es el del ULTIMO comando nativo que corriera aqui
+# dentro -- curl, go, pip, winget-- que puede ser cualquier cosa. El camino
+# sano tiene que decir 0 con todas las letras, igual que el camino incompleto
+# dice 2 unas lineas mas arriba.
+exit 0
