@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"codeguard/internal/config"
@@ -20,6 +22,47 @@ func (fakeEngine) Name() string               { return "fake" }
 func (fakeEngine) Applies(engines.Input) bool { return true }
 func (f fakeEngine) Run(context.Context, engines.Input) ([]finding.Finding, error) {
 	return f.out, nil
+}
+
+type motorQueLeeContenido struct{ leyo string }
+
+func (*motorQueLeeContenido) Name() string               { return "lector-prueba" }
+func (*motorQueLeeContenido) Applies(engines.Input) bool { return true }
+func (m *motorQueLeeContenido) Run(_ context.Context, in engines.Input) ([]finding.Finding, error) {
+	raw, err := os.ReadFile(filepath.Join(in.RepoRoot, "a.go"))
+	m.leyo = string(raw)
+	return nil, err
+}
+
+func TestAnalysisRootEsLaUnicaFuenteDeBytesParaLosMotores(t *testing.T) {
+	worktree := t.TempDir()
+	instantanea := t.TempDir()
+	if err := os.WriteFile(filepath.Join(worktree, "a.go"), []byte("WORKTREE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(instantanea, "a.go"), []byte("INDICE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	motor := &motorQueLeeContenido{}
+	res, err := Run(context.Background(), Options{
+		Config:       &config.Config{Rulepack: "test", RepoRoot: worktree, MaxDiffLines: 2000},
+		AnalysisRoot: instantanea,
+		Diff: &gitdiff.Diff{Files: []gitdiff.ChangedFile{{
+			Path: "a.go", Status: "M", SHA256: gitdiff.SHA256De(instantanea, "a.go"),
+		}}},
+		Engines: []engines.Engine{motor},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if motor.leyo != "INDICE\n" {
+		t.Fatalf("el motor leyó %q; debía recibir exclusivamente la instantánea del índice", motor.leyo)
+	}
+	for _, d := range res.Degraded {
+		if strings.HasPrefix(d, "worktree:") {
+			t.Fatalf("la comprobación final volvió a mirar el worktree real: %v", res.Degraded)
+		}
+	}
 }
 
 func mk(rule, file string, line int, blocking bool) finding.Finding {

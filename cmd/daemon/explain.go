@@ -3,6 +3,7 @@ package main
 import (
 	"container/list"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -30,7 +31,14 @@ Responde SOLO JSON: {"explanations":[{"id":"<id del hallazgo>","text":"..."}]}
 Reglas:
 - Máximo 3 frases por hallazgo: qué está mal EN ESTE código concreto, por qué el CI lo rechazará, y el arreglo exacto.
 - Tono de compañero, no de juez. Sin tecnicismos innecesarios, sin regaños.
-- Si el mensaje original ya es claro, mejora igual la parte del "cómo arreglarlo" con el código real.`
+- El mensaje, el impacto y la solución deterministas son la fuente de verdad: no los contradigas ni inventes APIs, archivos o requisitos.
+- Si el contexto redactado no basta para proponer un cambio exacto, dilo y da el siguiente paso verificable; no adivines.
+- Si el mensaje original ya es claro, mejora la parte del "cómo arreglarlo" con el código real.`
+
+const (
+	versionContratoExplicacion = "v2-contexto-completo"
+	maxRunasExplicacion        = 1200
+)
 
 // maxExplicacionesCache topa las explicaciones en memoria. Un sync.Map a
 // secas crece sin límite: cada fingerprint único explicado se quedaba para
@@ -104,6 +112,7 @@ func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request,
 	// máximo 3 bloqueantes por llamada; caché por fingerprint
 	count := 0
 	var sb strings.Builder
+	solicitados := map[string]string{} // id -> clave contextual de caché
 	for _, f := range resp.Findings {
 		if !f.Blocking {
 			continue
@@ -111,7 +120,9 @@ func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request,
 		// La caché se consulta ANTES del tope: una explicación ya cacheada no
 		// cuesta llamada al modelo, así que se emite aunque el tope esté lleno.
 		// Antes el «count >= 3» iba primero y se comía explicaciones gratis.
-		if cached, ok := explainCache.Load(f.Fingerprint); ok {
+		codigo := shadow.Redact(snippetText(req.RepoRoot, f.File, f.Line))
+		clave := claveExplicacion(f.Fingerprint, f.Message, f.Why, f.FixHint, codigo)
+		if cached, ok := explainCache.Load(clave); ok {
 			emitExplain(app, f.ID, cached)
 			continue
 		}
@@ -122,10 +133,11 @@ func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request,
 			continue
 		}
 		count++
+		solicitados[f.ID] = clave
 		// P5: el código que viaja al modelo va redactado.
-		fmt.Fprintf(&sb, "— id: %s\n  regla: %s (%s)\n  mensaje: %s\n  archivo: %s línea %d\n  código:\n%s\n\n",
-			f.ID, f.RuleKey, f.Engine, f.Message, f.File, f.Line,
-			shadow.Redact(snippetText(req.RepoRoot, f.File, f.Line)))
+		fmt.Fprintf(&sb, "— id: %s\n  regla: %s (%s)\n  qué detectó: %s\n  por qué importa: %s\n  solución determinista: %s\n  archivo: %s línea %d\n  código redactado:\n%s\n\n",
+			f.ID, f.RuleKey, f.Engine, f.Message, valorO(f.Why, "no especificado por el motor"),
+			valorO(f.FixHint, "no especificada por el motor"), f.File, f.Line, codigo)
 	}
 	if count == 0 {
 		return
@@ -137,7 +149,39 @@ func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request,
 		log.Println("explicaciones: el modelo no respondió:", err)
 		return
 	}
-	content := strings.TrimSpace(res.Content)
+	explicaciones, err := parsearExplicaciones(res.Content, solicitados)
+	if err != nil {
+		log.Println("explicaciones ilegibles:", err)
+		return
+	}
+	for _, e := range explicaciones {
+		explainCache.Store(solicitados[e.ID], e.Text)
+		emitExplain(app, e.ID, e.Text)
+	}
+}
+
+func claveExplicacion(partes ...string) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(versionContratoExplicacion))
+	for _, parte := range partes {
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(parte))
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+func valorO(valor, respaldo string) string {
+	if strings.TrimSpace(valor) == "" {
+		return respaldo
+	}
+	return valor
+}
+
+// parsearExplicaciones es la aduana de la salida no confiable del modelo.
+// Sólo acepta IDs que se incluyeron en ESTA petición, una vez cada uno, y
+// limita el tamaño antes de guardarlo en un daemon que vive semanas.
+func parsearExplicaciones(content string, solicitados map[string]string) ([]explanation, error) {
+	content = strings.TrimSpace(content)
 	content = strings.TrimPrefix(content, "```json")
 	content = strings.TrimPrefix(content, "```")
 	content = strings.TrimSuffix(content, "```")
@@ -145,22 +189,26 @@ func explainBlockers(app *application.App, cfg *config.Config, req *ipc.Request,
 		Explanations []explanation `json:"explanations"`
 	}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		log.Println("explicaciones ilegibles:", err)
-		return
+		return nil, err
 	}
-	byID := map[string]string{}
-	for _, f := range resp.Findings {
-		byID[f.ID] = f.Fingerprint
-	}
+	vistos := map[string]bool{}
+	var out []explanation
 	for _, e := range parsed.Explanations {
-		if e.Text == "" {
+		e.Text = strings.TrimSpace(e.Text)
+		if e.Text == "" || vistos[e.ID] {
 			continue
 		}
-		if fp, ok := byID[e.ID]; ok {
-			explainCache.Store(fp, e.Text)
+		if _, ok := solicitados[e.ID]; !ok {
+			continue
 		}
-		emitExplain(app, e.ID, e.Text)
+		vistos[e.ID] = true
+		runas := []rune(e.Text)
+		if len(runas) > maxRunasExplicacion {
+			e.Text = string(runas[:maxRunasExplicacion]) + "…"
+		}
+		out = append(out, e)
 	}
+	return out, nil
 }
 
 func emitExplain(app *application.App, findingID, text string) {

@@ -49,7 +49,7 @@ func TestElOrbeNuncaPintaVerdeUnAnalisisQueNoMiroNada(t *testing.T) {
 	todos := append(append([]string{}, motivosDeDecisionDelEquipo...), motivosDeAveria...)
 	todos = append(todos, "") // un motivo que no llegó tampoco autoriza el verde
 	for _, motivo := range todos {
-		p := &panelPayload{Verdict: "skipped", Reason: motivo}
+		p := &panelPayload{Verdict: "skipped", Outcome: "skipped", Reason: motivo}
 		if got := orbStateFor(p); got == "pass" {
 			t.Errorf("motivo %q: el orbe pintó «pass» sobre un análisis omitido.\n"+
 				"El verde afirma «lo revisé y está limpio», y aquí no se revisó nada", motivo)
@@ -158,7 +158,7 @@ func TestUnMotivoDesconocidoSeTrataComoAveriaYNoComoRutina(t *testing.T) {
 	// La dirección en la que se falla importa. Un daemon de otra versión puede
 	// mandar un motivo que este binario no conoce; ante la duda, la señal
 	// prudente es la que pide mirar, no la que tranquiliza.
-	p := &panelPayload{Verdict: "skipped", Reason: "un motivo que todavía no existe"}
+	p := &panelPayload{Verdict: "skipped", Outcome: "skipped", Reason: "un motivo que todavía no existe"}
 	if got := orbStateFor(p); got != "degraded" {
 		t.Errorf("un motivo desconocido dio %q; se espera «degraded»: "+
 			"ante un motivo que no sabemos clasificar, hay que pedir que se mire", got)
@@ -174,16 +174,16 @@ func TestUnMotivoDesconocidoSeTrataComoAveriaYNoComoRutina(t *testing.T) {
 // por dónde lo mires no es un semáforo.
 func TestLasDosRutasDelOrbeNoSeContradicen(t *testing.T) {
 	casos := []*panelPayload{
-		{Verdict: "block"},
-		{Verdict: "block", Advisory: 2},
-		{Verdict: "pass"},
-		{Verdict: "pass", Advisory: 3},
-		{Verdict: "pass", Degraded: []string{"semgrep:error"}},
-		{Verdict: "pass", Degraded: []string{"falta:trivy"}},
-		{Verdict: "pass", Advisory: 1, Degraded: []string{"tsc:plazo"}},
-		{Verdict: "skipped", Reason: pipeline.MotivoTodoExcluido},
-		{Verdict: "skipped", Reason: pipeline.MotivoMergeORevert},
-		{Verdict: "skipped", Reason: pipeline.MotivoNoEnrolado, Degraded: []string{"config:unreadable"}},
+		{Verdict: "block", Outcome: "blocked"},
+		{Verdict: "block", Outcome: "blocked", Advisory: 2},
+		{Verdict: "pass", Outcome: "clean"},
+		{Verdict: "pass", Outcome: "findings", Advisory: 3},
+		{Verdict: "pass", Outcome: "degraded", Degraded: []string{"semgrep:error"}},
+		{Verdict: "pass", Outcome: "degraded", Degraded: []string{"falta:trivy"}},
+		{Verdict: "pass", Outcome: "degraded", Advisory: 1, Degraded: []string{"tsc:plazo"}},
+		{Verdict: "skipped", Outcome: "skipped", Reason: pipeline.MotivoTodoExcluido},
+		{Verdict: "skipped", Outcome: "skipped", Reason: pipeline.MotivoMergeORevert},
+		{Verdict: "skipped", Outcome: "failed", Reason: pipeline.MotivoNoEnrolado, Degraded: []string{"config:unreadable"}},
 		{Verdict: "—"},
 	}
 	for _, p := range casos {
@@ -211,7 +211,7 @@ func TestElTooltipDeUnAnalisisOmitidoNoDiceSinObservaciones(t *testing.T) {
 		tray, g := bandejaDePrueba(20 * time.Millisecond)
 		e.tray = tray
 		e.actualizarOrbe(&panelPayload{
-			Repo: "portal", Branch: "master", Verdict: "skipped", Reason: motivo,
+			Repo: "portal", Branch: "master", Verdict: "skipped", Outcome: "skipped", Reason: motivo,
 		})
 		tooltip := g.ultima(t).tooltip
 		if strings.Contains(tooltip, "sin observaciones") {
@@ -275,7 +275,7 @@ func TestLoQueElDaemonEmiteDeVerdadSeClasificaComoAveria(t *testing.T) {
 	for _, c := range casos {
 		t.Run(c.nombre, func(t *testing.T) {
 			raiz := c.monta(t)
-			req := &ipc.Request{RepoRoot: raiz, Branch: "master"}
+			req := &ipc.Request{RepoRoot: raiz, AnalysisRoot: raiz, Branch: "master"}
 			resp := (&daemon.Server{}).Analyze(context.Background(), req)
 
 			if resp.Verdict != "skipped" {
@@ -321,9 +321,10 @@ func TestUnSaltoRutinarioDelDaemonRealNoAlarma(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := &ipc.Request{
-		RepoRoot:    raiz,
-		Branch:      "master",
-		StagedFiles: []gitdiff.ChangedFile{{Path: "main.go", Status: "M"}},
+		RepoRoot:     raiz,
+		AnalysisRoot: raiz,
+		Branch:       "master",
+		StagedFiles:  []gitdiff.ChangedFile{{Path: "main.go", Status: "M"}},
 	}
 	resp := (&daemon.Server{}).Analyze(context.Background(), req)
 	if resp.Verdict != "skipped" {
@@ -346,7 +347,7 @@ func TestLaListaDeProyectosNoPoneVistoBuenoAUnAnalisisOmitido(t *testing.T) {
 	// dice "limpio — el último commit pasó todas las compuertas", que sobre un
 	// análisis omitido no pasó ninguna.
 	for _, motivo := range append(append([]string{}, motivosDeDecisionDelEquipo...), motivosDeAveria...) {
-		p := &panelPayload{Verdict: "skipped", Reason: motivo}
+		p := &panelPayload{Verdict: "skipped", Outcome: "skipped", Reason: motivo}
 		if got := marcaProyecto(p); got == "✓" {
 			t.Errorf("motivo %q: la lista marca el proyecto con ✓, que el panel "+
 				"rotula «limpio — el último commit pasó todas las compuertas»", motivo)
@@ -354,10 +355,10 @@ func TestLaListaDeProyectosNoPoneVistoBuenoAUnAnalisisOmitido(t *testing.T) {
 	}
 	// Y lo que sí es un pass sigue llevando su ✓: sin esto, "arreglarlo"
 	// quitando el ✓ de todas partes pasaría.
-	if got := marcaProyecto(&panelPayload{Verdict: "pass"}); got != "✓" {
+	if got := marcaProyecto(&panelPayload{Verdict: "pass", Outcome: "clean"}); got != "✓" {
 		t.Errorf("un pass de verdad perdió su ✓: llegó %q", got)
 	}
-	if got := marcaProyecto(&panelPayload{Verdict: "block"}); got != "⛔" {
+	if got := marcaProyecto(&panelPayload{Verdict: "block", Outcome: "blocked"}); got != "⛔" {
 		t.Errorf("un bloqueo perdió su ⛔: llegó %q", got)
 	}
 }

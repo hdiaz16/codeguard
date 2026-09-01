@@ -16,7 +16,7 @@ import (
 // que analizan con la capa determinista: report, baseline y el hook cuando el
 // daemon no responde. Si el store no abre, se analiza sin caché — es una
 // aceleración, no un requisito. Cerrar() siempre es seguro de llamar.
-func abrirCache(repoRoot string, cfg *config.Config) (cache sgengine.Cache, cerrar func()) {
+func abrirCache(repoRoot, analysisRoot string, cfg *config.Config) (cache sgengine.Cache, cerrar func()) {
 	st, err := store.Open(store.DefaultPath())
 	if err != nil {
 		// Sin caché se analiza igual (P4), pero el motivo NO se traga: desde
@@ -32,7 +32,7 @@ func abrirCache(repoRoot string, cfg *config.Config) (cache sgengine.Cache, cerr
 	// cacheaba bajo la cadena vacía —o sea, en el mismo cajón que TODOS los
 	// demás repos sin remote de la máquina—, y el caché por archivo se
 	// compartiría entre proyectos distintos.
-	cache = daemon.CachePorArchivo(st, store.RepoIDDe(repoRoot, remote), remote, filepath.Base(repoRoot), cfg)
+	cache = daemon.CachePorArchivo(st, store.RepoIDDe(repoRoot, remote), remote, filepath.Base(repoRoot), cfg, analysisRoot)
 	return cache, func() { _ = st.Close() }
 }
 

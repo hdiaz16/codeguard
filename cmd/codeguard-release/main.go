@@ -33,7 +33,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	raiz.AddCommand(keygenCmd(), signRulepackCmd(), inventarioCmd())
+	raiz.AddCommand(keygenCmd(), publicKeyCmd(), signRulepackCmd(), inventarioCmd())
 	if err := raiz.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "codeguard-release:", err)
 		os.Exit(1)
@@ -95,12 +95,31 @@ func keygenCmd() *cobra.Command {
 			fmt.Println("RESPALDO OFFLINE — copia esta línea a un USB o papel y guárdala fuera de la máquina.")
 			fmt.Println("Se muestra UNA sola vez; con ella se reconstruye la clave si la máquina muere:")
 			fmt.Printf("\n  %s.seed = %s\n\n", id, base64.StdEncoding.EncodeToString(priv.Seed()))
-			fmt.Println("Para EMBEBER la pública en el binario, pega esta línea en internal/manifest/claves.go:")
-			fmt.Printf("\n  %q: clave(%q),\n\n", id, hex.EncodeToString(pub))
-			fmt.Println("y recompila: desde ese binario, los rulepacks instalados EXIGEN manifiesto firmado.")
+			fmt.Println("La pública se incorporará automáticamente cuando ejecutes dist/build-dist.ps1.")
+			fmt.Println("Desde ese binario, los rulepacks instalados EXIGEN manifiesto firmado.")
 			return nil
 		},
 	}
+}
+
+func publicKeyCmd() *cobra.Command {
+	var claveID string
+	cmd := &cobra.Command{
+		Use:   "public-key",
+		Short: "Imprime la clave pública en el formato estricto para -ldflags -X",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			priv, id, err := cargarPrivada(claveID)
+			if err != nil {
+				return err
+			}
+			pub := priv.Public().(ed25519.PublicKey)
+			fmt.Printf("%s=%s\n", id, hex.EncodeToString(pub))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&claveID, "clave", "", "id de la clave a incorporar")
+	return cmd
 }
 
 func signRulepackCmd() *cobra.Command {

@@ -169,6 +169,7 @@ func TestUnDaemonIncompatibleCaeALocalYNoPintaParcial(t *testing.T) {
 		return
 	}
 	pipeDePrueba(t)
+	semgrepLimpio(t)
 	daemonDeMentira(t, ipc.Response{Verdict: "error",
 		Reason: "protocolo incompatible: tu binario habla [2,3] y este daemon [1,1] — actualiza el que quedó atrás"})
 

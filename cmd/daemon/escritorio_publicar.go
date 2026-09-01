@@ -1,22 +1,21 @@
 package main
 
-
+import "codeguard/internal/pipeline"
 
 // cualquier otra cae en su ○ por defecto y se quedaría sin rótulo correcto.
 func marcaProyecto(p *panelPayload) string {
-	switch {
-	case p == nil:
+	if p == nil {
 		return "○"
-	case p.Verdict == "block":
+	}
+	switch p.Outcome {
+	case string(pipeline.Bloqueado):
 		return "⛔"
-	// Omitido: el embudo se paró en la etapa 0. No hay revisión que enseñar,
-	// igual que un proyecto que todavía no se ha analizado nunca.
-	case p.Verdict == "skipped":
-		return "○"
-	case p.Verdict == "pass":
+	case string(pipeline.Limpio):
 		return "✓"
 	}
-	return "○" // "—" y cualquier otro: sin análisis todavía
+	// Avisos, degradado, fallido, omitido, legacy y desconocido jamás firman
+	// limpio. La palabra junto a la marca explica cuál de ellos fue.
+	return "○"
 }
 
 // paraPublicar saca del estado compartido la copia que se entrega a otra

@@ -81,6 +81,10 @@ var manifiestos = []struct {
 // la que entra una versión maliciosa recién publicada: sin versiones fijadas,
 // el siguiente `install` la trae sin que nadie lo decida.
 func revisarLockfiles(cfg *config.Config, files []gitdiff.ChangedFile) []finding.Finding {
+	return revisarLockfilesEn(cfg, cfg.RepoRoot, files)
+}
+
+func revisarLockfilesEn(cfg *config.Config, repoRoot string, files []gitdiff.ChangedFile) []finding.Finding {
 	tocado := map[string]bool{}
 	for _, f := range files {
 		if f.Status != "D" {
@@ -123,7 +127,7 @@ func revisarLockfiles(cfg *config.Config, files []gitdiff.ChangedFile) []finding
 					// duda se asume que está, igual que hace el registro de
 					// proyectos cuando el Stat de un repo falla por algo que no
 					// sea la ausencia.
-					_, err := os.Stat(filepath.Join(cfg.RepoRoot, filepath.FromSlash(ruta)))
+					_, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(ruta)))
 					if err == nil || !errors.Is(err, fs.ErrNotExist) {
 						existe = lock
 					}
@@ -138,7 +142,7 @@ func revisarLockfiles(cfg *config.Config, files []gitdiff.ChangedFile) []finding
 			// sin salida —`go mod tidy` corre limpio y no genera go.sum— que
 			// sólo deja al dev la opción del bypass. Sin dependencias tampoco
 			// hay riesgo: no existe versión que pueda resolverse distinto.
-			if existe == "" && sinDependencias(cfg.RepoRoot, f.Path, m.Manifiesto) {
+			if existe == "" && sinDependencias(repoRoot, f.Path, m.Manifiesto) {
 				break
 			}
 

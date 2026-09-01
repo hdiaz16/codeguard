@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"codeguard/internal/confianza"
+	"codeguard/internal/config"
 	"codeguard/internal/engines"
 	"codeguard/internal/engines/gitleaks"
 	"codeguard/internal/engines/proc"
@@ -25,13 +26,17 @@ import (
 // Run ejecuta el embudo determinista y devuelve el resultado consolidado.
 func Run(ctx context.Context, opt Options) (*Result, error) {
 	start := time.Now()
-	res := &Result{Verdict: Pass, Degraded: []string{}, Rulepack: opt.RulepackID}
+	res := &Result{Verdict: Pass, Degraded: append([]string{}, opt.InitialDegraded...), Rulepack: opt.RulepackID}
 	defer func() { res.ElapsedMs = time.Since(start).Milliseconds() }()
 
 	// ── Etapa 0: elegibilidad ────────────────────────────────────────────
 	if opt.Config == nil {
 		res.Verdict, res.Reason = Skipped, MotivoNoEnrolado
 		return res, nil
+	}
+	analysisRoot := opt.AnalysisRoot
+	if analysisRoot == "" {
+		analysisRoot = opt.Config.RepoRoot
 	}
 	// Sin diff no hay nada que mirar, y eso es un análisis que se salta, no un
 	// pánico. La comprobación va junto a la de Config porque el contrato de
@@ -97,7 +102,7 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 	}
 
 	in := engines.Input{
-		RepoRoot:    opt.Config.RepoRoot,
+		RepoRoot:    analysisRoot,
 		Files:       files,
 		RulepackDir: opt.Rulepack,
 	}
@@ -361,9 +366,9 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 	// ── Etapa 2b: reglas del playbook sobre el repo y el cambio ──────────
 	// No dependen de ningún motor externo ni de la red, así que corren
 	// siempre, incluso con el diff degradado a solo-secretos.
-	res.Findings = append(res.Findings, revisarLockfiles(opt.Config, files)...)
+	res.Findings = append(res.Findings, revisarLockfilesEn(opt.Config, analysisRoot, files)...)
 	res.Findings = append(res.Findings, revisarTamano(opt.Diff, files)...)
-	res.Findings = append(res.Findings, revisarComplejidad(opt.Config, files)...)
+	res.Findings = append(res.Findings, revisarComplejidadEn(opt.Config, analysisRoot, files)...)
 
 	// ── La IDENTIDAD se asigna aquí, UNA vez y para el conjunto entero ────
 	// (huellas v2, consejo turnos 71-84). Antes cada parser llamaba a
@@ -373,7 +378,7 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 	// determinista y ANTES de la supresión, que es la primera consumidora.
 	// La fuente lee el mismo disco que leyeron los motores; si el worktree
 	// cambió durante el análisis, el aviso del bug #8 (etapa final) lo dice.
-	finding.AsignarHuellas(res.Findings, finding.FuenteDeArchivos(opt.Config.RepoRoot))
+	finding.AsignarHuellas(res.Findings, finding.FuenteDeArchivos(analysisRoot))
 
 	// ── Auto-calibración: reglas con exceso de falsos positivos (según el
 	// feedback del equipo en ESTE repo) bajan a aviso. gitleaks jamás. ────
@@ -433,7 +438,7 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 		if f.Status == "D" || f.SHA256 == "" {
 			continue
 		}
-		if gitdiff.SHA256De(opt.Config.RepoRoot, f.Path) != f.SHA256 {
+		if gitdiff.SHA256De(analysisRoot, f.Path) != f.SHA256 {
 			cambiados = append(cambiados, f.Path)
 		}
 	}
@@ -456,7 +461,31 @@ func Run(ctx context.Context, opt Options) (*Result, error) {
 			res.Rulepack.Verified = false
 		}
 	}
+	// La configuración generada promete `semgrep_error: block`. Durante meses
+	// ese campo se leía pero nadie lo aplicaba: el hook enseñaba PARCIAL y
+	// devolvía 0, de modo que una avería de las reglas de seguridad abría un
+	// bypass exactamente cuando la política decía fail-closed. La decisión vive
+	// aquí para que hook, daemon y CI reciban el mismo Verdict canónico.
+	if bloqueaDegradacionSemgrep(opt.Config, res.Degraded) {
+		res.Verdict = Block
+		if res.Reason == "" && res.BlockingFindings == 0 {
+			res.Reason = "la capa obligatoria de Semgrep no pudo completar el análisis"
+		}
+	}
 	return res, nil
+}
+
+func bloqueaDegradacionSemgrep(cfg *config.Config, degradadas []string) bool {
+	if cfg == nil || !strings.EqualFold(strings.TrimSpace(cfg.Gates.SemgrepError), "block") {
+		return false
+	}
+	for _, d := range degradadas {
+		d = strings.TrimSpace(d)
+		if strings.HasPrefix(d, "semgrep:") || d == "falta:semgrep" || strings.HasPrefix(d, "rulepack-ausente:") {
+			return true
+		}
+	}
+	return false
 }
 
 // estaSuprimido consulta el mapa de supresiones con la PAREJA de huellas del

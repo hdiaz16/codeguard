@@ -50,7 +50,11 @@ rules:
     message: >-
       Capturaste un valor en una variable y lo tiras a "_". Si es un error, o
       lo manejas o explicas por qué no importa; si no lo era, es código muerto.
-    metadata: { pilar: calidad, owasp: "A09:2021" }
+    metadata:
+      pilar: calidad
+      owasp: "A09:2021"
+      why: "Descartar un valor ya capturado oculta errores reales o deja código muerto que parece tener una intención."
+      fix_hint: "Usa el valor, devuelve o registra el error con contexto; si el descarte es deliberado, elimina la asignación intermedia y documenta la razón."
     # Caza SÓLO "_ = variable" (tirar algo ya capturado). NO caza "_ = fn()":
     # descartar el retorno de una llamada a propósito es el silenciador
     # idiomático de Go —lo que errcheck recomienda— y penalizarlo enfrentaba
@@ -73,7 +77,10 @@ rules:
     message: >-
       Promesa sin await ni catch. Es el fallo silencioso número uno en Node:
       el rechazo no se ve y el proceso puede morir sin traza.
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Una promesa abandonada pierde su resultado y su rechazo; el fallo puede aparecer fuera del flujo que lo originó o terminar el proceso."
+      fix_hint: "Espera la promesa con `await`, devuélvela al llamador o termina la cadena con un `.catch(...)` que maneje el error."
     # curación 2026-08-11: pattern-not sólo descarta matches de rango IGUAL, y
     # el .then() positivo es un sub-rango del encadenado con .catch() — esos
     # pattern-not jamás suprimieron nada y el idioma .then().catch() era falso
@@ -96,7 +103,11 @@ rules:
     message: >-
       except desnudo o Exception genérica sin re-lanzar. Captura el tipo
       concreto o registra con contexto y vuelve a lanzar.
-    metadata: { pilar: calidad, owasp: "A09:2021" }
+    metadata:
+      pilar: calidad
+      owasp: "A09:2021"
+      why: "Una captura demasiado amplia mezcla fallos recuperables con defectos de programación y puede dejar el proceso en un estado inválido sin una traza útil."
+      fix_hint: "Captura la excepción concreta que puedes resolver; para las demás, registra contexto y vuelve a lanzar con `raise`."
     patterns:
       - pattern-either:
           - pattern: |
@@ -126,7 +137,11 @@ rules:
     languages: [csharp]
     severity: ERROR
     message: "Excepción capturada y descartada sin registrar ni re-lanzar."
-    metadata: { pilar: calidad, owasp: "A09:2021" }
+    metadata:
+      pilar: calidad
+      owasp: "A09:2021"
+      why: "Un `catch` vacío convierte una operación fallida en aparente éxito y elimina la evidencia necesaria para diagnosticarla."
+      fix_hint: "Maneja la excepción concreta o regístrala con contexto y vuelve a lanzarla; no dejes el bloque vacío."
     # curación: la forma original no parseaba; se acota a los casos ciertos
     pattern-either:
       - pattern: "try { ... } catch { }"
@@ -141,7 +156,10 @@ rules:
     message: >-
       Test saltado o enfocado. .only deja el resto de la suite sin ejecutar y
       pasa el pipeline en verde con un solo test corriendo.
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Un test enfocado ejecuta sólo una parte de la suite; uno saltado reduce cobertura. Ambos pueden dejar el CI verde sin validar el comportamiento completo."
+      fix_hint: "Quita `.only`/`.skip`; si el salto es temporal, documenta el motivo y enlaza un ticket con responsable."
     pattern-either:
       - pattern: it.only(...)
       - pattern: describe.only(...)
@@ -155,7 +173,10 @@ rules:
     languages: [python]
     severity: WARNING
     message: "Test saltado sin ticket. Añade el motivo y un enlace al issue."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Un test omitido deja un comportamiento sin verificar y puede permanecer así indefinidamente si no existe una tarea rastreable."
+      fix_hint: "Corrige y habilita el test; si debe seguir omitido, añade `reason` con un ticket vigente y la condición para reactivarlo."
     patterns:
       - pattern-either:
           - pattern: "@pytest.mark.skip"
@@ -168,7 +189,10 @@ rules:
     languages: [go]
     severity: WARNING
     message: "t.Skip sin ticket asociado."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Un test omitido deja un comportamiento sin verificar y puede permanecer así indefinidamente si no existe una tarea rastreable."
+      fix_hint: "Corrige y habilita el test; si debe seguir omitido, incluye en `t.Skip` el ticket vigente y la condición para reactivarlo."
     patterns:
       - pattern-either:
           - pattern: t.Skip(...)
@@ -181,7 +205,10 @@ rules:
       include: ["*.java"]
     severity: WARNING
     message: "@Ignore / @Disabled sin motivo documentado."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Un test deshabilitado deja un comportamiento sin verificar y puede permanecer así indefinidamente si no existe una justificación rastreable."
+      fix_hint: "Corrige y habilita el test; si el bloqueo es temporal, documenta en la anotación el motivo y el ticket que permitirá reactivarlo."
     # curación: las anotaciones sueltas no parsean como patrón java; regex
     patterns:
       - pattern-regex: '@(Ignore|Disabled)\s*($|\n)'
@@ -191,7 +218,10 @@ rules:
     languages: [javascript, typescript]
     severity: WARNING
     message: "Aserción tautológica: el test pasa siempre y no verifica nada."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "La condición siempre es verdadera, por lo que el test no puede fallar aunque el comportamiento bajo prueba se rompa."
+      fix_hint: "Sustituye la constante por una aserción sobre la salida o el efecto observable del código que realmente quieres verificar."
     pattern-either:
       - pattern: expect(true).toBe(true)
       - pattern: expect($X).toBeDefined()
@@ -200,7 +230,10 @@ rules:
     languages: [python]
     severity: WARNING
     message: "Aserción tautológica: el test pasa siempre y no verifica nada."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "La condición siempre es verdadera, por lo que el test no puede fallar aunque el comportamiento bajo prueba se rompa."
+      fix_hint: "Sustituye la constante por una aserción sobre la salida o el efecto observable del código que realmente quieres verificar."
     pattern-either:
       - pattern: assert True
       - pattern: assert 1 == 1
@@ -215,21 +248,30 @@ rules:
     languages: [python]
     severity: WARNING
     message: "Más de 5 parámetros posicionales. Agrupa en un objeto con nombres."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Muchos argumentos posicionales son fáciles de intercambiar y hacen que cada llamada dependa del orden en vez del significado."
+      fix_hint: "Agrupa los valores relacionados en un objeto, dataclass o parámetros con nombre y pasa una sola estructura con campos explícitos."
     pattern: 'def $F($A, $B, $C, $D, $E, $G, ...): ...'
 
   - id: parametros-excesivos-ts
     languages: [javascript, typescript]
     severity: WARNING
     message: "Más de 5 parámetros posicionales. Agrupa en un objeto con nombres."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Muchos argumentos posicionales son fáciles de intercambiar y hacen que cada llamada dependa del orden en vez del significado."
+      fix_hint: "Define un objeto de opciones con propiedades explícitas y pasa esa estructura en lugar de seis o más argumentos posicionales."
     pattern: function $F($A, $B, $C, $D, $E, $G, ...) { ... }
 
   - id: parametros-excesivos-go
     languages: [go]
     severity: WARNING
     message: "Más de 5 parámetros posicionales. Agrupa en un struct con nombres."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Muchos argumentos posicionales son fáciles de intercambiar y hacen que cada llamada dependa del orden en vez del significado."
+      fix_hint: "Agrupa los valores relacionados en un `struct` con campos con nombre y pasa ese tipo a la función."
     pattern: func $F($A $T1, $B $T2, $C $T3, $D $T4, $E $T5, $G $T6, ...) { ... }
 
 # curación: dividida por lenguaje — los patrones cruzados no parsean
@@ -237,7 +279,10 @@ rules:
     languages: [python]
     severity: WARNING
     message: "Cuatro niveles de anidamiento. Extrae a función o usa cláusulas de guarda."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Cada nivel adicional aumenta los caminos mentales y dificulta comprobar que todas las ramas manejan errores y estados límite."
+      fix_hint: "Usa cláusulas de guarda para salir pronto y extrae bloques independientes a funciones con un nombre que explique su intención."
     pattern: |
       if $A:
           ...
@@ -256,7 +301,10 @@ rules:
     languages: [javascript, typescript]
     severity: WARNING
     message: "Cuatro niveles de anidamiento. Extrae a función o usa cláusulas de guarda."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Cada nivel adicional aumenta los caminos mentales y dificulta comprobar que todas las ramas manejan errores y estados límite."
+      fix_hint: "Usa retornos tempranos para reducir la indentación y extrae bloques independientes a funciones con un nombre que explique su intención."
     pattern: |
       if ($A) { ... if ($B) { ... if ($C) { ... if ($D) { ... } } } }
 
@@ -267,7 +315,10 @@ rules:
     languages: [generic]
     severity: WARNING
     message: "TODO/FIXME/HACK sin ticket. Formato: TODO(ABC-123): descripción."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Una deuda sin identificador no tiene responsable, prioridad ni criterio de cierre y tiende a quedarse permanentemente en el código."
+      fix_hint: "Resuelve la deuda ahora o enlázala con el formato `TODO(ABC-123): descripción y condición de cierre`."
     # curación: SIN (?i) — en español "todo" es palabra común; solo mayúsculas
     patterns:
       - pattern-regex: \b(TODO|FIXME|HACK|XXX)\b(?!\s*\([A-Z]+-[0-9]+\))
@@ -281,7 +332,10 @@ rules:
       @ts-ignore silencia el compilador sin dejar rastro. Usa @ts-expect-error
       con explicación: falla si el error desaparece, lo cual mantiene limpia
       la supresión.
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "`@ts-ignore` también silencia errores futuros y permanece aunque el error original desaparezca, ocultando regresiones de tipos."
+      fix_hint: "Corrige el tipo; si la excepción es inevitable, usa `@ts-expect-error` con una explicación concreta para que falle cuando deje de ser necesaria."
     patterns:
       - pattern-regex: "@ts-ignore"
 
@@ -289,7 +343,10 @@ rules:
     languages: [javascript, typescript]
     severity: WARNING
     message: "console.* en código de producción. Usa el logger estructurado."
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "La consola no aporta estructura, nivel ni contexto estable y puede filtrar datos o generar ruido cuando el servicio está en producción."
+      fix_hint: "Usa el logger estructurado del proyecto con nivel, evento y campos explícitos; elimina el `console.*` si sólo era depuración temporal."
     patterns:
       - pattern-either:
           - pattern: console.log(...)
@@ -304,7 +361,10 @@ rules:
     message: >-
       Argumento por defecto mutable: se comparte entre llamadas. Usa None y
       construye dentro.
-    metadata: { pilar: calidad }
+    metadata:
+      pilar: calidad
+      why: "Python evalúa el valor por defecto una sola vez; mutarlo en una llamada altera silenciosamente las siguientes."
+      fix_hint: "Usa `None` como valor por defecto y crea la lista, diccionario o conjunto dentro de la función."
     pattern-either:
       - pattern: 'def $F(..., $A=[], ...): ...'
       - pattern: 'def $F(..., $A={}, ...): ...'

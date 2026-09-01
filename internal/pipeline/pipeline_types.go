@@ -60,10 +60,17 @@ type Result struct {
 }
 
 type Options struct {
-	Config  *config.Config
-	Diff    *gitdiff.Diff
-	Secrets engines.Engine   // etapa 1, fail-closed
-	Engines []engines.Engine // etapa 2
+	Config *config.Config
+	Diff   *gitdiff.Diff
+	// AnalysisRoot es el árbol inmutable que deben leer motores, playbook y
+	// huellas. Vacío conserva el comportamiento de los llamadores que analizan
+	// un checkout normal: usar Config.RepoRoot.
+	AnalysisRoot string
+	// InitialDegraded son límites conocidos por el llamador antes de arrancar
+	// motores (por ejemplo un gitlink cuyo contenido vive fuera del commit).
+	InitialDegraded []string
+	Secrets         engines.Engine   // etapa 1, fail-closed
+	Engines         []engines.Engine // etapa 2
 	// Rulepack es la RUTA que consumen los motores; RulepackID es la identidad
 	// resuelta que se estampa en el Result. Los llamadores de producción pasan
 	// las dos desde rulepack.Resolver (Rulepack == RulepackID.Path); los tests

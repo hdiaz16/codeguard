@@ -51,7 +51,7 @@
       "artefacto": "gitleaks",
       "paquete": "stdlib",
       "motivo": "gitleaks publica sus binarios compilados con una linea de Go anterior a la del dia (8.30.1 sale con go1.24.11). Los CVE son de crypto/tls, net/textproto, mime y crypto/x509: red y correo. En nuestra invocacion gitleaks no abre un socket. Se arregla solo cuando su autor recompile.",
-      "evidencia": "govulncheck -mode=binary sobre el binario publicado; y el contraste con govulncheck/staticcheck, que SI compilamos nosotros y quedaron sin hallazgos al recompilarlos con go1.26.5.",
+      "evidencia": "govulncheck -mode=binary sobre el binario publicado; y el contraste con govulncheck/staticcheck, que SI compilamos nosotros y quedaron sin hallazgos al recompilarlos con go1.26.6.",
       "aceptada_por": "Héctor Díaz — orden directa en sesión, 2026-08-22: «dale usa la excepcion firmada para gitleaks»",
       "hasta": "2026-11-30"
     },
@@ -62,15 +62,6 @@
       "motivo": "El unico de gitleaks que SI puede entrarse: es un bucle infinito ante entrada invalida en x/text, y gitleaks lee el contenido de archivos cualesquiera del repo, asi que un archivo con codificacion rota podria colgarlo. Lo que lo hace asumible no es que sea inalcanzable -no lo es- sino que el dano tiene techo y es visible: cada motor corre con plazo, y al vencerse el hallazgo sale como capa degradada `gitleaks:plazo` en vez de dejar el commit colgado en silencio. O sea, el peor caso es que un archivo concreto haga que la capa de secretos se reporte como no ejecutada, que es exactamente lo que queremos que pase cuando una capa no puede correr. Sin version corregida: 8.30.1 sigue con x/text v0.22.0.",
       "evidencia": "internal/engines/proc envuelve cada motor con contexto y plazo, y distingue `motor:plazo` de `motor:error` justo para que un cuelgue no se confunda con un repaso limpio. GO-2026-5970 en el listado de govulncheck -mode=binary.",
       "aceptada_por": "Héctor Díaz — orden directa en sesión, 2026-08-22: «dale usa la excepcion firmada para gitleaks»",
-      "hasta": "2026-11-30"
-    },
-    {
-      "artefacto": "motores de Python",
-      "paquete": "mcp",
-      "version": "1.23.3",
-      "motivo": "Los tres CVE estan en transportes de SERVIDOR del SDK de MCP (SSE, Streamable HTTP y WebSocket) y en los manejadores experimentales de tareas: se explotan contra un servidor MCP escuchando. CodeGuard invoca `semgrep scan`, nunca `semgrep mcp`, asi que no se levanta ningun transporte. Ojo con el matiz, porque lo comprobamos y salio al reves de lo esperado: el modulo mcp SI se importa en cada ejecucion de semgrep (cli.py lo carga arriba, linea 25, para registrar el subcomando), o sea que el codigo esta cargado en memoria; lo que no ocurre nunca es que se instancie un transporte y se pongan a atender peticiones. No se puede arreglar por separado: semgrep 1.172.0 -la ultima- fija mcp==1.23.3 exacto.",
-      "evidencia": "python -c \"import semgrep.cli, sys; print([m for m in sys.modules if m.startswith('mcp')])\" lista mcp.client, mcp.types y mcp.shared — cargados. Y `grep -rn '^\\s*(from|import) mcp' site-packages/semgrep` solo aparece bajo semgrep/commands/mcp.py y semgrep/mcp/, que cuelgan del subcomando `mcp`.",
-      "aceptada_por": "",
       "hasta": "2026-11-30"
     },
     {

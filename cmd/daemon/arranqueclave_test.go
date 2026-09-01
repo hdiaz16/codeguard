@@ -48,9 +48,9 @@ func enElEntornoDelProceso(nombre string) (string, bool) {
 // borraba del registro, pero nunca la sacaba del proceso. El daemon se quedaba
 // con la clave en os.Environ() y la heredaban trivy, tsc y git.
 //
-// No hace falta que el usuario toque nada: es lo que pasa en CADA arranque de
-// una instalación que venga de la versión anterior, o de cualquier instalación
-// hecha con `install.ps1 -ApiKey`.
+// No hace falta que el usuario toque nada: es lo que pasa en cada arranque de
+// una instalación heredada que haya guardado la clave en el registro antes de
+// que existiera la bóveda.
 func TestElArranqueDelDaemonNoDejaLaClaveEnElEntorno(t *testing.T) {
 	const valor = "clave-que-no-debe-sobrevivir-al-arranque"
 	t.Cleanup(func() {

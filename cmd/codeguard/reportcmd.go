@@ -74,7 +74,7 @@ func reportCmd() *cobra.Command {
 
 			// El caché por archivo (§9) es lo que separa el primer informe
 			// (todo se analiza) del segundo (solo lo que cambió desde entonces).
-			cache, cerrarCache := abrirCache(repoRoot, cfg)
+			cache, cerrarCache := abrirCache(repoRoot, repoRoot, cfg)
 			defer cerrarCache()
 
 			// La baseline NO se le pasa al pipeline: el informe la aplica él

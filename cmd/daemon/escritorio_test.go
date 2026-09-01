@@ -90,8 +90,8 @@ func TestListaProyectosMarcaElEstadoDeCadaUnoYOrdenaPorNombre(t *testing.T) {
 	dos := repoEnDisco(t, "beta")
 	tres := repoEnDisco(t, "gama")
 	e, _ := escritorioDePrueba([]registry.Repo{tres, uno, dos})
-	e.porProyecto[uno.Root] = &panelPayload{Repo: "alfa", RepoRoot: uno.Root, Verdict: "block"}
-	e.porProyecto[dos.Root] = &panelPayload{Repo: "beta", RepoRoot: dos.Root, Verdict: "pass"}
+	e.porProyecto[uno.Root] = &panelPayload{Repo: "alfa", RepoRoot: uno.Root, Verdict: "block", Outcome: "blocked"}
+	e.porProyecto[dos.Root] = &panelPayload{Repo: "beta", RepoRoot: dos.Root, Verdict: "pass", Outcome: "clean"}
 
 	lista := e.listaProyectos(dos.Root)
 	if len(lista) != 3 {
@@ -192,7 +192,7 @@ func TestRegistrarAnalisisGuardaElContextoYLoVuelveActivo(t *testing.T) {
 	e, _ := escritorioDePrueba([]registry.Repo{uno, dos})
 	e.sembrarDesdeRegistro() // arranque en frío: el activo es alfa
 
-	analisis := &panelPayload{Repo: "beta", RepoRoot: dos.Root, Verdict: "block", Blocking: 2}
+	analisis := &panelPayload{Repo: "beta", RepoRoot: dos.Root, Verdict: "block", Outcome: "blocked", Blocking: 2}
 	e.registrarAnalisis(analisis)
 
 	if e.activo != analisis {
@@ -463,18 +463,20 @@ func TestResumenHallazgos(t *testing.T) {
 
 func TestMarcaProyecto(t *testing.T) {
 	casos := map[string]string{
-		"block": "⛔",
-		"pass":  "✓",
+		"blocked":  "⛔",
+		"clean":    "✓",
+		"findings": "○",
+		"degraded": "○",
+		"failed":   "○",
 		// "skipped" daba "✓", y el panel rotula ese ✓ como «limpio — el último
 		// commit pasó todas las compuertas». En un análisis omitido no pasó
 		// ninguna: el embudo se paró en la etapa 0.
 		"skipped": "○",
-		"—":       "○",
 		"":        "○",
 	}
-	for veredicto, quiero := range casos {
-		if got := marcaProyecto(&panelPayload{Verdict: veredicto}); got != quiero {
-			t.Errorf("veredicto %q: quería %q, llegó %q", veredicto, quiero, got)
+	for outcome, quiero := range casos {
+		if got := marcaProyecto(&panelPayload{Outcome: outcome}); got != quiero {
+			t.Errorf("outcome %q: quería %q, llegó %q", outcome, quiero, got)
 		}
 	}
 }

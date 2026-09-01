@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,10 +31,11 @@ func enginesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "engines",
 		Short: "Verifica que los motores instalados sean los que publicaron sus autores",
-		Long: "Compara el SHA-256 de cada motor descargable contra los hashes " +
-			"publicados por sus autores en los checksums de cada release.\n\n" +
-			"Los motores de Python (semgrep, squawk, ruff, mypy) no aparecen: los instala " +
-			"pip contra PyPI con sus propias firmas, no los distribuimos nosotros.",
+		Long: "Compara el SHA-256 de cada motor descargable contra la identidad fijada " +
+			"desde la release oficial de su autor.\n\n" +
+			"Los motores Python (semgrep, squawk, ruff, mypy y bandit) no aparecen en " +
+			"esta tabla: el setup trae un wheelhouse cerrado desde PyPI oficial, fija " +
+			"todo el árbol por SHA-256 y lo instala sin red con --require-hashes.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := DirMotores()
 			// Sin directorio resoluble no se verifica NADA: mirar el directorio
@@ -162,10 +165,20 @@ func auditarMotores(dir string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	binPython, err := runtimePythonInstalado(dir)
+	if err != nil {
+		return fmt.Errorf("no se puede auditar el runtime Python de CodeGuard: %w", err)
+	}
+	dirPython := dirPaquetesPython(ctx, binPython)
+	paquetesPython := clausuraPaquetesPython(ctx, binPython)
+	if dirPython == "" || len(paquetesPython) == 0 {
+		return errors.New("el runtime Python de CodeGuard no pudo describir sus paquetes instalados")
+	}
+
 	a, err := identidad.Auditar(ctx, identidad.Opciones{
 		DirMotores:     dir,
-		DirPython:      dirPaquetesPython(ctx),
-		PaquetesPython: clausuraPaquetesPython(ctx),
+		DirPython:      dirPython,
+		PaquetesPython: paquetesPython,
 	})
 	if err != nil {
 		return err
@@ -236,14 +249,35 @@ func auditarMotores(dir string) error {
 	return errors.New("hay vulnerabilidades críticas o altas sin aceptar en los motores que distribuimos")
 }
 
-// dirPaquetesPython pregunta a Python dónde instaló pip los paquetes de
-// usuario, en vez de adivinar la ruta: depende de la versión de Python.
+// dirPaquetesPython pregunta al runtime privado de CodeGuard dónde instaló
+// pip sus paquetes, en vez de adivinar la ruta: depende de la versión de Python.
 // Recibe el ctx de la auditoría porque un intérprete colgado (instalación
 // rota, antivirus escaneando) no puede dejar la auditoría esperando para
 // siempre: al expirar el plazo el subproceso muere. Igual que la clausura.
-func dirPaquetesPython(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "python", "-c",
-		"import sysconfig; print(sysconfig.get_path('purelib', 'nt_user'))").Output()
+func runtimePythonInstalado(dirMotores string) (string, error) {
+	entradas, err := os.ReadDir(dirMotores)
+	if err != nil {
+		return "", err
+	}
+	var candidatos []string
+	for _, entrada := range entradas {
+		if !entrada.IsDir() || !strings.HasPrefix(strings.ToLower(entrada.Name()), "python-") {
+			continue
+		}
+		bin := filepath.Join(dirMotores, entrada.Name(), "Scripts", "python.exe")
+		if _, err := os.Stat(bin); err == nil {
+			candidatos = append(candidatos, bin)
+		}
+	}
+	if len(candidatos) != 1 {
+		return "", fmt.Errorf("se esperaba exactamente un runtime versionado; se encontraron %d", len(candidatos))
+	}
+	return candidatos[0], nil
+}
+
+func dirPaquetesPython(ctx context.Context, binPython string) string {
+	out, err := exec.CommandContext(ctx, binPython, "-c",
+		"import sysconfig; print(sysconfig.get_path('purelib'))").Output()
 	if err != nil {
 		return ""
 	}
@@ -292,8 +326,8 @@ print("\n".join(sorted(vistos)))
 // el site-packages entero: ahí conviven los paquetes de todo el mundo, y
 // acusarnos de un CVE de `cryptography` que no instalamos nosotros gasta la
 // credibilidad de la compuerta igual de rápido que callarse uno propio.
-func clausuraPaquetesPython(ctx context.Context) []string {
-	cmd := exec.CommandContext(ctx, "python", "-c", guionClausura)
+func clausuraPaquetesPython(ctx context.Context, binPython string) []string {
+	cmd := exec.CommandContext(ctx, binPython, "-c", guionClausura)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil

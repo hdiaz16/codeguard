@@ -12,6 +12,7 @@ import (
 
 	"codeguard/internal/baseline"
 	"codeguard/internal/config"
+	"codeguard/internal/engines/identidad"
 	"codeguard/internal/gitdiff"
 	"codeguard/internal/migraciones"
 	"codeguard/internal/registry"
@@ -99,6 +100,12 @@ func statusCmd() *cobra.Command {
 				fmt.Println("✅ todo en orden")
 			} else {
 				fmt.Printf("⚠️  %d punto(s) por atender — arriba está el comando de cada uno\n", problemas)
+				// El texto ya decía degradado, pero el proceso devolvía éxito: un
+				// script, un instalador o un monitor veía exactamente lo contrario
+				// que la persona. Doctor ya usa 1 para degraded; status mantiene el
+				// mismo contrato para que ninguna superficie convierta cobertura
+				// incompleta en un verde falso.
+				os.Exit(1)
 			}
 			return nil
 		},
@@ -137,7 +144,7 @@ func revisarRepo(root string) int {
 // nacido con su propia copia de los ocho chequeos.
 func chequeosDelRepo(root string) ([]string, map[string]chequeo) {
 	checks := map[string]chequeo{}
-	orden := []string{"config", "hooks", "hooksPath", "binpath", "rulepack", "datos", "baseline", "informe"}
+	orden := []string{"config", "hooks", "hooksPath", "binpath", "rulepack", "motores", "datos", "baseline", "informe"}
 
 	// 1. config del repo
 	cfg, err := config.Load(root)
@@ -219,7 +226,16 @@ func chequeosDelRepo(root string) ([]string, map[string]chequeo) {
 		}
 	}
 
-	// 6. pilar datos: squawk sólo entiende PostgreSQL, así que el dialecto
+	// 6. Los hashes correctos no bastan si el motor que necesita este repo no
+	// puede arrancar. Antes `engines` lo explicaba, pero `status` seguía
+	// terminando en "todo en orden": dos superficies públicas dando veredictos
+	// incompatibles sobre la misma instalación. Los motores Java sólo aplican
+	// cuando el repo declara Java; gitleaks es crítico y aplica siempre.
+	if cfg != nil {
+		checks["motores"] = estadoMotoresDelRepo(cfg, identidad.Verificar(DirMotores()))
+	}
+
+	// 7. pilar datos: squawk sólo entiende PostgreSQL, así que el dialecto
 	// decide si corre. Se muestra siempre que haya migraciones configuradas —
 	// un motor apagado en silencio se confunde con un motor que no encuentra
 	// nada, y son cosas muy distintas para quien confía en la cobertura.
@@ -262,7 +278,7 @@ func chequeosDelRepo(root string) ([]string, map[string]chequeo) {
 		}
 	}
 
-	// 7. baseline — TRES estados, no un cardinal. len(LoadOrWarn())==0
+	// 8. baseline — TRES estados, no un cardinal. len(LoadOrWarn())==0
 	// colapsaba tres realidades distintas bajo el mismo «✗ sin baseline»:
 	// el archivo ausente (eso sí se arregla con `codeguard baseline`), el
 	// archivo PRESENTE con cero supresiones (lo que baseline.Write produce
@@ -286,7 +302,7 @@ func chequeosDelRepo(root string) ([]string, map[string]chequeo) {
 		}
 	}
 
-	// 7. informe para agentes
+	// 9. informe para agentes
 	if raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(reportFile))); err == nil {
 		if strings.Contains(string(raw), "✅ COMPLETADO") {
 			checks["informe"] = chequeo{true, "HALLAZGOS.md sin pendientes"}
@@ -298,6 +314,33 @@ func chequeosDelRepo(root string) ([]string, map[string]chequeo) {
 	}
 
 	return orden, checks
+}
+
+func estadoMotoresDelRepo(cfg *config.Config, resultados []identidad.Resultado) chequeo {
+	tieneJava := false
+	for _, lenguaje := range cfg.Languages {
+		if strings.EqualFold(strings.TrimSpace(lenguaje), "java") {
+			tieneJava = true
+			break
+		}
+	}
+
+	var degradados []string
+	for _, r := range resultados {
+		aplica := r.Critico || (tieneJava && (r.Motor == "google-java-format" || r.Motor == "pmd"))
+		if !aplica || r.Estado == identidad.Verificado {
+			continue
+		}
+		detalle := strings.TrimSpace(r.Detalle)
+		if detalle == "" {
+			detalle = string(r.Estado)
+		}
+		degradados = append(degradados, r.Motor+": "+unaSolaLinea(detalle))
+	}
+	if len(degradados) == 0 {
+		return chequeo{true, "motores aplicables verificados y ejecutables"}
+	}
+	return chequeo{false, strings.Join(degradados, "; ") + " → `codeguard engines`"}
 }
 
 // corto recorta un digest para el ojo humano; la comparación real usa el

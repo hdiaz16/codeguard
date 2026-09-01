@@ -2,6 +2,8 @@ module codeguard/tools
 
 go 1.26.0
 
+toolchain go1.26.6
+
 require (
 	github.com/securego/gosec/v2 v2.28.0
 	golang.org/x/mod v0.40.0

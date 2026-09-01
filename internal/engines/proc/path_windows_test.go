@@ -88,6 +88,14 @@ func TestExpandirVariablesConVariableRealDeWindows(t *testing.T) {
 	}
 }
 
+func TestExpandirVariablesSirveTambienParaVariablesQueNoSonPath(t *testing.T) {
+	t.Setenv("USERPROFILE", `C:\Users\prueba`)
+	got := expandirVariables(`%USERPROFILE%\go`)
+	if got != `C:\Users\prueba\go` {
+		t.Fatalf("un GOPATH de REG_EXPAND_SZ quedó inutilizable: %q", got)
+	}
+}
+
 // El PATH real de ESTA máquina no debe salir con caracteres que el registro no
 // tenía. Es la misma comprobación que las de arriba pero sobre el dato de
 // verdad, que es donde se vio el fallo.

@@ -10,7 +10,7 @@
 ; =============================================================================
 
 #define MyAppName "CodeGuard"
-#define MyAppVersion "1.0.0-rc1"
+#define MyAppVersion "1.0.0-rc2"
 ; reglas.iss lo genera build-dist.ps1 contando el rulepack: el numero que se le
 ; promete al usuario no se escribe a mano (llego a decir 112 con 119 instaladas)
 #include "reglas.iss"
@@ -62,7 +62,9 @@ WizardImageStretch=yes
 WizardSizePercent=110
 ; avisa a Windows que el PATH cambio (las terminales nuevas lo heredan)
 ChangesEnvironment=no
-CreateUninstallRegKey=no
+; Debe aparecer en Aplicaciones instaladas. Desactivar esta clave dejaba un
+; unins000.exe huérfano que sólo podía encontrar quien conociera la ruta.
+CreateUninstallRegKey=yes
 Compression=lzma2
 SolidCompression=yes
 
@@ -72,7 +74,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Messages]
 ; copy minimo: el asistente habla claro y corto
 spanish.WelcomeLabel1=CodeGuard
-spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, bajo %%LOCALAPPDATA%%\CodeGuard, sin permisos de administrador.%n%nCodeGuard trae {#MyMotorTotal} motores y {#MyRuleCount} reglas. De esos motores:%n%n  •  {#MyMotorInstala} los instala este asistente. gitleaks, trivy y los de Java se%n     verifican contra el checksum que publicaron sus autores; semgrep, squawk, ruff%n     y mypy llegan por pip; govulncheck y staticcheck se COMPILAN aquí, con las%n     dependencias fijadas por nuestro go.sum. Eso último tarda un par de minutos.%n%n  •  {#MyMotorTuyos} usan herramientas que YA tienes: Go, el SDK de .NET, Java, y el%n     node_modules de tu propio proyecto para tsc y eslint, y el módulo%n     PSScriptAnalyzer de PowerShell si quieres la capa de .ps1. Para tsc y%n     eslint es%n     deliberado: se usa la versión de tu repo, que es la que corre en tu CI —%n     imponer la nuestra rompería la paridad en vez de defenderla.%n%n  •  {#MyMotorFaltanFrase}%n%nNada de esto sale a la red durante un análisis salvo los dos motores que lo%ndeclaran (govulncheck y dotnet-vuln). Ninguna telemetría se envía a nadie.
+spanish.WelcomeLabel2=El agente local de análisis pre-commit.%nRevisa lo que estás a punto de commitear y bloquea sólo lo que el CI también rechazaría.%n%nSe instalará para tu usuario, bajo %%LOCALAPPDATA%%\CodeGuard, sin permisos de administrador.%n%nCodeGuard trae {#MyMotorTotal} motores y {#MyRuleCount} reglas. De esos motores:%n%n  •  {#MyMotorInstala} los instala este asistente. gitleaks, trivy y los de Java se%n     verifican contra la identidad de sus releases oficiales; semgrep, squawk,%n     ruff, mypy y bandit llegan en un wheelhouse de PyPI oficial cerrado por%n     SHA-256 y se instalan sin red; los motores Go se COMPILAN desde módulos y%n     sumas fijados usando proxy.golang.org y sum.golang.org. Eso último tarda%n     un par de minutos.%n%n  •  {#MyMotorTuyos} usan herramientas que YA tienes: Go, el SDK de .NET, Java, y el%n     node_modules de tu propio proyecto para tsc y eslint, y el módulo%n     PSScriptAnalyzer de PowerShell si quieres la capa de .ps1. Para tsc y%n     eslint es%n     deliberado: se usa la versión de tu repo, que es la que corre en tu CI —%n     imponer la nuestra rompería la paridad en vez de defenderla.%n%n  •  {#MyMotorFaltanFrase}%n%nNada de esto sale a la red durante un análisis salvo los dos motores que lo%ndeclaran (govulncheck y dotnet-vuln). Ninguna telemetría se envía a nadie.
 spanish.FinishedHeadingLabel=Listo.
 spanish.FinishedLabelNoIcons=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init
 spanish.FinishedLabel=CodeGuard quedó instalado. Siguiente paso, en cada repositorio:%n%ncodeguard init
@@ -94,6 +96,9 @@ Source: "rulepacks\*"; DestDir: "{app}\rulepacks"; Flags: ignoreversion recurses
 ; motores.json es la fuente de verdad de hashes; engines.ps1 la lee
 Source: "engines.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "motores.json"; DestDir: "{app}"; Flags: ignoreversion
+; Cierre Python completo: lock con hashes + wheels de PyPI oficial. El script
+; instala con --no-index, asi que la maquina destino no resuelve ni descarga.
+Source: "python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs
 ; el modulo de herramientas: staticcheck/govulncheck se compilan desde aqui,
 ; con las dependencias fijadas por nuestro go.sum (no por los pisos upstream)
 Source: "tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion recursesubdirs
@@ -157,24 +162,17 @@ Name: "{userprograms}\CodeGuard\Desinstalar CodeGuard"; Filename: "{uninstallexe
 ; reintentaba, y aun asi reportaba exito dejando 23.7 MB huerfanos.
 
 [UninstallDelete]
-; Los motores NO se borran, y es deliberado.
-;
-; Se borraban, y cada reinstalación volvía a bajar 60 MB de trivy. En una red
-; corporativa lenta eso fue una hora y una instalación incompleta: la descarga
-; se truncó, el checksum no cuadró —correctamente— y el equipo quedó sin la
-; compuerta de CVE.
-;
-; Borrarlos no aporta nada de seguridad: cada instalación verifica el SHA-256 de
-; lo que encuentra contra motores.json ANTES de darlo por bueno, y lo reemplaza
-; si no coincide. O sea que conservar un binario ya verificado es exactamente
-; igual de seguro y muchísimo más rápido.
-;
-; Se conservan por el mismo criterio que la base de datos y la configuración:
-; desinstalar el agente no tiene por qué costarle al usuario una hora de red.
-; Para dejarlo del todo limpio: borrar %LOCALAPPDATA%\CodeGuard a mano.
-;
-; Sí se van los zips a medias: no sirven para nada si no se va a reinstalar.
+; Inno sólo conoce los archivos empacados. engines.ps1 crea además un venv
+; versionado, launchers y motores compilados/extraídos; si no se enumeran aquí,
+; “desinstalar” deja cientos de MB de ejecutables activos en la ruta antigua.
+; Los datos del usuario (codeguard.db, repos.json, confianza.json y logs) se
+; conservan deliberadamente para una reinstalación; payload y ejecutables no.
+Type: filesandordirs; Name: "{app}\engines"
 Type: filesandordirs; Name: "{app}\descargas"
+Type: filesandordirs; Name: "{app}\semgrep"
+Type: filesandordirs; Name: "{app}\wv_*"
+Type: files; Name: "{app}\.motores.lock"
+Type: files; Name: "{app}\.motores.*"
 
 [Code]
 const
@@ -524,7 +522,7 @@ begin
   // mientras que un daemon caído se queda en 1.
   //
   // Medido el 2026-08-26 en la máquina de Héctor: `doctor --global` salía 2
-  // con la línea «✓ daemon codeguard-daemon 1.0.0-rc1» delante. Un asistente
+  // con la línea «✓ daemon codeguard-daemon 1.0.0-rc2» delante. Un asistente
   // que tradujera ese 2 a «el agente no respondió» estaría mintiendo, y en la
   // dirección pesimista — mandando al usuario a arreglar algo que no está roto.
   //

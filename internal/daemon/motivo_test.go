@@ -39,10 +39,11 @@ func TestElMotivoDeUnAnalisisOmitidoLlegaALaRespuesta(t *testing.T) {
 
 	s := &Server{}
 	resp := s.Analyze(context.Background(), &ipc.Request{
-		RunID:       "r-prueba",
-		RepoRoot:    repo,
-		StagedFiles: []gitdiff.ChangedFile{{Path: "vendor/lib.go", Status: "M"}},
-		DeadlineMs:  5000,
+		RunID:        "r-prueba",
+		RepoRoot:     repo,
+		AnalysisRoot: repo,
+		StagedFiles:  []gitdiff.ChangedFile{{Path: "vendor/lib.go", Status: "M"}},
+		DeadlineMs:   5000,
 	})
 
 	if resp.Verdict != "skipped" {
@@ -134,10 +135,11 @@ func analizar(t *testing.T, repo string) *ipc.Response {
 	t.Helper()
 	s := &Server{}
 	return s.Analyze(context.Background(), &ipc.Request{
-		RunID:       "r-prueba",
-		RepoRoot:    repo,
-		StagedFiles: []gitdiff.ChangedFile{{Path: "a.go", Status: "M"}},
-		DeadlineMs:  5000,
+		RunID:        "r-prueba",
+		RepoRoot:     repo,
+		AnalysisRoot: repo,
+		StagedFiles:  []gitdiff.ChangedFile{{Path: "a.go", Status: "M"}},
+		DeadlineMs:   5000,
 	})
 }
 
@@ -150,10 +152,11 @@ func TestUnAnalisisNormalNoLlevaMotivo(t *testing.T) {
 
 	s := &Server{}
 	resp := s.Analyze(context.Background(), &ipc.Request{
-		RunID:       "r-prueba",
-		RepoRoot:    repo,
-		StagedFiles: []gitdiff.ChangedFile{{Path: "notas.txt", Status: "M"}},
-		DeadlineMs:  5000,
+		RunID:        "r-prueba",
+		RepoRoot:     repo,
+		AnalysisRoot: repo,
+		StagedFiles:  []gitdiff.ChangedFile{{Path: "notas.txt", Status: "M"}},
+		DeadlineMs:   5000,
 	})
 
 	if resp.Verdict == "skipped" {

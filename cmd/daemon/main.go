@@ -105,6 +105,10 @@ func main() {
 		dataDir = filepath.Join(os.TempDir(), "codeguard", fmt.Sprintf("wv_%d", os.Getpid()))
 	}
 	_ = os.MkdirAll(dataDir, 0o700)
+	// El perfil WebView es efímero y lleva el PID sólo para aislar una caída.
+	// En un cierre ordenado se elimina: antes quedaba uno por actualización y
+	// parecía que convivían varias generaciones del daemon.
+	defer os.RemoveAll(dataDir)
 
 	// El escritorio nace antes que la aplicación: Wails pide el manejador HTTP
 	// al construirse y ese manejador sirve el estado que vive en el escritorio.

@@ -58,9 +58,10 @@ func TestElCacheInvalidaEnSusCuatroEjes(t *testing.T) {
 		envenenar(t, datos)
 		exigirQueElVenenoSeSirva(t, bin, repo, datos)
 
-		// Se edita SIN tocar la línea que viola: cambia el sha del archivo y la
-		// huella del hallazgo se mantiene, así que es comparable.
-		escribir(t, repo, "app/inseguro.py", "# un comentario nuevo\n"+elDefecto)
+		// Se edita SIN tocar la línea ni sus vecinas no vacías: una línea en
+		// blanco cambia el sha pero conserva el ancla contextual v2 de todos los
+		// hallazgos, así que la identidad sigue siendo comparable.
+		escribir(t, repo, "app/inseguro.py", "\n"+elDefecto)
 		git(t, repo, "add", "-A")
 
 		// Sólo debe volver lo de ESE archivo: el resto sigue envenenado, y eso

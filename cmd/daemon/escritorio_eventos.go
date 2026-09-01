@@ -310,6 +310,7 @@ func (e *escritorio) listaProyectosLocked(raizActiva string) []proyectoEnLista {
 			Ruta:     root,
 			Activo:   root == raizActiva,
 			Verdict:  p.Verdict,
+			Outcome:  p.Outcome,
 			Blocking: p.Blocking,
 			Advisory: p.Advisory,
 			Cuando:   p.At,

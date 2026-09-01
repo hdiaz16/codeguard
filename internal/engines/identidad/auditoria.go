@@ -340,13 +340,27 @@ func normalizarPaquete(n string) string {
 // "está limpio" y "no miré" es una prueba que falle cuando debe fallar.
 func escanear(ctx context.Context, binTrivy, objetivo, nombre string) ([]Riesgo, error) {
 	cmd := comandoIdentidad(ctx, binTrivy,
-		"rootfs", "--scanners", "vuln", "--format", "json", "--quiet", "--skip-db-update", objetivo)
+		"rootfs", "--scanners", "vuln", "--format", "json", "--quiet",
+		"--skip-db-update",
+		// Trivy prueba primero un espejo de Google por defecto. Nuestra fuente es
+		// más estrecha: la base Java sólo puede venir del registro oficial del
+		// proyecto Aquasecurity.
+		"--db-repository", "ghcr.io/aquasecurity/trivy-db:2",
+		"--java-db-repository", "ghcr.io/aquasecurity/trivy-java-db:1",
+		objetivo)
 	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
 	// Misma regla que el motor de trivy: sin --exit-code, salir con código
 	// distinto de cero es fallo, no hallazgos, y aceptar el stdout que alcanzó
 	// a escribir daría por completa una auditoría a medias. Solo ErrWaitDelay
 	// (salió con 0, un nieto retuvo los pipes) deja salida completa y confiable.
 	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
+		detalle := strings.TrimSpace(string(salida.Stderr))
+		if len(detalle) > 1200 {
+			detalle = detalle[len(detalle)-1200:]
+		}
+		if detalle != "" {
+			return nil, fmt.Errorf("trivy no pudo mirarlo: %w: %s", err, detalle)
+		}
 		return nil, fmt.Errorf("trivy no pudo mirarlo: %w", err)
 	}
 	var res salidaTrivy

@@ -21,6 +21,19 @@ func TestGosecApplies(t *testing.T) {
 	}
 }
 
+func TestGosecRecibePaquetesNoArchivos(t *testing.T) {
+	got := paquetesGosec([]string{"main.go", "cmd/api/main.go", "cmd/api/routes.go", "-generado/x.go"})
+	want := []string{".", "./cmd/api", "./-generado"}
+	if len(got) != len(want) {
+		t.Fatalf("paquetes=%v; esperaba %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("paquetes=%v; esperaba %v", got, want)
+		}
+	}
+}
+
 func TestParseGosecJSON(t *testing.T) {
 	raw := `{
 		"Golang errors": {},
@@ -69,5 +82,8 @@ func TestParseGosecJSON(t *testing.T) {
 	}
 	if f.Line != 15 || f.EndLine != 15 {
 		t.Errorf("Line/EndLine = %d/%d, want 15/15", f.Line, f.EndLine)
+	}
+	if f.Why == "" || f.FixHint == "" {
+		t.Fatalf("Gosec debe entregar causa y corrección: %+v", f)
 	}
 }

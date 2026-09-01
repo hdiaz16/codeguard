@@ -102,6 +102,20 @@ func correrHookEnHijo(t *testing.T, repo string) (codigo int, salida string) {
 	return codigo, string(out)
 }
 
+// semgrepLimpio desacopla las pruebas del CONTROL DEL HOOK de la instalación
+// real de Semgrep. Estas pruebas no miden reglas: miden fallback de daemon,
+// outcome y texto. Depender aquí del socket interno de Semgrep convertía una
+// avería externa en un supuesto fallo de esa política y tardaba ~10 s por caso.
+func semgrepLimpio(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	guion := "@echo off\r\necho {\"results\":[],\"errors\":[]}\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "semgrep.cmd"), []byte(guion), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 // soyElHijo corre el hook en el repo que preparó el padre. Si runPreCommit
 // vuelve, es que dejó pasar el commit: eso sale como 0, igual que lo vería git.
 func soyElHijo() bool { return os.Getenv(varHijoHook) == "1" }
@@ -172,6 +186,66 @@ func TestElHookPermiteElCommitCuandoNoHayNadaPreparado(t *testing.T) {
 			"Confundir «no hay nada que revisar» con «no pude averiguar qué revisar»\n"+
 			"bloquearía commits en cada máquina, que es peor que el fallo original.\nsalida:\n%s",
 			codigo, salida)
+	}
+}
+
+func TestElHookLeeLaConfiguracionDelIndiceYNoDelWorktree(t *testing.T) {
+	if soyElHijo() {
+		hacerDeHook()
+		return
+	}
+
+	repo, git := repoEnrolado(t)
+	// Esta es la configuración que va al commit. El límite fuerza la ruta
+	// secrets-only para que la prueba mida el origen de los bytes, no la
+	// disponibilidad de los linters de la máquina.
+	escribirEnRepo(t, filepath.Join(repo, ".codeguard", "config.yaml"),
+		"version: 1\nrulepack: \"2026.08.3\"\nmax_diff_lines: 1\n")
+	escribirEnRepo(t, filepath.Join(repo, "a.txt"), "uno\ndos\n")
+	git("add", ".codeguard/config.yaml", "a.txt")
+
+	// Tras el add, el editor deja el worktree inválido. Leer del disco haría
+	// que el hook abandonara antes de la compuerta; leer el índice debe usar el
+	// YAML válido de arriba.
+	escribirEnRepo(t, filepath.Join(repo, ".codeguard", "config.yaml"),
+		"version: [esto rompe el yaml\n")
+
+	codigo, salida := correrHookEnHijo(t, repo)
+	if codigo != 0 {
+		t.Fatalf("el contenido preparado era válido y el hook lo rechazó (exit %d):\n%s", codigo, salida)
+	}
+	if !strings.Contains(salida, "secretos ✓") {
+		t.Fatalf("el hook no llegó a la compuerta usando la configuración preparada:\n%s", salida)
+	}
+	if strings.Contains(salida, "config ilegible") {
+		t.Fatalf("el hook leyó el YAML sucio del worktree en vez del índice:\n%s", salida)
+	}
+}
+
+func TestUnCommitBloqueadoNoDejaInstantaneasEnTemp(t *testing.T) {
+	if soyElHijo() {
+		hacerDeHook()
+		return
+	}
+
+	temporal := t.TempDir()
+	t.Setenv("TEMP", temporal)
+	t.Setenv("TMP", temporal)
+	repo, git := repoEnrolado(t)
+	escribirEnRepo(t, filepath.Join(repo, "credenciales.py"),
+		"TOKEN = \"ghp_"+"A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"+"\"\n")
+	git("add", "credenciales.py")
+
+	codigo, salida := correrHookEnHijo(t, repo)
+	if codigo == 0 {
+		t.Fatalf("el fixture contiene un secreto y el hook lo permitió:\n%s", salida)
+	}
+	restos, err := filepath.Glob(filepath.Join(temporal, "codeguard-index-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restos) != 0 {
+		t.Fatalf("os.Exit dejó instantáneas con contenido del repo en TEMP: %v", restos)
 	}
 }
 

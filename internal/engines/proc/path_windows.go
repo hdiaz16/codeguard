@@ -104,7 +104,11 @@ func variablesDeUsuario() map[string]string {
 		if err != nil || v == "" {
 			continue
 		}
-		out[n] = v
+		// GetStringValue devuelve el texto crudo de REG_EXPAND_SZ. Una sesión
+		// nueva de Windows sí expande %USERPROFILE%, %LOCALAPPDATA%, etc.; si
+		// RefrescarVariables no lo hace, herramientas como Go reciben por ejemplo
+		// GOPATH=%USERPROFILE%\go y lo rechazan por ser una ruta relativa.
+		out[n] = expandirVariables(v)
 	}
 	return out
 }

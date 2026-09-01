@@ -117,8 +117,9 @@
         </ul>
         CodeGuard trae <strong>22 motores</strong> y el instalador
         <strong>provisiona 14</strong>: gitleaks, trivy, google-java-format y pmd
-        verificados contra el checksum de sus autores; semgrep, squawk, ruff,
-        mypy y bandit por pip; govulncheck, staticcheck, gosec y actionlint
+        verificados contra la identidad de sus releases oficiales; semgrep,
+        squawk, ruff, mypy y bandit desde un wheelhouse de PyPI oficial cerrado
+        por SHA-256 e instalado sin red; govulncheck, staticcheck, gosec y actionlint
         compilados en tu máquina con versión fijada; y shellcheck por winget
         —su autor no publica sumas SHA-256, el manifiesto de winget sí—. Los
         <strong>8 restantes</strong> usan herramientas que ya tienes: Go, el SDK
@@ -176,16 +177,16 @@
 
       <h3 id="instalacion-script">Con el script</h3>
       <pre><span class="p">PS&gt;</span> powershell -ExecutionPolicy Bypass -File dist\install.ps1</pre>
-      <p>Dos banderas útiles:</p>
+      <p>Una bandera útil:</p>
       <div class="tabla-caja">
         <table>
           <thead><tr><th>Bandera</th><th>Qué hace</th></tr></thead>
           <tbody>
-            <tr><td><code>-ApiKey "…"</code></td><td>Guarda la clave del modelo en el Administrador de credenciales de Windows durante la instalación.</td></tr>
             <tr><td><code>-SkipTrivy</code></td><td>No descarga trivy, que pesa unos 60&nbsp;MB. Útil en un primer reparto; se puede añadir después con <code>codeguard repair</code>.</td></tr>
           </tbody>
         </table>
       </div>
+      <p>El instalador no acepta claves ni secretos como argumentos. Configúralos después con <code>codeguard config</code>, para que no queden expuestos en el historial ni en la línea de comandos del proceso.</p>
 
       <h3 id="instalacion-donde">Qué instala y dónde</h3>
       <div class="tabla-caja">

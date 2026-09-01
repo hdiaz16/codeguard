@@ -158,7 +158,7 @@ func ciCmd() *cobra.Command {
 			}
 
 			if format == "sarif" && out != "" {
-				if err := sarif.Write(out, version, res.Findings); err != nil {
+				if err := sarif.Write(out, version, res.Findings, outcome); err != nil {
 					return fmt.Errorf("escribiendo SARIF: %w", err)
 				}
 				fmt.Printf("SARIF: %s (%d resultados)\n", out, len(res.Findings))

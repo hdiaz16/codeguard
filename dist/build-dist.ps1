@@ -16,9 +16,22 @@ if (-not $version) { throw "no se pudo leer MyAppVersion de setup.iss" }
 # Al cruzarla, el alias legacy deja de nacer y las baselines v1 sin renovar
 # dejan de suprimir CON AVISO (finding.SunsetV1 y baseline.Load).
 $sunsetV1 = (Get-Date).AddDays(90).ToString("yyyy-MM-dd")
-Write-Host "==> compilando binarios optimizados (v$version, ventana dual de huellas v1 hasta $sunsetV1)" -ForegroundColor Cyan
-go build -trimpath -ldflags "-s -w -X main.version=$version -X codeguard/internal/finding.SunsetV1=$sunsetV1" -o dist\codeguard.exe .\cmd\codeguard
-go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$version -X codeguard/internal/finding.SunsetV1=$sunsetV1" -o dist\codeguard-daemon.exe .\cmd\daemon
+
+# La pública sale de la misma privada DPAPI con la que se firmará abajo. No se
+# lee de dist ni del rulepack: queda embebida en ambos ejecutables. Sin ella el
+# build estable se aborta ANTES de producir binarios que aceptarían unsigned.
+$eapPrevio = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$releasePublic = (& go run .\cmd\codeguard-release public-key 2>&1 | Out-String).Trim()
+$claveLista = ($LASTEXITCODE -eq 0 -and $releasePublic -match '^rel-[0-9a-f]{8}=[0-9a-f]{64}$')
+$ErrorActionPreference = $eapPrevio
+if (-not $claveLista) {
+    throw "no hay una clave pública de release válida; ejecuta go run .\cmd\codeguard-release keygen y conserva su respaldo offline.`n$releasePublic"
+}
+$ldBase = "-s -w -X main.version=$version -X codeguard/internal/finding.SunsetV1=$sunsetV1 -X codeguard/internal/manifest.ReleaseKeys=$releasePublic"
+Write-Host "==> compilando binarios optimizados (v$version, ventana dual de huellas v1 hasta $sunsetV1, rulepacks firmados)" -ForegroundColor Cyan
+go build -trimpath -ldflags $ldBase -o dist\codeguard.exe .\cmd\codeguard
+go build -trimpath -ldflags ("-H windowsgui " + $ldBase) -o dist\codeguard-daemon.exe .\cmd\daemon
 
 Write-Host "==> copiando rulepack" -ForegroundColor Cyan
 # Borrar antes de copiar: Copy-Item -Force fusiona en vez de reemplazar, asi
@@ -36,15 +49,19 @@ Get-ChildItem dist\rulepacks -Directory -Recurse -Filter testdata | Remove-Item 
 # La firma del rulepack (W3): cada version del paquete lleva manifest.json/.sig
 # firmados con la clave de release (DPAPI local, docs/threat-model-rulepack.md).
 # Se firma la copia de dist\ DESPUES de podar testdata: el manifiesto describe
-# exactamente el arbol que se distribuye. Sin clave, el paquete sale SIN FIRMAR
-# y se DICE en amarillo — un binario sin claves embebidas no exige firma, pero
-# el estado objetivo es release firmado + binario con la publica embebida.
+# exactamente el arbol que se distribuye. Sin clave el build FALLA: un aviso no
+# protege una release y permitirlo fue la via por la que un paquete estable
+# podia salir con Verified=false.
 # Ademas se genera rulepacks-limpieza.iss: el setup BORRA cada version que trae
 # antes de copiarla (Inno copia archivo-por-archivo y fusionaria una version ya
 # presente con otro contenido — la divergencia 130-vs-161 reglas medida el
 # 2026-08-23 nacio exactamente asi). Las versiones que el paquete NO trae se
 # conservan: son el last-known-good implicito.
-$limpieza = @("[InstallDelete]")
+$limpieza = @(
+    "[InstallDelete]",
+    '; perfiles WebView efimeros de daemons detenidos antes de actualizar',
+    'Type: filesandordirs; Name: "{app}\wv_*"'
+)
 foreach ($pack in Get-ChildItem dist\rulepacks -Directory) {
     # Con ErrorActionPreference=Stop, el stderr de un comando nativo por 2>&1
     # se vuelve excepcion terminante en PowerShell 5.1 — y "sin clave" NO es
@@ -54,11 +71,10 @@ foreach ($pack in Get-ChildItem dist\rulepacks -Directory) {
     $salidaFirma = & go run .\cmd\codeguard-release sign-rulepack $pack.FullName 2>&1
     $firmado = ($LASTEXITCODE -eq 0)
     $ErrorActionPreference = $eapPrevio
-    if ($firmado) {
-        $salidaFirma | ForEach-Object { Write-Host "    $_" }
-    } else {
-        Write-Host "    AVISO: rulepack $($pack.Name) SIN FIRMAR (genera tu clave con: go run .\cmd\codeguard-release keygen)" -ForegroundColor Yellow
+    if (-not $firmado) {
+        throw "rulepack $($pack.Name) no se pudo firmar; una distribucion estable nunca sale sin firma:`n$($salidaFirma -join "`n")"
     }
+    $salidaFirma | ForEach-Object { Write-Host "    $_" }
     $limpieza += "Type: filesandordirs; Name: `"{app}\rulepacks\$($pack.Name)`""
     $limpieza += "Type: filesandordirs; Name: `"{app}\bin\rulepacks\$($pack.Name)`""
 }
@@ -129,6 +145,12 @@ Write-Host "==> el asistente y el acuerdo anunciaran $reglas reglas" -Foreground
 # motores.json: fuente de verdad de hashes, compartida con engines.ps1 y el
 # setup. Se copia desde el agente para que nunca diverjan.
 Copy-Item internal\engines\identidad\motores.json dist\ -Force
+
+# Python no se resuelve en la maquina del usuario. El release genera el cierre
+# transitivo completo desde PyPI oficial, fija cada wheel por SHA-256 y demuestra
+# una instalacion sin red antes de dejarlo entrar al setup.
+Write-Host "==> wheelhouse Python oficial, cerrado y reproducible" -ForegroundColor Cyan
+powershell -NoProfile -ExecutionPolicy Bypass -File dist\build-python-wheelhouse.ps1
 
 Write-Host "==> arte del asistente (estetica DUNA)" -ForegroundColor Cyan
 powershell -NoProfile -ExecutionPolicy Bypass -File dist\build-wizard-art.ps1

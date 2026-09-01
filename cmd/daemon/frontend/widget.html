@@ -237,22 +237,21 @@
   const burbuja = document.getElementById("burbuja");
   const burbujaTexto = document.getElementById("burbuja-texto");
 
-  // Lo que susurra el orbe al cambiar de estado. "en reposo" y "todo bien"
-  // eran correctos y no decían nada: cualquier programa podría decirlos.
-  // Estos hablan de lo que este agente hace — vigilar commits — y en el tono
-  // de un compañero, no de una barra de estado.
+  // Lo que susurra el orbe al cambiar de estado. Son frases breves, pero no
+  // vagas: nombran la operación o la acción siguiente en vocabulario de quien
+  // desarrolla. "puedes seguir" y "hay algo" obligaban a adivinar qué ocurrió.
   // «revisé sólo una parte» decía degraded, y afirmaba una revisión parcial que
   // no siempre existió: a este estado se llega también cuando un análisis se
   // muere sin que ninguna capa llegara a mirar nada (ver alMorirElAnalisis). El
   // hueco es lo único cierto en los tres caminos que traen aquí, así que es lo
   // único que se dice; el detalle exacto va en el tooltip, que sí lo sabe.
   const WHISPERS = {
-    idle:     "de guardia",
-    working:  "revisando tu cambio",
-    pass:     "puedes seguir",
-    blocked:  "espera, hay algo",
-    degraded: "hay un hueco en la revisión",
-    offline:  "sin modelo, reglas al día",
+    idle:     "vigilando commits",
+    working:  "analizando el cambio",
+    pass:     "compuertas superadas",
+    blocked:  "commit bloqueado: revisa el panel",
+    degraded: "cobertura incompleta: revisa el panel",
+    offline:  "sin IA; reglas deterministas activas",
   };
   const VALID = new Set(Object.keys(WHISPERS));
 
@@ -260,8 +259,8 @@
   const TITULOS = {
     idle:     "De guardia — cada commit pasa por aquí antes de entrar",
     working:  "Revisando tu cambio",
-    pass:     "El commit pasó todas las compuertas",
-    blocked:  "Commit detenido — hay problemas que el CI también rechazaría",
+    pass:     "El cambio pasó todas las compuertas",
+    blocked:  "Cambio detenido — hay problemas que el CI también rechazaría",
     degraded: "Hueco en la revisión — no todo se pudo mirar",
     offline:  "Sin conexión al modelo — las reglas deterministas siguen aplicándose",
   };

@@ -187,6 +187,7 @@
   header .meta { color: var(--ink-3); font-size: var(--fs-small); margin-top: 5px; }
   .verdict.block   { color: var(--block); }
   .verdict.pass    { color: var(--ok); }
+  .verdict.warn    { color: var(--warn); }
   .verdict.working { color: var(--warn); }
 
   /* El estado NO tiñe la tarjeta. Se intentó dos veces —una línea de acento
@@ -796,12 +797,14 @@
     const w = runs.length * (W + GAP) - GAP;
     const bars = runs.map((run, i) => {
       const x = i * (W + GAP);
-      const skip = run.verdict === "skipped";
+      const estado = run.outcome || "";
+      const skip = estado ? estado === "skipped" : run.verdict === "skipped";
+      const incompleto = estado === "degraded" || estado === "failed";
       const n = run.bloqueantes || 0;
-      const alto = skip ? BASE : Math.max(BASE, Math.round((H - BASE) * n / max));
-      const clase = skip ? "sk" : (n > 0 ? "blk" : "ok");
-      const detalle = skip
-        ? `${cuandoCorto(run.cuando)} · omitido`
+      const alto = (skip || incompleto) ? BASE : Math.max(BASE, Math.round((H - BASE) * n / max));
+      const clase = (skip || incompleto) ? "sk" : (n > 0 ? "blk" : "ok");
+      const detalle = (skip || incompleto)
+        ? `${cuandoCorto(run.cuando)} · ${skip ? "omitido" : "incompleto"}`
         : `${cuandoCorto(run.cuando)} · ${n} bloqueante${n === 1 ? "" : "s"}`;
       return `<rect class="${clase}" x="${x}" y="${H - alto}" width="${W}" height="${alto}" rx="1.5">` +
              `<title>${esc(detalle)}</title></rect>`;
@@ -836,7 +839,39 @@
       <path d="M9 9l6 6M15 9l-6 6"/></svg>`,
     working: `<svg class="vicon girando" viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 3a9 9 0 1 0 9 9"/></svg>`,
+    warn: `<svg class="vicon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 3L2.8 20h18.4z"/><path d="M12 8v6M12 17.2v.2"/></svg>`,
   };
+
+  const MOTOR_NOMBRE = {
+    semgrep: "Semgrep", gitleaks: "Gitleaks", trivy: "Trivy", tsc: "TypeScript",
+    pmd: "PMD", gosec: "Gosec", "google-java-format": "Google Java Format",
+  };
+
+  // Los códigos de degradación siguen visibles para diagnóstico, pero nunca
+  // son el único texto que recibe el desarrollador. `semgrep:error` es un buen
+  // dato para logs y automatización; como mensaje de producto, sin verbo ni
+  // remedio, obliga a conocer la implementación interna.
+  function garantiaEnClaro(codigo) {
+    const raw = String(codigo || "").trim();
+    if (!raw) return "una capa no informó por qué quedó sin cobertura";
+    if (raw.startsWith("falta:")) {
+      const motor = raw.slice("falta:".length);
+      return `${MOTOR_NOMBRE[motor] || motor} no está disponible`;
+    }
+    if (raw.startsWith("rulepack-ausente:")) {
+      return `no se pudo cargar el rulepack ${raw.slice("rulepack-ausente:".length)}`;
+    }
+    const i = raw.lastIndexOf(":");
+    if (i > 0) {
+      const motor = MOTOR_NOMBRE[raw.slice(0, i)] || raw.slice(0, i);
+      const motivo = raw.slice(i + 1);
+      if (motivo === "error") return `${motor} no pudo completar el análisis`;
+      if (motivo === "plazo") return `${motor} agotó el tiempo de ejecución`;
+      return `${motor} quedó sin cobertura (${motivo})`;
+    }
+    return `la capa ${raw} quedó sin cobertura`;
+  }
 
   function ponVeredicto(estado, texto) {
     const v = $("verdict");
@@ -847,12 +882,28 @@
   function render(p) {
     ultimo = p;
     rootActual = p.repo_root || null;
-    if (p.verdict === "block") {
-      ponVeredicto("block", `Bloqueado: ${p.blocking} problema${p.blocking === 1 ? "" : "s"} que el CI también rechazaría`);
+    const outcome = p.outcome || "";
+    const garantiaRota = p.garantia_rota || p.degraded || [];
+    if (outcome === "blocked") {
+      if (p.blocking > 0) {
+        ponVeredicto("block", `Bloqueado: ${p.blocking} problema${p.blocking === 1 ? "" : "s"} que el CI también rechazaría`);
+      } else if (garantiaRota.length) {
+        ponVeredicto("block", "Bloqueado: una capa obligatoria no pudo completar el análisis.");
+      } else {
+        ponVeredicto("block", "Bloqueado: CodeGuard no recibió una cobertura verificable.");
+      }
+    } else if (outcome === "clean") {
+      ponVeredicto("pass", "Cambio aprobado. Sin observaciones.");
+    } else if (outcome === "findings") {
+      ponVeredicto("warn", `Cambio aprobado con ${p.advisory} sugerencia${p.advisory === 1 ? "" : "s"}.`);
+    } else if (outcome === "degraded") {
+      ponVeredicto("warn", "Cambio permitido, pero el análisis quedó incompleto.");
+    } else if (outcome === "failed") {
+      ponVeredicto("warn", "El análisis falló: CodeGuard no afirma que el commit esté limpio.");
+    } else if (outcome === "skipped") {
+      ponVeredicto("warn", "Cambio sin revisar: el análisis fue omitido.");
     } else {
-      ponVeredicto("pass", p.advisory > 0
-        ? `Commit realizado. ${p.advisory} sugerencia${p.advisory === 1 ? "" : "s"} opcional${p.advisory === 1 ? "" : "es"}.`
-        : "Commit realizado. Sin observaciones.");
+      ponVeredicto("warn", "Sin un veredicto verificable: CodeGuard no afirma que esté limpio.");
     }
     const extras = [];
     if (p.ai_generated) extras.push("✦ código generado por IA");
@@ -947,12 +998,16 @@
       // Cada estado se nombra con palabras, no sólo con un color: quien llega
       // nuevo no tiene por qué deducir qué significa un punto.
       const ESTADO = {
-        "⛔": { clase: "blk",  largo: "bloqueado — el último commit tiene problemas por resolver" },
-        "✓":  { clase: "ok",   largo: "limpio — el último commit pasó todas las compuertas" },
-        "○":  { clase: "none", largo: "enrolado pero sin analizar todavía — haz un commit aquí y verás su estado" },
+        blocked: { clase: "blk",  largo: "bloqueado — el último commit tiene problemas por resolver" },
+        clean: { clase: "ok", largo: "limpio — el último commit pasó todas las compuertas" },
+        findings: { clase: "none", largo: "revisado con sugerencias" },
+        degraded: { clase: "none", largo: "análisis incompleto — no se afirma limpio" },
+        failed: { clase: "none", largo: "el análisis falló — no se afirma limpio" },
+        skipped: { clase: "none", largo: "último commit sin revisar" },
+        unknown: { clase: "none", largo: "sin análisis verificable todavía" },
       };
       const filas = p.otros_repos.map(r => {
-        const e = ESTADO[r.marca] || ESTADO["○"];
+        const e = ESTADO[r.outcome] || ESTADO.unknown;
         // El número dice CUÁNTO, que es lo que la marca sola no distinguía.
         // Los avisos van en su propio tono: no son lo mismo que un bloqueo.
         let cuenta = "", extra = "";
@@ -1008,19 +1063,24 @@
     // daemon:offline o el diff grande anunciado no es un "no se revisó".
     // Con un payload de un daemon anterior (sin garantia_rota) se cae al
     // degraded crudo: mejor avisar de más que callar un agujero real.
-    const noRevisado = p.garantia_rota || p.degraded;
+    const noRevisado = garantiaRota;
     if (noRevisado && noRevisado.length) {
-      html += `<div class="degraded">No se revisó: ${noRevisado.map(esc).join(", ")}</div>`;
+      html += `<div class="degraded"><b>Cobertura incompleta.</b> ` +
+        `${noRevisado.map(c => `${esc(garantiaEnClaro(c))} <code>${esc(c)}</code>`).join("; ")}. ` +
+        `CodeGuard no considera limpio este cambio.</div>`;
     }
     // Estados vacíos EXPLÍCITOS: nunca dejar al dev adivinando qué pasó.
     if (!html) {
-      if (p.verdict === "—") {
+      if (!p.outcome) {
         html = `<div class="empty"><b>Este proyecto está enrolado pero aún no se ha analizado.</b><br><br>
           CodeGuard ya vigila sus commits: haz uno y aquí verás el resultado.<br>
           Mientras tanto puedes abrir su explorador de código con 🕸.</div>`;
-      } else if (p.verdict === "skipped") {
+      } else if (p.outcome === "skipped") {
         html = `<div class="empty"><b>Análisis omitido.</b><br><br>
-          Fue un merge, un revert, o todos los archivos del cambio están excluidos en la config.</div>`;
+          ${esc(p.reason || "No llegó el motivo del salto.")}</div>`;
+      } else if (p.outcome === "failed" || p.outcome === "degraded") {
+        html = `<div class="empty"><b>CodeGuard no afirma que este cambio esté limpio.</b><br><br>
+          Revisa el estado de las capas y corrige la causa antes de confiar en el resultado.</div>`;
       } else {
         html = `<div class="empty"><b>Sin observaciones.</b><br><br>
           El cambio pasó las compuertas de secretos, formato, tipos, reglas y migraciones.</div>`;
@@ -1064,7 +1124,7 @@
     if (!fb || fb.parentElement.querySelector(".explain")) return;
     const div = document.createElement("div");
     div.className = "explain";
-    div.innerHTML = `<b>en palabras simples</b>`;
+    div.innerHTML = `<b>Sugerencia contextual de IA · verifica antes de aplicar</b>`;
     div.appendChild(document.createTextNode(d.text));
     fb.parentElement.insertBefore(div, fb);
   });

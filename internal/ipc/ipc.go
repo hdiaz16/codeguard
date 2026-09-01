@@ -22,7 +22,7 @@ import (
 	"codeguard/internal/rulepack"
 )
 
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // El rango que ESTE binario sabe hablar ([13] del plan): la negociación viaja
 // EN el propio Request de análisis — sin roundtrip extra por commit — y el
@@ -31,8 +31,8 @@ const ProtocolVersion = 1
 // rango (cliente anterior) se interpreta como legacy EXACTO {1,1}, jamás como
 // compatibilidad universal (turno 92).
 const (
-	ProtocolMin = 1
-	ProtocolMax = 1
+	ProtocolMin = 2
+	ProtocolMax = 2
 )
 
 type Request struct {
@@ -44,13 +44,21 @@ type Request struct {
 	Capabilities []string `json:"capabilities,omitempty"`
 	// Command vacío = analizar (el caso normal). "open-graph" pide al daemon
 	// que abra el explorador en SU ventana — nada de navegador.
-	Command     string                `json:"command,omitempty"`
-	RunID       string                `json:"run_id"`
-	RepoRoot    string                `json:"repo_root"`
-	RepoID      string                `json:"repo_id"`
-	Branch      string                `json:"branch"`
-	StagedFiles []gitdiff.ChangedFile `json:"staged_files"`
-	DiffUnified string                `json:"diff_unified"`
+	Command  string `json:"command,omitempty"`
+	RunID    string `json:"run_id"`
+	RepoRoot string `json:"repo_root"`
+	// AnalysisRoot es la instantánea inmutable del índice que creó el hook.
+	// Desde el protocolo 2 es obligatoria para un análisis: un daemon antiguo
+	// debe rechazar y provocar la ruta local, nunca analizar el worktree en
+	// silencio.
+	AnalysisRoot string `json:"analysis_root,omitempty"`
+	// AnalysisDegraded declara límites de la instantánea que el daemon no
+	// puede inferir sólo mirando el directorio materializado.
+	AnalysisDegraded []string              `json:"analysis_degraded,omitempty"`
+	RepoID           string                `json:"repo_id"`
+	Branch           string                `json:"branch"`
+	StagedFiles      []gitdiff.ChangedFile `json:"staged_files"`
+	DiffUnified      string                `json:"diff_unified"`
 	// DiffLines es el tamaño del cambio en líneas. Viaja porque el otro lado no
 	// puede deducirlo: el daemon reconstruía el diff con Files y Unified y
 	// Lines se quedaba en CERO, así que por la ruta del daemon —la de todos los

@@ -14,6 +14,8 @@ param(
     # que un reintento reanude en vez de repetir la descarga entera.
     [string]$DescargasDir = (Join-Path $env:LOCALAPPDATA "CodeGuard\descargas"),
     [string]$MotoresJson = (Join-Path $PSScriptRoot "motores.json"),
+    # Bundle generado en release: requirements.lock + wheelhouse completo.
+    [string]$PythonBundleDir = (Join-Path $PSScriptRoot "python"),
     # El asistente mueve su barra leyendo ESTE archivo, no el log. Una linea
     # por cambio de estado de un motor (ver «El contrato CGP» mas abajo).
     # Vacio = nadie escucha, y no se escribe nada: install.ps1 y `codeguard
@@ -492,50 +494,125 @@ function Correr([string]$exe, [string[]]$argumentos) {
 # que bandit entro al producto.
 $nombresPy = ((Get-Content $MotoresJson -Raw | ConvertFrom-Json).paquetes.pip.PSObject.Properties.Name | ForEach-Object { $_ -replace '-cli$','' }) -join ', '
 Step "Motores Python ($nombresPy)"
-$py = Get-Command python -ErrorAction SilentlyContinue
-if (-not $py) {
-    Step "Python no encontrado - instalando via winget"
-    $w = Correr "winget" @("install", "-e", "--id", "Python.Python.3.13", "--silent",
-                           "--accept-package-agreements", "--accept-source-agreements")
-    if ($w.Codigo -ne 0) {
-        throw "no se pudo instalar Python automaticamente (winget devolvio $($w.Codigo)).`n" +
-              "Instalalo desde python.org y vuelve a ejecutar: codeguard repair`n$($w.Salida)"
-    }
-    $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [Environment]::GetEnvironmentVariable("PATH", "Machine")
-}
-
-# --no-warn-script-location y --disable-pip-version-check: no son cosmetica.
-# Son las dos fuentes de ruido en stderr que hacian caer al instalador, y
-# ademas las que hacian que una instalacion correcta pareciera llena de fallos.
-#
-# Y las VERSIONES van fijadas, leidas de motores.json. Antes era `--upgrade`
-# sin version: cada quien instalaba lo que hubiera ese dia y el CI otra cosa,
-# asi que dos maquinas del mismo equipo aplicaban reglas distintas y la paridad
-# local/CI -la promesa central del producto- dejaba de estar garantizada sin que
-# nadie lo notara. Una regla de semgrep cambia de comportamiento entre versiones
-# y el commit que pasa aqui falla alla.
 $paquetes = (Get-Content $MotoresJson -Raw | ConvertFrom-Json).paquetes
 $pins = @()
 foreach ($n in $paquetes.pip.PSObject.Properties) { $pins += "$($n.Name)==$($n.Value)" }
 Ok "versiones fijadas: $($pins -join ', ')"
-$pip = Correr "python" (@("-m", "pip", "install", "--user", "--quiet",
-                          "--no-warn-script-location", "--disable-pip-version-check") + $pins)
-if ($pip.Codigo -ne 0) {
-    throw "pip fallo (codigo $($pip.Codigo)):`n$($pip.Salida)"
+
+# La instalacion anterior resolvia transitivas en vivo desde la configuracion
+# pip de la maquina y escribia en --user. Eso permitia mirrors no oficiales,
+# cambios del indice y conflictos con paquetes del desarrollador. El release
+# trae el cierre completo: aqui la red queda deshabilitada con --no-index y
+# cada wheel es obligatorio por hash.
+$lockPy = Join-Path $PythonBundleDir "requirements.lock"
+$wheelhouse = Join-Path $PythonBundleDir "wheelhouse"
+if (-not (Test-Path -LiteralPath $lockPy -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $wheelhouse -PathType Container)) {
+    throw "el paquete no trae el bundle Python verificado (requirements.lock + wheelhouse); no se consulta una fuente alternativa"
 }
 
-$rutaScripts = Correr "python" @("-c", "import sysconfig; print(sysconfig.get_path('scripts', 'nt_user'))")
-if ($rutaScripts.Codigo -ne 0) {
-    throw "no se pudo averiguar donde instalo pip los scripts:`n$($rutaScripts.Salida)"
+function ResolverPython313 {
+    $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($launcher) {
+        $r = Correr $launcher.Source @("-3.13", "-c", "import sys; print(sys.executable)")
+        if ($r.Codigo -eq 0) { return $r.Salida.Trim() }
+    }
+    $python = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($python) {
+        $r = Correr $python.Source @("-c", "import sys; assert sys.version_info[:2] == (3,13); print(sys.executable)")
+        if ($r.Codigo -eq 0) { return $r.Salida.Trim() }
+    }
+    return ""
 }
-$pyScripts = $rutaScripts.Salida.Trim()
-Ok "instalados en $pyScripts"
+
+$pythonBase = ResolverPython313
+if (-not $pythonBase) {
+    Step "Python 3.13 oficial no encontrado - instalando via winget"
+    $w = Correr "winget" @("install", "-e", "--id", "Python.Python.3.13", "--source", "winget", "--silent",
+                           "--accept-package-agreements", "--accept-source-agreements")
+    if ($w.Codigo -ne 0) {
+        throw "no se pudo instalar Python 3.13 desde el repositorio oficial de winget (codigo $($w.Codigo)).`n$($w.Salida)"
+    }
+    $env:PATH = [Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [Environment]::GetEnvironmentVariable("PATH", "Machine")
+    $pythonBase = ResolverPython313
+    if (-not $pythonBase) { throw "winget termino, pero Python 3.13 no quedo localizable; no se usa otra version ni otra fuente" }
+}
+
+$lockHash = Sha256Archivo $lockPy
+$runtimePy = Join-Path $EnginesDir ("python-" + $lockHash.Substring(0,16))
+$stagePy = Join-Path $EnginesDir (".python-incoming-" + [Guid]::NewGuid().ToString("N"))
+$backupPy = Join-Path $EnginesDir (".python-backup-" + [Guid]::NewGuid().ToString("N"))
+$runtimeIntercambiado = $false
+try {
+    $venv = Correr $pythonBase @("-m", "venv", $stagePy)
+    if ($venv.Codigo -ne 0) { throw "no se pudo crear el runtime Python aislado:`n$($venv.Salida)" }
+    $stagePython = Join-Path $stagePy "Scripts\python.exe"
+    $pip = Correr $stagePython @("-m", "pip", "--isolated", "install", "--no-index",
+        "--find-links", $wheelhouse, "--require-hashes", "--disable-pip-version-check", "-r", $lockPy)
+    if ($pip.Codigo -ne 0) { throw "el wheelhouse Python no verifico o no instalo offline:`n$($pip.Salida)" }
+    $check = Correr $stagePython @("-m", "pip", "check")
+    if ($check.Codigo -ne 0) { throw "el runtime Python quedo inconsistente:`n$($check.Salida)" }
+
+    if (Test-Path -LiteralPath $runtimePy) { Move-Item -LiteralPath $runtimePy -Destination $backupPy }
+    Move-Item -LiteralPath $stagePy -Destination $runtimePy
+    $runtimeIntercambiado = $true
+
+    # En Windows los launchers que genera pip guardan la ruta absoluta del
+    # interprete. La instalacion de stage prueba primero todos los artefactos;
+    # esta segunda pasada OFFLINE, ya en la ruta definitiva, regenera esos
+    # launchers sin referencias al directorio .incoming. Si falla, el catch
+    # restaura el runtime anterior completo.
+    $finalPython = Join-Path $runtimePy "Scripts\python.exe"
+    $reubicar = Correr $finalPython @("-m", "pip", "--isolated", "install", "--force-reinstall",
+        "--no-index", "--find-links", $wheelhouse, "--require-hashes",
+        "--disable-pip-version-check", "-r", $lockPy)
+    if ($reubicar.Codigo -ne 0) { throw "no se pudieron regenerar los launchers Python en su ruta final:`n$($reubicar.Salida)" }
+    $checkFinal = Correr $finalPython @("-m", "pip", "check")
+    if ($checkFinal.Codigo -ne 0) { throw "el runtime Python final quedo inconsistente:`n$($checkFinal.Salida)" }
+
+    # Los launchers .exe contienen la ruta absoluta del interprete aislado.
+    # EnginesDir ya es el primer segmento del PATH que arma el agente; copiar
+    # solo los launchers evita exponer todo Scripts y no toca el Python global.
+    foreach ($motor in @("semgrep", "squawk", "ruff", "mypy", "bandit")) {
+        $origen = Join-Path $runtimePy ("Scripts\" + $motor + ".exe")
+        if (-not (Test-Path -LiteralPath $origen -PathType Leaf)) {
+            throw "el wheelhouse instalo pero no produjo $motor.exe"
+        }
+        $tmpLauncher = Join-Path $EnginesDir ("." + $motor + ".incoming.exe")
+        Copy-Item -LiteralPath $origen -Destination $tmpLauncher -Force
+        Move-Item -LiteralPath $tmpLauncher -Destination (Join-Path $EnginesDir ($motor + ".exe")) -Force
+    }
+    if (Test-Path -LiteralPath $backupPy) { Remove-Item -LiteralPath $backupPy -Recurse -Force }
+
+    # El nuevo runtime y TODOS sus launchers ya verificaron. Conservar aquí
+    # python-<lock-antiguo> deja dos instalaciones completas: aunque el PATH
+    # apunte a la nueva, auditorías, reparaciones o un launcher residual pueden
+    # volver a la vulnerable. El backup transaccional ya cumplió su función;
+    # sólo ahora se retiran los runtimes versionados distintos del vigente.
+    foreach ($anterior in Get-ChildItem -LiteralPath $EnginesDir -Directory -Filter "python-*") {
+        if (-not [string]::Equals($anterior.FullName, $runtimePy, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $anterior.FullName -Recurse -Force
+        }
+    }
+} catch {
+    if (Test-Path -LiteralPath $stagePy) { Remove-Item -LiteralPath $stagePy -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($runtimeIntercambiado -and (Test-Path -LiteralPath $backupPy)) {
+        if (Test-Path -LiteralPath $runtimePy) { Remove-Item -LiteralPath $runtimePy -Recurse -Force -ErrorAction SilentlyContinue }
+        Move-Item -LiteralPath $backupPy -Destination $runtimePy -Force
+    } elseif (-not (Test-Path -LiteralPath $runtimePy) -and (Test-Path -LiteralPath $backupPy)) {
+        Move-Item -LiteralPath $backupPy -Destination $runtimePy -Force
+    }
+    throw
+}
+
+$pyScripts = $EnginesDir
+Ok "runtime Python aislado, offline y verificado: $runtimePy"
 # pip instala los cinco de UNA vez, pero el contrato pide un estado terminal
 # POR MOTOR: si aqui se emitiera uno solo, la barra se quedaria cuatro
 # unidades corta durante el resto de la instalacion.
 foreach ($n in $paquetes.pip.PSObject.Properties) { CGP ($n.Name -replace '-cli$','') 'ok' }
 
-# Los scripts de Python se añaden al PATH del proceso actual (sin modificar el registro).
+# EnginesDir ya entra al PATH del agente y tambien se antepone en esta corrida.
 if ($env:PATH -notlike "*$pyScripts*") {
     $env:PATH = "$pyScripts;$env:PATH"
     Ok "PATH de sesion: + $pyScripts"
@@ -562,7 +639,7 @@ if ($wingetMotores) {
         }
         CGP $motor 'working'
         Step "instalando $motor via winget ($id)"
-        $w = Correr "winget" @("install", "-e", "--id", $id, "--silent",
+        $w = Correr "winget" @("install", "-e", "--id", $id, "--source", "winget", "--silent",
                                "--accept-package-agreements", "--accept-source-agreements")
         if ($w.Codigo -ne 0) {
             Write-Host "    $motor NO se pudo instalar (winget devolvio $($w.Codigo))" -ForegroundColor Yellow
@@ -599,7 +676,29 @@ if (-not $goBin) {
     foreach ($n in $paquetes.go.PSObject.Properties.Name) { CGP $n 'skipped' }
 } else {
     $previoGobin = $env:GOBIN
+    $previoGoProxy = $env:GOPROXY
+    $previoGoSumDB = $env:GOSUMDB
+    $previoGoPrivate = $env:GOPRIVATE
+    $previoGoNoSumDB = $env:GONOSUMDB
+    $previoGoInsecure = $env:GOINSECURE
     $env:GOBIN = $EnginesDir
+    # No heredamos proxies corporativos, mirrors, excepciones privadas ni
+    # fallback directo. proxy.golang.org + sum.golang.org son los servicios
+    # oficiales del proyecto Go y el go.sum empaquetado cierra las versiones.
+    $env:GOPROXY = "https://proxy.golang.org"
+    $env:GOSUMDB = "sum.golang.org"
+    $env:GOPRIVATE = ""
+    $env:GONOSUMDB = ""
+    $env:GOINSECURE = ""
+    $goToolchain = [string]$paquetes.go_toolchain
+    if ($goToolchain -notmatch '^go[0-9]+\.[0-9]+\.[0-9]+$') {
+        throw "motores.json no fija un go_toolchain exacto"
+    }
+    # Incluso si go.exe es una revisión vieja, el selector oficial descarga
+    # exactamente este toolchain desde proxy.golang.org. +auto permite sólo
+    # subir si un módulo futuro exige una versión mayor, jamás caer a la local.
+    $previoGoToolchain = $env:GOTOOLCHAIN
+    $env:GOTOOLCHAIN = $goToolchain + "+auto"
     try {
         # Se compila desde el MODULO DE HERRAMIENTAS empaquetado (tools/ junto a
         # este script), no con `go install modulo@version`: los go.mod de las
@@ -647,7 +746,16 @@ if (-not $goBin) {
                 # _por_que_aislado en motores.json). Sigue con version fijada.
                 $r = Correr "go" @("install", ($m.paquete + "@" + $m.version))
             } else {
-                $r = Correr "go" @("-C", $dirTools, "install", $m.paquete)
+                if ($m.nombre -eq "gosec") {
+                    # Upstream deja `Version: dev` cuando se compila con
+                    # `go install`; el motor lo rechazaba después de instalarlo
+                    # nosotros mismos. Inyectamos la versión fijada del módulo,
+                    # igual que hace la release oficial de gosec.
+                    $gosecLd = "-X main.Version=$($m.version) -X main.GitTag=$($m.version)"
+                    $r = Correr "go" @("-C", $dirTools, "install", "-ldflags", $gosecLd, $m.paquete)
+                } else {
+                    $r = Correr "go" @("-C", $dirTools, "install", $m.paquete)
+                }
             }
             if ($r.Codigo -ne 0) {
                 # Uno que no compila no se lleva al otro por delante: se apunta
@@ -667,6 +775,13 @@ if (-not $goBin) {
             # binario REAL (modulos embebidos): si tools/go.mod y motores.json
             # divergen, esto lo grita en vez de instalar otra cosa en silencio.
             $exe = Join-Path $env:GOBIN "$($m.nombre).exe"
+            $lineaGo = (& go version -m $exe 2>$null | Select-Object -First 1)
+            if ($lineaGo -notmatch (':\s*' + [regex]::Escape($goToolchain) + '$')) {
+                Write-Host "    $($m.nombre): compilado con toolchain distinto: $lineaGo" -ForegroundColor Yellow
+                $script:Faltantes += [pscustomobject]@{ Motor = $m.nombre; Sin = "toolchain distinto de $goToolchain" }
+                CGP $m.nombre 'failed'
+                continue
+            }
             # Anclado a la linea `mod`: la linea `path .../cmd/<motor>` tambien
             # contiene la raiz del modulo y NO lleva version — agarrarla daba
             # un mismatch falso (medido en el CI: govulncheck 'embebia otra
@@ -686,6 +801,12 @@ if (-not $goBin) {
         }
     } finally {
         $env:GOBIN = $previoGobin
+        $env:GOPROXY = $previoGoProxy
+        $env:GOSUMDB = $previoGoSumDB
+        $env:GOPRIVATE = $previoGoPrivate
+        $env:GONOSUMDB = $previoGoNoSumDB
+        $env:GOINSECURE = $previoGoInsecure
+        $env:GOTOOLCHAIN = $previoGoToolchain
     }
 }
 

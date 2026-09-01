@@ -92,8 +92,9 @@ func (e *escritorio) alTerminarAnalisis(req *ipc.Request, resp *ipc.Response) {
 	e.actualizarOrbe(payload)
 
 	e.emitirEvento("analysis", payload)
+	estado := estadoDelCable(resp)
 	shouldOpen := autoOpen == "on_findings" && len(resp.Findings) > 0 ||
-		autoOpen != "never" && resp.Verdict == "block"
+		autoOpen != "never" && estado == string(pipeline.Bloqueado)
 	if shouldOpen {
 		// Las ventanas se tocan desde el hilo de la UI.
 		application.InvokeAsync(e.mostrarPanel)
@@ -102,7 +103,7 @@ func (e *escritorio) alTerminarAnalisis(req *ipc.Request, resp *ipc.Response) {
 	// Diferenciador D1: el modelo explica los bloqueantes en español
 	// claro, sobre TU código. Async, cacheado por fingerprint — el
 	// commit ya fue decidido; esto solo enriquece el panel.
-	if cfg != nil && resp.Verdict == "block" {
+	if cfg != nil && estado == string(pipeline.Bloqueado) {
 		go explainBlockers(e.app, cfg, req, resp)
 	}
 }
@@ -266,16 +267,30 @@ func tooltipDelOrbe(p *panelPayload) string {
 	// Va aquí y no en quien enrola, porque es una propiedad del payload: así lo
 	// dicen igual el enrolamiento, el cambio de proyecto desde el panel y el
 	// sembrado al arrancar, en vez de que cada camino escriba su propia frase.
-	if p.Verdict == "—" || p.Verdict == "" {
+	if p.Outcome == "" {
 		return fmt.Sprintf("%s · sin análisis todavía — haz un commit aquí", p.Repo)
 	}
-	if p.Verdict == "skipped" {
+	if p.Outcome == string(pipeline.Omitido) {
 		motivo := p.Reason
 		if motivo == "" {
 			// Mejor decir que no se revisó sin el porqué que fingir que sí.
 			motivo = "el motivo no llegó hasta aquí"
 		}
 		return fmt.Sprintf("%s · rama %s · sin revisar — %s", p.Repo, p.Branch, motivo)
+	}
+	if p.Outcome == string(pipeline.Fallido) {
+		motivo := p.Reason
+		if motivo == "" {
+			motivo = "el análisis no pudo terminar"
+		}
+		return fmt.Sprintf("%s · rama %s · análisis fallido — %s", p.Repo, p.Branch, motivo)
+	}
+	if p.Outcome == string(pipeline.Degradado) {
+		return fmt.Sprintf("%s · rama %s · análisis incompleto — CodeGuard no afirma limpio", p.Repo, p.Branch)
+	}
+	if p.Outcome != string(pipeline.Limpio) && p.Outcome != string(pipeline.ConAvisos) &&
+		p.Outcome != string(pipeline.Bloqueado) {
+		return fmt.Sprintf("%s · rama %s · estado no verificable — CodeGuard no afirma limpio", p.Repo, p.Branch)
 	}
 	// "3 bloqueantes, 1 avisos" es un contador, no una frase. Esto se
 	// lee de un vistazo y en singular cuando toca.

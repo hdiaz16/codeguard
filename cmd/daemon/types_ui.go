@@ -161,6 +161,7 @@ type proyectoEnLista struct {
 	// Verdict va crudo además de la marca: la marca agrupa (un salto y un repo
 	// sin estrenar comparten ○) y el panel necesita poder decirlos distinto.
 	Verdict  string `json:"verdict"`
+	Outcome  string `json:"outcome,omitempty"`
 	Blocking int    `json:"blocking"`
 	Advisory int    `json:"advisory"`
 	// Cuando es la hora del último análisis, o "sin análisis". Un repo que

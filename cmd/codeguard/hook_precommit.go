@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"codeguard/internal/baseline"
@@ -22,6 +21,24 @@ import (
 )
 
 func runPreCommit() error {
+	var inst *gitdiff.InstantaneaIndice
+	limpiarInstantanea := func() {
+		if inst == nil {
+			return
+		}
+		if err := inst.Cerrar(); err != nil {
+			fmt.Fprintln(os.Stderr, "CodeGuard  aviso: no se pudo retirar la instantánea temporal:", err)
+		}
+		inst = nil
+	}
+	defer limpiarInstantanea()
+	salir := func(codigo int) {
+		// os.Exit no ejecuta defers. Toda salida del hook pasa por este dueño para
+		// que un commit bloqueado no acumule copias del repositorio en TEMP.
+		limpiarInstantanea()
+		os.Exit(codigo)
+	}
+
 	// El recover de abajo aplica P4 tal cual está escrito: la compuerta de
 	// secretos es fail-closed y todo lo demás no. Un pánico ANTES de que la
 	// etapa 1 emita su veredicto es "la compuerta no pudo correr" —lo mismo
@@ -40,10 +57,10 @@ func runPreCommit() error {
 				fmt.Fprintln(os.Stderr, "CodeGuard  BLOQUEADO: error interno antes de que la compuerta de secretos diera su veredicto (fail-closed):", r)
 				fmt.Fprintln(os.Stderr, "CodeGuard  si necesitas commitear ya, `git commit --no-verify` salta la revisión — "+
 					"queda constancia de que este commit no se revisó")
-				os.Exit(1)
+				salir(1)
 			}
 			fmt.Fprintln(os.Stderr, "CodeGuard  error interno (se permite el commit):", r)
-			os.Exit(0)
+			salir(0)
 		}
 	}()
 
@@ -51,27 +68,17 @@ func runPreCommit() error {
 	if err != nil {
 		return nil // fuera de un repo: nada que hacer
 	}
-	cfg, err := config.Load(repoRoot)
-	if err != nil {
-		// Aplanado por lo mismo que el motivo del daemon, y es LITERALMENTE el
-		// mismo error: el de koanf al leer este archivo, que llega en tres
-		// líneas. Aquí sale antes incluso de que exista progress.
-		fmt.Fprintln(os.Stderr, "CodeGuard  config ilegible (se permite el commit):",
-			unaSolaLinea(err.Error()))
-		return nil
-	}
-	if cfg == nil {
-		return nil // repo no enrolado
-	}
-	// Paridad con el CI (W6 Q4): si este entorno no corresponde a lo que el repo
-	// fijó en .codeguard.lock, se DECLARA aquí —el CI lo rechazaría— pero NO se
-	// bloquea el commit: bloquear al dev por una foto de coherencia le enseñaría
-	// el reflejo --no-verify, y el reflejo sobrevive a la avería.
-	declararSkewDeLock(repoRoot, cfg)
 	// progress se declara antes de la primera compuerta: un fallo aquí ya tiene
 	// que poder hablar, y antes salía mudo.
 	progress := func(s string) { fmt.Fprintf(os.Stderr, "CodeGuard  %s\n", s) }
 
+	arbolDelDiff, err := gitdiff.ArbolIndice(repoRoot)
+	if err != nil {
+		progress("BLOQUEADO: no pude identificar el índice que se va a commitear (fail-closed)")
+		progress("detalle: " + unaSolaLinea(err.Error()))
+		progress("si necesitas commitear ya, `git commit --no-verify` salta la revisión — queda constancia de que este commit no se revisó")
+		salir(1)
+	}
 	diff, err := gitdiff.Staged(repoRoot)
 	if err != nil {
 		// Fail-closed (§14), la misma política que ErrUnavailable unas líneas más
@@ -107,43 +114,49 @@ func runPreCommit() error {
 			"`git fetch --refetch` o volver a clonar)")
 		progress("si necesitas commitear ya, `git commit --no-verify` salta la revisión — " +
 			"queda constancia de que este commit no se revisó")
-		os.Exit(1)
+		salir(1)
 	}
 	if len(diff.Files) == 0 {
 		return nil // nada preparado: no hay nada que revisar
 	}
 
-	// LO QUE SE VA A ANALIZAR NO SIEMPRE ES LO QUE SE VA A COMMITEAR, Y CALLARLO
-	// ES LA MENTIRA QUE ESTE PRODUCTO EXISTE PARA RETIRAR.
-	//
-	// La lista de archivos sale del ÍNDICE, pero los motores por archivo leen del
-	// DISCO. Con `git add -p`, o editando después de un `git add`, las dos cosas
-	// se separan y el veredicto habla de un contenido que no va a entrar al
-	// historial: el dev ve verde sobre lo que tiene en el editor y el CI analiza
-	// lo otro. Justo la promesa central —«si pasa aquí, pasa allá»— rota en
-	// silencio, y en un flujo que es rutina, no un caso raro.
-	//
-	// AVISA Y NO BLOQUEA, a propósito: staging parcial es una forma legítima y
-	// muy común de trabajar, y bloquearla convertiría el producto en un estorbo.
-	// Lo que no es legítimo es decir "revisado" sin decir "…de otra cosa".
-	//
-	// El arreglo de fondo (analizar el índice materializándolo en un árbol
-	// temporal) es otra conversación: go vet, staticcheck, tsc y dotnet build
-	// COMPILAN y no saben leer un índice, así que no es un cambio de ReadFile
-	// sino de arquitectura, con coste en cada commit. Ver ConCambiosSinPreparar.
-	rutas := make([]string, 0, len(diff.Files))
-	for _, f := range diff.Files {
-		if f.Status != "D" {
-			rutas = append(rutas, f.Path)
-		}
+	// El árbol que consumen los analizadores se construye con los blobs del
+	// índice, no con el disco. Así `git add -p`, `git commit -a` y una edición
+	// posterior al add revisan exactamente los bytes que van al commit.
+	inst, errInstantanea := gitdiff.MaterializarIndice(repoRoot)
+	if errInstantanea == nil && inst.Tree != arbolDelDiff {
+		errInstantanea = fmt.Errorf("el índice cambió entre el diff y la instantánea (%s → %s)", arbolDelDiff, inst.Tree)
+		_ = inst.Cerrar()
+		inst = nil
 	}
-	if divergentes, err := gitdiff.ConCambiosSinPreparar(repoRoot, rutas); err == nil && len(divergentes) > 0 {
-		// Best-effort: si git no puede decirlo, no se inventa nada y el análisis
-		// sigue. Este aviso nunca puede ser el motivo de que un commit se pare.
-		progress(fmt.Sprintf("aviso: %d archivo(s) tienen cambios SIN preparar — se revisa lo que hay "+
-			"en disco, y no es lo que vas a commitear: %s", len(divergentes),
-			unaSolaLinea(strings.Join(divergentes, ", "))))
-		progress("     si esto te importa, `git add` esos archivos y vuelve a commitear")
+	analysisRoot := repoRoot
+	if errInstantanea == nil {
+		analysisRoot = inst.Root
+		for i := range diff.Files {
+			if diff.Files[i].Status == "D" {
+				diff.Files[i].SHA256 = ""
+				continue
+			}
+			diff.Files[i].SHA256 = gitdiff.SHA256De(analysisRoot, diff.Files[i].Path)
+		}
+	} else {
+		// La compuerta de secretos aún corre sobre el diff de Git. Lo que no se
+		// hará es declarar limpia la calidad mirando el worktree equivocado.
+		progress("aviso: no se pudo congelar el índice: " + unaSolaLinea(errInstantanea.Error()))
+	}
+
+	cfg, errConfig := config.Load(analysisRoot)
+	if errConfig == nil && cfg != nil {
+		// El lock, la baseline y un rulepack vendoreado también se leen de la
+		// foto que entra al commit. Después se restaura la identidad del repo
+		// real para confianza, caché y persistencia local.
+		declararSkewDeLock(analysisRoot, cfg)
+		cfg.RepoRoot = repoRoot
+	}
+	var degradacionesInstantanea []string
+	if inst != nil && len(inst.Submodulos) > 0 {
+		degradacionesInstantanea = append(degradacionesInstantanea,
+			fmt.Sprintf("index:submodules-opaque:%d", len(inst.Submodulos)))
 	}
 
 	start := time.Now()
@@ -166,7 +179,7 @@ func runPreCommit() error {
 		if errors.Is(err, glengine.ErrUnavailable) {
 			progress("BLOQUEADO: la compuerta de secretos no pudo correr (fail-closed)")
 			progress("repara con: codeguard repair   —   detalle: " + err.Error())
-			os.Exit(1)
+			salir(1)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			// El plazo se agotó: gitleaks no terminó y no se sabe qué había
@@ -181,7 +194,7 @@ func runPreCommit() error {
 				"reintenta el commit; si se repite, revisa las exclusiones del antivirus")
 			progress("si necesitas commitear ya, `git commit --no-verify` salta la revisión — " +
 				"queda constancia de que este commit no se revisó")
-			os.Exit(1)
+			salir(1)
 		}
 		// Cualquier otro fallo de ejecución (salida ilegible, gitleaks roto,
 		// disco): el mismo criterio — no se escaneó, no sale. Aplanado: el
@@ -190,7 +203,7 @@ func runPreCommit() error {
 		progress("detalle: " + unaSolaLinea(err.Error()))
 		progress("si necesitas commitear ya, `git commit --no-verify` salta la revisión — " +
 			"queda constancia de que este commit no se revisó")
-		os.Exit(1)
+		salir(1)
 	}
 	// La etapa 1 corre FUERA de pipeline.Run (fail-closed, no depende de nadie),
 	// así que sus hallazgos no pasan por la asignación colectiva del pipeline:
@@ -198,7 +211,7 @@ func runPreCommit() error {
 	// usan el pipeline y la sombra — el mismo secreto debe producir la misma
 	// huella venga por el camino que venga. El ancla solo entra al hash, así
 	// que nada del contenido viaja a ninguna parte.
-	finding.AsignarHuellas(secretFindings, finding.FuenteDeArchivos(repoRoot))
+	finding.AsignarHuellas(secretFindings, finding.FuenteDeArchivos(analysisRoot))
 	if len(secretFindings) > 0 {
 		progress(fmt.Sprintf("secretos ✗  BLOQUEADO: %d secreto(s) en el diff — NADA salió a la red", len(secretFindings)))
 		for _, f := range secretFindings {
@@ -229,10 +242,12 @@ func runPreCommit() error {
 			Findings:         secretFindings,
 			ElapsedMs:        time.Since(start).Milliseconds(),
 		}
-		if err := persistRun(repoRoot, cfg, res, pipeline.Finalizar(res, "", nil), len(diff.Files), false, store.NewULID()); err != nil {
-			// Telemetría, no compuerta: el veredicto ya está tomado y no cambia
-			// porque la base falle. Se avisa y se bloquea igual.
-			fmt.Fprintln(os.Stderr, "CodeGuard  aviso: no se pudo registrar el bloqueo:", err)
+		if cfg != nil {
+			if err := persistRun(repoRoot, cfg, res, pipeline.Finalizar(res, "", nil), len(diff.Files), false, store.NewULID()); err != nil {
+				// Telemetría, no compuerta: el veredicto ya está tomado y no cambia
+				// porque la base falle. Se avisa y se bloquea igual.
+				fmt.Fprintln(os.Stderr, "CodeGuard  aviso: no se pudo registrar el bloqueo:", err)
+			}
 		}
 		// Y que la INTERFAZ se entere, que era el otro agujero del mismo sitio.
 		//
@@ -268,7 +283,7 @@ func runPreCommit() error {
 			SecretosEn:         donde,
 			DeadlineMs:         2000,
 		}, 2*time.Second)
-		os.Exit(1)
+		salir(1)
 	}
 	progress("secretos ✓")
 	// A partir de aquí la compuerta de secretos ya cumplió su trabajo: corrió
@@ -279,6 +294,19 @@ func runPreCommit() error {
 	// salida prudente también es cerrar. La rama de bloqueo normal sale por
 	// os.Exit, que no pasa por ningún defer, así que esto no le cambia nada.
 	compuertaSecretosCumplida = true
+	if errConfig != nil {
+		progress("config ilegible: " + unaSolaLinea(errConfig.Error()))
+		progress("la compuerta de secretos sí corrió; el análisis de calidad se omite y se permite el commit")
+		return nil
+	}
+	if cfg == nil {
+		return nil // hook residual en un repo que no está enrolado en este índice
+	}
+	if errInstantanea != nil {
+		progress("análisis de calidad omitido: no se pudo demostrar que los motores leerían el índice")
+		progress("se permite el commit, pero CodeGuard no afirma que esté limpio")
+		return nil
+	}
 
 	// ── Run id para el trailer (prepare-commit-msg) ──
 	runID := store.NewULID()
@@ -296,17 +324,19 @@ func runPreCommit() error {
 
 	// ── Etapa 2: en el daemon; sin daemon, local degradado ──
 	req := &ipc.Request{
-		RunID:           runID,
-		RepoRoot:        repoRoot,
-		RepoID:          store.RepoIDDe(repoRoot, gitRemote(repoRoot)),
-		Branch:          gitBranch(repoRoot),
-		StagedFiles:     diff.Files,
-		DiffUnified:     diff.Unified,
-		DiffLines:       diff.Lines,
-		RulepackVersion: cfg.Rulepack,
-		ConfigHash:      cfg.Hash,
-		AIGenerated:     aiGenerated,
-		DeadlineMs:      int(hookDeadline.Milliseconds()),
+		RunID:            runID,
+		RepoRoot:         repoRoot,
+		AnalysisRoot:     analysisRoot,
+		AnalysisDegraded: degradacionesInstantanea,
+		RepoID:           store.RepoIDDe(repoRoot, gitRemote(repoRoot)),
+		Branch:           gitBranch(repoRoot),
+		StagedFiles:      diff.Files,
+		DiffUnified:      diff.Unified,
+		DiffLines:        diff.Lines,
+		RulepackVersion:  cfg.Rulepack,
+		ConfigHash:       cfg.Hash,
+		AIGenerated:      aiGenerated,
+		DeadlineMs:       int(hookDeadline.Milliseconds()),
 	}
 	var res *pipeline.Result
 	var outcome pipeline.AnalysisOutcome
@@ -394,12 +424,12 @@ func runPreCommit() error {
 		res, err = func() (*pipeline.Result, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), hookDeadline)
 			defer cancel()
-			cache, cerrarCache := abrirCache(repoRoot, cfg)
+			cache, cerrarCache := abrirCache(repoRoot, analysisRoot, cfg)
 			defer cerrarCache()
 			// La ruta local no pasa por el daemon, así que el aviso de reglas
 			// vendoreadas se da aquí: si no, por este camino se aplicarían las
 			// reglas del repo sin que nadie lo dijera.
-			rulepackID, rulepackErr := rulepack.Resolver(repoRoot, cfg.Rulepack)
+			rulepackID, rulepackErr := rulepack.Resolver(analysisRoot, cfg.Rulepack)
 			if rulepackID.Source == rulepack.SourceVendored && rulepackErr == nil {
 				progress("aviso: las reglas salieron del rulepack vendoreado en este repo " +
 					"(rulepacks/" + unaSolaLinea(cfg.Rulepack) + "), no del instalado")
@@ -410,14 +440,16 @@ func runPreCommit() error {
 				progress("aviso: " + unaSolaLinea(rulepackErr.Error()))
 			}
 			return pipeline.Run(ctx, pipeline.Options{
-				Config:       cfg,
-				Diff:         diff,
-				Secrets:      nil, // ya corrió arriba
-				Engines:      daemon.Engines(cfg, false, cache),
-				Rulepack:     rulepackID.Path,
-				RulepackID:   rulepackID,
-				Timeout:      hookDeadline,
-				Suppressions: baseline.LoadOrWarn(repoRoot),
+				Config:          cfg,
+				Diff:            diff,
+				AnalysisRoot:    analysisRoot,
+				InitialDegraded: degradacionesInstantanea,
+				Secrets:         nil, // ya corrió arriba
+				Engines:         daemon.Engines(cfg, false, cache),
+				Rulepack:        rulepackID.Path,
+				RulepackID:      rulepackID,
+				Timeout:         hookDeadline,
+				Suppressions:    baseline.LoadOrWarn(analysisRoot),
 			})
 		}()
 		if err != nil {
@@ -443,7 +475,7 @@ func runPreCommit() error {
 		// prepare-commit-msg (que --no-verify NO salta) no debe pegar un
 		// trailer viejo que camufle el bypass.
 		os.Remove(lastRunFile(repoRoot))
-		os.Exit(1)
+		salir(1)
 	}
 	return nil
 }

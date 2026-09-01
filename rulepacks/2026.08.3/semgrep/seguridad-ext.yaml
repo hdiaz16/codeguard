@@ -15,7 +15,12 @@ rules:
     message: >-
       SQL construido por interpolación. Usa consulta parametrizada:
       cursor.execute("... WHERE id = %s", (valor,))
-    metadata: { pilar: seguridad, cwe: "CWE-89", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      why: "Concatenar entrada en SQL permite alterar la estructura de la consulta, leer o modificar datos y eludir controles de autorización."
+      fix_hint: "Usa parámetros enlazados por el driver para todos los valores; para nombres de tabla o columna aplica una lista cerrada de identificadores permitidos."
     patterns:
       - pattern-either:
           - pattern: $CUR.execute("..." % ...)
@@ -33,7 +38,12 @@ rules:
     message: >-
       SQL construido por interpolación. Usa placeholders ($1, ?) y pasa los
       valores como segundo argumento.
-    metadata: { pilar: seguridad, cwe: "CWE-89", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      why: "Concatenar entrada en SQL permite alterar la estructura de la consulta, leer o modificar datos y eludir controles de autorización."
+      fix_hint: "Usa parámetros enlazados por el driver para todos los valores; para nombres de tabla o columna aplica una lista cerrada de identificadores permitidos."
     # curación 2026-08-11 (lo destapó el corpus de --test): la metavariable-
     # regex de $M en AND mataba las alternativas que no ligan $M (las de
     # query/execute/raw explícitos y la concatenación con +), y el pattern-not
@@ -59,7 +69,12 @@ rules:
     severity: ERROR
     message: >-
       SQL construido por concatenación. Usa PreparedStatement con placeholders.
-    metadata: { pilar: seguridad, cwe: "CWE-89", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      why: "Concatenar entrada en SQL permite alterar la estructura de la consulta, leer o modificar datos y eludir controles de autorización."
+      fix_hint: "Usa parámetros enlazados por el driver para todos los valores; para nombres de tabla o columna aplica una lista cerrada de identificadores permitidos."
     pattern-either:
       - pattern: $STMT.executeQuery("..." + $X)
       - pattern: $STMT.executeUpdate("..." + $X)
@@ -72,7 +87,12 @@ rules:
     severity: ERROR
     message: >-
       SQL construido por concatenación o interpolación. Usa SqlParameter.
-    metadata: { pilar: seguridad, cwe: "CWE-89", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-89"
+      owasp: "A03:2021"
+      why: "Concatenar entrada en SQL permite alterar la estructura de la consulta, leer o modificar datos y eludir controles de autorización."
+      fix_hint: "Usa parámetros enlazados por el driver para todos los valores; para nombres de tabla o columna aplica una lista cerrada de identificadores permitidos."
     pattern-either:
       - pattern: new SqlCommand("..." + $X, ...)
       - pattern: new SqlCommand($"...{$X}...", ...)
@@ -89,7 +109,12 @@ rules:
     message: >-
       exec/execSync interpreta shell. Usa execFile o spawn con array de
       argumentos, nunca una cadena construida.
-    metadata: { pilar: seguridad, cwe: "CWE-78", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-78"
+      owasp: "A03:2021"
+      why: "Una cadena controlable ejecutada por un intérprete permite inyectar operadores y comandos con los privilegios del proceso."
+      fix_hint: "Evita el shell, fija el ejecutable como literal y pasa cada argumento mediante la API estructurada; valida con una lista permitida cuando el comando sea variable."
     pattern-either:
       - pattern: $CP.exec(`...${$X}...`, ...)
       - pattern: $CP.exec("..." + $X, ...)
@@ -103,7 +128,12 @@ rules:
     message: >-
       exec.Command invocando shell o con binario dinámico. Pasa el binario
       literal y los argumentos por separado.
-    metadata: { pilar: seguridad, cwe: "CWE-78", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-78"
+      owasp: "A03:2021"
+      why: "Una cadena controlable ejecutada por un intérprete permite inyectar operadores y comandos con los privilegios del proceso."
+      fix_hint: "Evita el shell, fija el ejecutable como literal y pasa cada argumento mediante la API estructurada; valida con una lista permitida cuando el comando sea variable."
     pattern-either:
       - pattern: exec.Command("sh", "-c", $X)
       - pattern: exec.Command("bash", "-c", $X)
@@ -116,7 +146,12 @@ rules:
     message: >-
       Runtime.exec / ProcessBuilder con cadena construida. Usa ProcessBuilder
       con lista de argumentos literales.
-    metadata: { pilar: seguridad, cwe: "CWE-78", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-78"
+      owasp: "A03:2021"
+      why: "Una cadena controlable ejecutada por un intérprete permite inyectar operadores y comandos con los privilegios del proceso."
+      fix_hint: "Evita el shell, fija el ejecutable como literal y pasa cada argumento mediante la API estructurada; valida con una lista permitida cuando el comando sea variable."
     pattern-either:
       - pattern: Runtime.getRuntime().exec("..." + $X)
       - pattern: Runtime.getRuntime().exec($X)
@@ -129,7 +164,12 @@ rules:
     message: >-
       Process.Start con UseShellExecute o argumentos interpolados.
       Usa ArgumentList con valores separados.
-    metadata: { pilar: seguridad, cwe: "CWE-78", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-78"
+      owasp: "A03:2021"
+      why: "Una cadena controlable ejecutada por un intérprete permite inyectar operadores y comandos con los privilegios del proceso."
+      fix_hint: "Evita el shell, fija el ejecutable como literal y pasa cada argumento mediante la API estructurada; valida con una lista permitida cuando el comando sea variable."
     pattern-either:
       - pattern: |
           new ProcessStartInfo { ..., UseShellExecute = true, ... }
@@ -146,7 +186,12 @@ rules:
       Deserialización insegura. ObjectInputStream sobre datos no confiables es
       RCE directa. Jackson con default typing y SnakeYAML sin SafeConstructor,
       igual.
-    metadata: { pilar: seguridad, cwe: "CWE-502", owasp: "A08:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-502"
+      owasp: "A08:2021"
+      why: "Los formatos que reconstruyen tipos u objetos pueden invocar código o gadgets durante la deserialización de contenido no confiable."
+      fix_hint: "Usa un formato de datos sin ejecución como JSON o Protobuf, valida el esquema y limita tamaño y profundidad antes de procesarlo."
     pattern-either:
       - pattern: new ObjectInputStream(...).readObject()
       - pattern: $OIS.readObject()
@@ -161,7 +206,12 @@ rules:
     message: >-
       pickle sobre datos no confiables es ejecución remota de código.
       Usa JSON, MessagePack o Protobuf.
-    metadata: { pilar: seguridad, cwe: "CWE-502", owasp: "A08:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-502"
+      owasp: "A08:2021"
+      why: "Los formatos que reconstruyen tipos u objetos pueden invocar código o gadgets durante la deserialización de contenido no confiable."
+      fix_hint: "Usa un formato de datos sin ejecución como JSON o Protobuf, valida el esquema y limita tamaño y profundidad antes de procesarlo."
     pattern-either:
       - pattern: pickle.load(...)
       - pattern: pickle.loads(...)
@@ -175,7 +225,11 @@ rules:
     languages: [javascript, typescript]
     severity: ERROR
     message: "node-serialize.unserialize sobre entrada externa es RCE."
-    metadata: { pilar: seguridad, cwe: "CWE-502" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-502"
+      why: "Los formatos que reconstruyen tipos u objetos pueden invocar código o gadgets durante la deserialización de contenido no confiable."
+      fix_hint: "Usa un formato de datos sin ejecución como JSON o Protobuf, valida el esquema y limita tamaño y profundidad antes de procesarlo."
     pattern-either:
       - pattern: $S.unserialize(...)
       - pattern: require('node-serialize')
@@ -188,7 +242,12 @@ rules:
     severity: ERROR
     message: >-
       JWT decodificado sin verificar firma. Cualquiera puede fabricar el token.
-    metadata: { pilar: seguridad, cwe: "CWE-347", owasp: "A01:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-347"
+      owasp: "A01:2021"
+      why: "Leer claims sin verificar firma, algoritmo, emisor y audiencia permite que un atacante fabrique una identidad o privilegios."
+      fix_hint: "Valida la firma con una clave confiable y fija explícitamente algoritmos, issuer, audience y expiración antes de utilizar cualquier claim."
     pattern-either:
       - pattern: jwt.decode(..., verify=False, ...)
       - pattern: 'jwt.decode(..., options={..., "verify_signature": False, ...}, ...)'
@@ -199,7 +258,12 @@ rules:
     languages: [go]
     severity: ERROR
     message: "ParseUnverified no valida la firma del token."
-    metadata: { pilar: seguridad, cwe: "CWE-347", owasp: "A01:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-347"
+      owasp: "A01:2021"
+      why: "Leer claims sin verificar firma, algoritmo, emisor y audiencia permite que un atacante fabrique una identidad o privilegios."
+      fix_hint: "Valida la firma con una clave confiable y fija explícitamente algoritmos, issuer, audience y expiración antes de utilizar cualquier claim."
     pattern-either:
       - pattern: $P.ParseUnverified(...)
       - pattern: jwt.ParseUnverified(...)
@@ -208,7 +272,12 @@ rules:
     languages: [java]
     severity: ERROR
     message: "parseClaimsJwt / JWT.decode no verifican firma. Usa parseClaimsJws."
-    metadata: { pilar: seguridad, cwe: "CWE-347", owasp: "A01:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-347"
+      owasp: "A01:2021"
+      why: "Leer claims sin verificar firma, algoritmo, emisor y audiencia permite que un atacante fabrique una identidad o privilegios."
+      fix_hint: "Valida la firma con una clave confiable y fija explícitamente algoritmos, issuer, audience y expiración antes de utilizar cualquier claim."
     pattern-either:
       - pattern: $P.parseClaimsJwt(...)
       - pattern: $P.parsePlaintextJwt(...)
@@ -218,7 +287,12 @@ rules:
     languages: [csharp]
     severity: ERROR
     message: "Validación de firma o de emisor desactivada en TokenValidationParameters."
-    metadata: { pilar: seguridad, cwe: "CWE-347", owasp: "A01:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-347"
+      owasp: "A01:2021"
+      why: "Leer claims sin verificar firma, algoritmo, emisor y audiencia permite que un atacante fabrique una identidad o privilegios."
+      fix_hint: "Valida la firma con una clave confiable y fija explícitamente algoritmos, issuer, audience y expiración antes de utilizar cualquier claim."
     pattern-either:
       - pattern: |
           new TokenValidationParameters { ..., ValidateIssuerSigningKey = false, ... }
@@ -233,7 +307,11 @@ rules:
     languages: [java]
     severity: ERROR
     message: "Ejecución de código dinámico (ScriptEngine / Nashorn / OGNL / SpEL)."
-    metadata: { pilar: seguridad, cwe: "CWE-95" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-95"
+      why: "Evaluar texto como código convierte cualquier dato controlable en ejecución con los privilegios de la aplicación."
+      fix_hint: "Sustituye la evaluación por un parser o una tabla cerrada de operaciones; si el caso es inevitable, aísla el intérprete y acepta sólo una gramática limitada."
     pattern-either:
       - pattern: $ENGINE.eval(...)
       - pattern: new SpelExpressionParser().parseExpression($X)
@@ -243,7 +321,11 @@ rules:
     languages: [csharp]
     severity: ERROR
     message: "Compilación o evaluación de código en tiempo de ejecución."
-    metadata: { pilar: seguridad, cwe: "CWE-95" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-95"
+      why: "Evaluar texto como código convierte cualquier dato controlable en ejecución con los privilegios de la aplicación."
+      fix_hint: "Sustituye la evaluación por un parser o una tabla cerrada de operaciones; si el caso es inevitable, aísla el intérprete y acepta sólo una gramática limitada."
     pattern-either:
       - pattern: CSharpScript.EvaluateAsync(...)
       - pattern: CSharpScript.RunAsync(...)
@@ -258,7 +340,12 @@ rules:
     message: >-
       Algoritmo o modo débil. Hash de contraseñas -> Argon2id o bcrypt.
       Cifrado -> AES-GCM. Nunca MD5, SHA-1, DES ni modo ECB.
-    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-327"
+      owasp: "A02:2021"
+      why: "Algoritmos obsoletos o modos sin autenticación permiten colisiones, recuperación o modificación silenciosa de datos protegidos."
+      fix_hint: "Usa primitivas de alto nivel mantenidas: Argon2id o bcrypt para contraseñas, SHA-256 o superior para integridad y cifrado autenticado como AES-GCM con nonces únicos."
     pattern-either:
       - pattern: hashlib.md5(...)
       - pattern: hashlib.sha1(...)
@@ -273,7 +360,12 @@ rules:
     languages: [javascript, typescript]
     severity: ERROR
     message: "Algoritmo o modo débil. Usa sha256+ y AES-GCM."
-    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-327"
+      owasp: "A02:2021"
+      why: "Algoritmos obsoletos o modos sin autenticación permiten colisiones, recuperación o modificación silenciosa de datos protegidos."
+      fix_hint: "Usa primitivas de alto nivel mantenidas: Argon2id o bcrypt para contraseñas, SHA-256 o superior para integridad y cifrado autenticado como AES-GCM con nonces únicos."
     patterns:
       - pattern-either:
           - pattern: crypto.createHash("$ALGO")
@@ -287,7 +379,12 @@ rules:
     languages: [go]
     severity: ERROR
     message: "Algoritmo o modo débil. Usa sha256+, AES-GCM y bcrypt/argon2."
-    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-327"
+      owasp: "A02:2021"
+      why: "Algoritmos obsoletos o modos sin autenticación permiten colisiones, recuperación o modificación silenciosa de datos protegidos."
+      fix_hint: "Usa primitivas de alto nivel mantenidas: Argon2id o bcrypt para contraseñas, SHA-256 o superior para integridad y cifrado autenticado como AES-GCM con nonces únicos."
     pattern-either:
       - pattern: md5.New()
       - pattern: md5.Sum(...)
@@ -301,7 +398,12 @@ rules:
     languages: [java]
     severity: ERROR
     message: "Algoritmo o modo débil. AES/GCM/NoPadding y SHA-256 como mínimo."
-    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-327"
+      owasp: "A02:2021"
+      why: "Algoritmos obsoletos o modos sin autenticación permiten colisiones, recuperación o modificación silenciosa de datos protegidos."
+      fix_hint: "Usa primitivas de alto nivel mantenidas: Argon2id o bcrypt para contraseñas, SHA-256 o superior para integridad y cifrado autenticado como AES-GCM con nonces únicos."
     patterns:
       - pattern-either:
           - pattern: MessageDigest.getInstance("$ALGO")
@@ -315,7 +417,12 @@ rules:
     languages: [csharp]
     severity: ERROR
     message: "Algoritmo o modo débil. Usa SHA256+, AesGcm y Rfc2898/Argon2."
-    metadata: { pilar: seguridad, cwe: "CWE-327", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-327"
+      owasp: "A02:2021"
+      why: "Algoritmos obsoletos o modos sin autenticación permiten colisiones, recuperación o modificación silenciosa de datos protegidos."
+      fix_hint: "Usa primitivas de alto nivel mantenidas: Argon2id o bcrypt para contraseñas, SHA-256 o superior para integridad y cifrado autenticado como AES-GCM con nonces únicos."
     pattern-either:
       - pattern: MD5.Create()
       - pattern: SHA1.Create()
@@ -334,7 +441,12 @@ rules:
     message: >-
       random no es criptográficamente seguro. Para tokens, nonces, OTP o
       identificadores impredecibles usa el módulo secrets.
-    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-338"
+      owasp: "A02:2021"
+      why: "Los generadores no criptográficos son predecibles y permiten adivinar tokens, nonces, códigos o identificadores sensibles."
+      fix_hint: "Obtén cada valor sensible de la API criptográfica del sistema, usa suficiente entropía y no reutilices semillas ni nonces."
     patterns:
       - pattern-either:
           - pattern: $VAR = random.$F(...)
@@ -348,7 +460,12 @@ rules:
     severity: ERROR
     message: >-
       Math.random no es seguro. Usa crypto.randomUUID o crypto.randomBytes.
-    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-338"
+      owasp: "A02:2021"
+      why: "Los generadores no criptográficos son predecibles y permiten adivinar tokens, nonces, códigos o identificadores sensibles."
+      fix_hint: "Obtén cada valor sensible de la API criptográfica del sistema, usa suficiente entropía y no reutilices semillas ni nonces."
     patterns:
       - pattern-either:
           - pattern: const $VAR = <... Math.random() ...>
@@ -362,7 +479,12 @@ rules:
     languages: [go]
     severity: ERROR
     message: "math/rand no es seguro. Usa crypto/rand para material sensible."
-    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-338"
+      owasp: "A02:2021"
+      why: "Los generadores no criptográficos son predecibles y permiten adivinar tokens, nonces, códigos o identificadores sensibles."
+      fix_hint: "Obtén cada valor sensible de la API criptográfica del sistema, usa suficiente entropía y no reutilices semillas ni nonces."
     patterns:
       - pattern-either:
           - pattern: $VAR := rand.$F(...)
@@ -375,7 +497,12 @@ rules:
     languages: [java]
     severity: WARNING  # curación: sin filtro por nombre sensible (como sus hermanos), ERROR sería ruido
     message: "java.util.Random no es seguro. Usa SecureRandom."
-    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-338"
+      owasp: "A02:2021"
+      why: "Los generadores no criptográficos son predecibles y permiten adivinar tokens, nonces, códigos o identificadores sensibles."
+      fix_hint: "Obtén cada valor sensible de la API criptográfica del sistema, usa suficiente entropía y no reutilices semillas ni nonces."
     pattern-either:
       - pattern: new Random()
       - pattern: Math.random()
@@ -385,7 +512,12 @@ rules:
     languages: [csharp]
     severity: ERROR
     message: "System.Random no es seguro. Usa RandomNumberGenerator."
-    metadata: { pilar: seguridad, cwe: "CWE-338", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-338"
+      owasp: "A02:2021"
+      why: "Los generadores no criptográficos son predecibles y permiten adivinar tokens, nonces, códigos o identificadores sensibles."
+      fix_hint: "Obtén cada valor sensible de la API criptográfica del sistema, usa suficiente entropía y no reutilices semillas ni nonces."
     pattern-either:
       - pattern: new Random()
       - pattern: Random.Shared.$F(...)
@@ -397,7 +529,12 @@ rules:
     languages: [python]
     severity: ERROR
     message: "Verificación de certificado desactivada. Habilita MITM."
-    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-295"
+      owasp: "A02:2021"
+      why: "Desactivar la verificación TLS permite que un intermediario suplante el servidor y lea o modifique el tráfico."
+      fix_hint: "Restaura la validación de cadena y hostname; para certificados privados instala la CA confiable o fija una clave pública con un procedimiento de rotación."
     pattern-either:
       - pattern: requests.$M(..., verify=False, ...)
       - pattern: httpx.$M(..., verify=False, ...)
@@ -409,7 +546,12 @@ rules:
     languages: [go]
     severity: ERROR
     message: "InsecureSkipVerify desactiva la validación del certificado."
-    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-295"
+      owasp: "A02:2021"
+      why: "Desactivar la verificación TLS permite que un intermediario suplante el servidor y lea o modifique el tráfico."
+      fix_hint: "Restaura la validación de cadena y hostname; para certificados privados instala la CA confiable o fija una clave pública con un procedimiento de rotación."
     pattern: |
       &tls.Config{..., InsecureSkipVerify: true, ...}
 
@@ -417,7 +559,12 @@ rules:
     languages: [javascript, typescript]
     severity: ERROR
     message: "rejectUnauthorized:false o NODE_TLS_REJECT_UNAUTHORIZED=0."
-    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-295"
+      owasp: "A02:2021"
+      why: "Desactivar la verificación TLS permite que un intermediario suplante el servidor y lea o modifique el tráfico."
+      fix_hint: "Restaura la validación de cadena y hostname; para certificados privados instala la CA confiable o fija una clave pública con un procedimiento de rotación."
     pattern-either:
       - pattern: "{..., rejectUnauthorized: false, ...}"
       - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
@@ -426,7 +573,12 @@ rules:
     languages: [java]
     severity: ERROR
     message: "TrustManager o HostnameVerifier permisivo."
-    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-295"
+      owasp: "A02:2021"
+      why: "Desactivar la verificación TLS permite que un intermediario suplante el servidor y lea o modifique el tráfico."
+      fix_hint: "Restaura la validación de cadena y hostname; para certificados privados instala la CA confiable o fija una clave pública con un procedimiento de rotación."
     pattern-either:
       - pattern: |
           new X509TrustManager() { ... }
@@ -437,7 +589,12 @@ rules:
     languages: [csharp]
     severity: ERROR
     message: "Callback de validación de certificado que siempre acepta."
-    metadata: { pilar: seguridad, cwe: "CWE-295", owasp: "A02:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-295"
+      owasp: "A02:2021"
+      why: "Desactivar la verificación TLS permite que un intermediario suplante el servidor y lea o modifique el tráfico."
+      fix_hint: "Restaura la validación de cadena y hostname; para certificados privados instala la CA confiable o fija una clave pública con un procedimiento de rotación."
     pattern-either:
       - pattern: ServicePointManager.ServerCertificateValidationCallback = ...
       - pattern: |
@@ -450,7 +607,12 @@ rules:
     languages: [python]
     severity: ERROR
     message: "Parser XML sin protección contra entidades externas. Usa defusedxml."
-    metadata: { pilar: seguridad, cwe: "CWE-611", owasp: "A05:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-611"
+      owasp: "A05:2021"
+      why: "Aceptar DTD o entidades externas permite leer archivos locales, acceder a servicios internos y agotar recursos al analizar XML hostil."
+      fix_hint: "Deshabilita DTD y resolución externa en la fábrica o usa un parser seguro; añade una prueba con una entidad externa que deba ser rechazada."
     pattern-either:
       - pattern: xml.etree.ElementTree.parse(...)
       - pattern: xml.etree.ElementTree.fromstring(...)
@@ -464,7 +626,12 @@ rules:
     message: >-
       Factory XML sin desactivar DTD. Añade
       setFeature("http://apache.org/xml/features/disallow-doctype-decl", true).
-    metadata: { pilar: seguridad, cwe: "CWE-611", owasp: "A05:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-611"
+      owasp: "A05:2021"
+      why: "Aceptar DTD o entidades externas permite leer archivos locales, acceder a servicios internos y agotar recursos al analizar XML hostil."
+      fix_hint: "Deshabilita DTD y resolución externa en la fábrica o usa un parser seguro; añade una prueba con una entidad externa que deba ser rechazada."
     patterns:
       - pattern-either:
           - pattern: DocumentBuilderFactory.newInstance()
@@ -479,7 +646,12 @@ rules:
     languages: [csharp]
     severity: ERROR
     message: "DtdProcessing.Parse o XmlResolver activo permite XXE."
-    metadata: { pilar: seguridad, cwe: "CWE-611", owasp: "A05:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-611"
+      owasp: "A05:2021"
+      why: "Aceptar DTD o entidades externas permite leer archivos locales, acceder a servicios internos y agotar recursos al analizar XML hostil."
+      fix_hint: "Deshabilita DTD y resolución externa en la fábrica o usa un parser seguro; añade una prueba con una entidad externa que deba ser rechazada."
     pattern-either:
       - pattern: |
           new XmlReaderSettings { ..., DtdProcessing = DtdProcessing.Parse, ... }
@@ -494,7 +666,11 @@ rules:
     message: >-
       extractall sobre un archivo no confiable permite escribir fuera del
       destino. Valida cada nombre de entrada contra el directorio base.
-    metadata: { pilar: seguridad, cwe: "CWE-22" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-22"
+      why: "Una ruta controlable puede escapar del directorio previsto y sobrescribir o leer archivos accesibles por el proceso."
+      fix_hint: "Resuelve y normaliza la ruta final, comprueba que permanezca dentro del directorio base con semántica de ruta y rechaza nombres absolutos o con traversal."
     pattern-either:
       - pattern: $Z.extractall(...)
       - pattern: $T.extractall(...)
@@ -503,7 +679,11 @@ rules:
     languages: [java]
     severity: ERROR
     message: "Nombre de entrada del ZIP usado como ruta sin normalizar (Zip Slip)."
-    metadata: { pilar: seguridad, cwe: "CWE-22" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-22"
+      why: "Una ruta controlable puede escapar del directorio previsto y sobrescribir o leer archivos accesibles por el proceso."
+      fix_hint: "Resuelve y normaliza la ruta final, comprueba que permanezca dentro del directorio base con semántica de ruta y rechaza nombres absolutos o con traversal."
     pattern-either:
       - pattern: new File($DIR, $ENTRY.getName())
       - pattern: Paths.get($DIR, $ENTRY.getName())
@@ -513,7 +693,11 @@ rules:
     languages: [go]
     severity: ERROR
     message: "Nombre de entrada del archivo comprimido usado sin validar (Zip Slip)."
-    metadata: { pilar: seguridad, cwe: "CWE-22" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-22"
+      why: "Una ruta controlable puede escapar del directorio previsto y sobrescribir o leer archivos accesibles por el proceso."
+      fix_hint: "Resuelve y normaliza la ruta final, comprueba que permanezca dentro del directorio base con semántica de ruta y rechaza nombres absolutos o con traversal."
     pattern-either:
       - pattern: filepath.Join($DST, $F.Name)
       - pattern: filepath.Join($DST, $HDR.Name)
@@ -524,7 +708,11 @@ rules:
     message: >-
       Ruta construida con entrada externa. Normaliza y verifica que el
       resultado siga dentro del directorio base.
-    metadata: { pilar: seguridad, cwe: "CWE-22" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-22"
+      why: "Una ruta controlable puede escapar del directorio previsto y sobrescribir o leer archivos accesibles por el proceso."
+      fix_hint: "Resuelve y normaliza la ruta final, comprueba que permanezca dentro del directorio base con semántica de ruta y rechaza nombres absolutos o con traversal."
     pattern-either:
       - pattern: fs.$M(path.join($BASE, $REQ.params.$P), ...)
       - pattern: fs.$M(path.join($BASE, $REQ.query.$P), ...)
@@ -537,7 +725,12 @@ rules:
     languages: [python]
     severity: ERROR
     message: "Modo debug activo expone stack traces y consola remota."
-    metadata: { pilar: seguridad, cwe: "CWE-489", owasp: "A05:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-489"
+      owasp: "A05:2021"
+      why: "Las opciones de desarrollo exponen detalles internos y, en algunos frameworks, consolas o acciones peligrosas accesibles remotamente."
+      fix_hint: "Fija el modo de producción desde configuración validada al arrancar y falla de forma segura si debug o stack traces quedan activos fuera del entorno local."
     pattern-either:
       - pattern: $APP.run(..., debug=True, ...)
       - pattern: DEBUG = True
@@ -547,7 +740,12 @@ rules:
     languages: [javascript, typescript]
     severity: WARNING
     message: "Configuración de desarrollo activa."
-    metadata: { pilar: seguridad, cwe: "CWE-489", owasp: "A05:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-489"
+      owasp: "A05:2021"
+      why: "Las opciones de desarrollo exponen detalles internos y, en algunos frameworks, consolas o acciones peligrosas accesibles remotamente."
+      fix_hint: "Fija el modo de producción desde configuración validada al arrancar y falla de forma segura si debug o stack traces quedan activos fuera del entorno local."
     pattern-either:
       - pattern: $APP.set("env", "development")
       - pattern: "{..., stacktrace: true, ...}"
@@ -562,7 +760,12 @@ rules:
     message: >-
       URL controlada por el usuario llega a un cliente HTTP. Valida contra una
       lista de permitidos y bloquea rangos internos y 169.254.169.254.
-    metadata: { pilar: seguridad, cwe: "CWE-918", owasp: "A10:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      why: "Una URL controlable permite usar el servidor como proxy hacia red interna, metadata cloud o servicios que confían en su identidad."
+      fix_hint: "Acepta sólo esquemas y destinos de una lista permitida, resuelve DNS y rechaza rangos privados, loopback y link-local antes de conectar y tras cada redirección."
     pattern-sources:
       - pattern: request.args.get(...)
       - pattern: request.json[...]
@@ -580,7 +783,12 @@ rules:
     message: >-
       URL controlada por el usuario llega a un cliente HTTP. Aplica lista de
       permitidos antes del fetch.
-    metadata: { pilar: seguridad, cwe: "CWE-918", owasp: "A10:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-918"
+      owasp: "A10:2021"
+      why: "Una URL controlable permite usar el servidor como proxy hacia red interna, metadata cloud o servicios que confían en su identidad."
+      fix_hint: "Acepta sólo esquemas y destinos de una lista permitida, resuelve DNS y rechaza rangos privados, loopback y link-local antes de conectar y tras cada redirección."
     pattern-sources:
       - pattern: $REQ.query.$P
       - pattern: $REQ.body.$P
@@ -599,7 +807,12 @@ rules:
     message: >-
       HTML dinámico sin sanitizar. Usa textContent, o DOMPurify si necesitas
       HTML.
-    metadata: { pilar: seguridad, cwe: "CWE-79", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      why: "Insertar entrada no confiable como HTML permite ejecutar scripts en el origen de la aplicación y robar sesiones o datos."
+      fix_hint: "Renderiza como texto por defecto; cuando se requiera HTML, sanitiza con una biblioteca mantenida y aplica una CSP restrictiva como defensa adicional."
     patterns:
       - pattern-either:
           - pattern: $EL.innerHTML = $X
@@ -617,7 +830,12 @@ rules:
     languages: [java]
     severity: ERROR
     message: "Escritura directa de entrada del usuario en la respuesta HTTP."
-    metadata: { pilar: seguridad, cwe: "CWE-79", owasp: "A03:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-79"
+      owasp: "A03:2021"
+      why: "Insertar entrada no confiable como HTML permite ejecutar scripts en el origen de la aplicación y robar sesiones o datos."
+      fix_hint: "Renderiza como texto por defecto; cuando se requiera HTML, sanitiza con una biblioteca mantenida y aplica una CSP restrictiva como defensa adicional."
     pattern-either:
       - pattern: $RESP.getWriter().println($REQ.getParameter(...))
       - pattern: $RESP.getWriter().write($REQ.getParameter(...))
@@ -635,7 +853,12 @@ rules:
     message: >-
       Origen comodín junto a credenciales. La combinación es inválida y suele
       resolverse reflejando el Origin, que anula la política del navegador.
-    metadata: { pilar: seguridad, cwe: "CWE-942", owasp: "A05:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-942"
+      owasp: "A05:2021"
+      why: "Permitir credenciales desde un origen no restringido expone respuestas autenticadas a sitios controlados por un atacante."
+      fix_hint: "Define una lista exacta de orígenes confiables, valida el Origin en el servidor y devuelve credenciales sólo para coincidencias explícitas; añade Vary: Origin."
     pattern-either:
       - pattern: "{..., origin: true, credentials: true, ...}"
       - pattern: '{..., origin: "*", credentials: true, ...}'
@@ -647,7 +870,12 @@ rules:
       Origen comodín junto a credenciales (AllowAnyOrigin + AllowCredentials).
       La combinación es inválida y suele resolverse reflejando el Origin, que
       anula la política del navegador.
-    metadata: { pilar: seguridad, cwe: "CWE-942", owasp: "A05:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-942"
+      owasp: "A05:2021"
+      why: "Permitir credenciales desde un origen no restringido expone respuestas autenticadas a sitios controlados por un atacante."
+      fix_hint: "Define una lista exacta de orígenes confiables, valida el Origin en el servidor y devuelve credenciales sólo para coincidencias explícitas; añade Vary: Origin."
     pattern: $X.AllowAnyOrigin().AllowCredentials()
 
   - id: cors-wildcard-con-credenciales-java
@@ -657,7 +885,12 @@ rules:
       Origen comodín en la configuración CORS. Combinado con credenciales la
       política es inválida y suele resolverse reflejando el Origin, que anula
       la protección del navegador.
-    metadata: { pilar: seguridad, cwe: "CWE-942", owasp: "A05:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-942"
+      owasp: "A05:2021"
+      why: "Permitir credenciales desde un origen no restringido expone respuestas autenticadas a sitios controlados por un atacante."
+      fix_hint: "Define una lista exacta de orígenes confiables, valida el Origin en el servidor y devuelve credenciales sólo para coincidencias explícitas; añade Vary: Origin."
     pattern: $C.setAllowedOrigins(Arrays.asList("*"))
 
 # ---------------------------------------------------------------------------
@@ -669,7 +902,12 @@ rules:
     severity: ERROR
     message: >-
       Credencial literal en el código. Muévela al gestor de secretos.
-    metadata: { pilar: seguridad, cwe: "CWE-798", owasp: "A07:2021" }
+    metadata:
+      pilar: seguridad
+      cwe: "CWE-798"
+      owasp: "A07:2021"
+      why: "Una credencial en el repositorio se replica a clones, historiales, artefactos y logs, y no puede considerarse privada aunque se borre después."
+      fix_hint: "Revoca y rota el valor expuesto, elimínalo del código y cárgalo en tiempo de ejecución desde un gestor de secretos con permisos mínimos y auditoría."
     # curación: los patterns por-lenguaje no parseaban en todos los lenguajes
     # listados; regex agnóstica con las mismas exclusiones de placeholders
     patterns:

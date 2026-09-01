@@ -280,7 +280,16 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	start := time.Now()
 	defer func() { resp.ElapsedMs = time.Since(start).Milliseconds() }()
 
-	cfg, err := config.Load(req.RepoRoot)
+	analysisRoot, err := raizDeAnalisis(req.AnalysisRoot)
+	if err != nil {
+		// Es un rechazo de petición, no un análisis omitido. El hook reconoce
+		// Verdict=error y ejecuta la ruta local sobre su misma instantánea.
+		resp.Verdict = "error"
+		resp.Reason = "instantánea del índice inválida: " + err.Error()
+		return resp
+	}
+
+	cfg, err := config.Load(analysisRoot)
 	if err != nil || cfg == nil {
 		// Los campos legacy (Verdict/Reason/Degraded) se quedan COMO ESTABAN
 		// para el hook viejo de la ventana de despliegue mixto; la verdad
@@ -305,7 +314,7 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	// un `codeguard init` corriendo a la par), se relee una vez antes de
 	// declarar rota la paridad — así no se asusta al dev por una carrera.
 	if cfg.Hash != req.ConfigHash || cfg.Rulepack != req.RulepackVersion {
-		if again, err2 := config.Load(req.RepoRoot); err2 == nil && again != nil &&
+		if again, err2 := config.Load(analysisRoot); err2 == nil && again != nil &&
 			again.Hash == req.ConfigHash && again.Rulepack == req.RulepackVersion {
 			cfg = again
 		} else {
@@ -321,7 +330,10 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 				cfg.Rulepack, req.RulepackVersion)
 		}
 	}
-	rulepackID, rulepackErr := rulepack.Resolver(req.RepoRoot, cfg.Rulepack)
+	// La confianza y la identidad local pertenecen al repo real; los bytes que
+	// se analizan pertenecen a la instantánea.
+	cfg.RepoRoot = req.RepoRoot
+	rulepackID, rulepackErr := rulepack.Resolver(analysisRoot, cfg.Rulepack)
 	// Reglas del propio repo: se aplican (es el respaldo legítimo cuando la
 	// versión no está instalada), pero no se puede prometer paridad con el CI
 	// —nadie ha comprobado que ese directorio contenga las reglas que dice su
@@ -389,7 +401,7 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		}
 		// El caché por archivo brilla justo aquí: un commit bloqueado se
 		// reintenta con N-1 archivos idénticos, y esos ya no se re-analizan.
-		cache = CachePorArchivo(s.Shadow.Store, req.RepoID, "", filepath.Base(req.RepoRoot), cfg)
+		cache = CachePorArchivo(s.Shadow.Store, req.RepoID, "", filepath.Base(req.RepoRoot), cfg, analysisRoot)
 	}
 	// El progreso se ata a ESTA petición: el consumidor necesita saber de qué
 	// análisis le hablan para no pintar el avance de un commit sobre otro.
@@ -398,16 +410,18 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 		progreso = func(av pipeline.Avance) { s.OnProgreso(req, av) }
 	}
 	res, err := pipeline.Run(ctx, pipeline.Options{
-		Config:       cfg,
-		Diff:         &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified, Lines: req.DiffLines},
-		Secrets:      nil, // ya corrió en el hook
-		Engines:      Engines(cfg, false, cache),
-		Rulepack:     rulepackID.Path,
-		RulepackID:   rulepackID,
-		Timeout:      deadline,
-		Suppressions: baseline.LoadOrWarn(req.RepoRoot),
-		DemotedRules: demoted,
-		Progreso:     progreso,
+		Config:          cfg,
+		Diff:            &gitdiff.Diff{Files: req.StagedFiles, Unified: req.DiffUnified, Lines: req.DiffLines},
+		AnalysisRoot:    analysisRoot,
+		InitialDegraded: req.AnalysisDegraded,
+		Secrets:         nil, // ya corrió en el hook
+		Engines:         Engines(cfg, false, cache),
+		Rulepack:        rulepackID.Path,
+		RulepackID:      rulepackID,
+		Timeout:         deadline,
+		Suppressions:    baseline.LoadOrWarn(analysisRoot),
+		DemotedRules:    demoted,
+		Progreso:        progreso,
 	})
 	if err != nil {
 		// Los campos legacy dicen lo de siempre ("skipped" + pipeline:<err>)
@@ -446,6 +460,24 @@ func (s *Server) Analyze(ctx context.Context, req *ipc.Request) *ipc.Response {
 	}
 	resp.Findings = res.Findings
 	return resp
+}
+
+func raizDeAnalisis(ruta string) (string, error) {
+	if strings.TrimSpace(ruta) == "" {
+		return "", errors.New("el protocolo 2 exige analysis_root")
+	}
+	abs, err := filepath.Abs(ruta)
+	if err != nil || !filepath.IsAbs(abs) {
+		return "", fmt.Errorf("ruta no absoluta: %q", ruta)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("no es un directorio: %s", abs)
+	}
+	return abs, nil
 }
 
 // protocoloCompatible decide si este daemon puede atender al emisor del

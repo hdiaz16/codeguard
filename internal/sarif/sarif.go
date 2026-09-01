@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"codeguard/internal/finding"
+	"codeguard/internal/pipeline"
 )
 
 type Log struct {
@@ -17,8 +18,9 @@ type Log struct {
 }
 
 type Run struct {
-	Tool    Tool     `json:"tool"`
-	Results []Result `json:"results"`
+	Tool       Tool           `json:"tool"`
+	Results    []Result       `json:"results"`
+	Properties map[string]any `json:"properties"`
 }
 
 type Tool struct {
@@ -79,8 +81,10 @@ func level(s finding.Severity) string {
 	}
 }
 
-// Write serializa los hallazgos a un archivo SARIF.
-func Write(path, version string, findings []finding.Finding) error {
+// Write serializa hallazgos y el MISMO outcome que consumen terminal, panel,
+// orbe y BD. Un SARIF con cero resultados pero análisis degradado no puede
+// parecer una ejecución limpia al consumidor que sólo recibe este artefacto.
+func Write(path, version string, findings []finding.Finding, outcome pipeline.AnalysisOutcome) error {
 	rules := map[string]Rule{}
 	results := make([]Result, 0, len(findings))
 	for _, f := range findings {
@@ -140,6 +144,11 @@ func Write(path, version string, findings []finding.Finding) error {
 		Runs: []Run{{
 			Tool:    Tool{Driver: Driver{Name: "CodeGuard", Version: version, Rules: ruleList}},
 			Results: results,
+			Properties: map[string]any{
+				"codeguardOutcome":         string(outcome.Estado),
+				"codeguardGuaranteeBroken": append([]string(nil), outcome.GarantiaRota...),
+				"codeguardFailurePhase":    string(outcome.FalloEn),
+			},
 		}},
 	}
 	data, err := json.MarshalIndent(log, "", "  ")

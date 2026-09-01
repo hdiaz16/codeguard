@@ -24,3 +24,6 @@ dist/reglas.iss
 dist/rulepacks-limpieza.iss
 # copia del modulo de herramientas que build-dist mete al paquete
 dist/tools/
+# wheelhouse generado y verificado por build-python-wheelhouse.ps1
+dist/python/
+.test-artifacts/

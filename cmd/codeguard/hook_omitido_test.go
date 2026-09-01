@@ -146,6 +146,7 @@ func TestUnCommitNormalConservaSuVeredicto(t *testing.T) {
 		return
 	}
 	sinDaemon(t)
+	semgrepLimpio(t)
 
 	repo, git := repoEnrolado(t)
 	escribirEnRepo(t, filepath.Join(repo, "notas.txt"), "texto sin nada que revisar\n")
@@ -193,10 +194,10 @@ func TestUnCommitNormalConservaSuVeredicto(t *testing.T) {
 	}
 }
 
-// Un repo no enrolado sigue saliendo callado: el hook vuelve en la etapa 0, muy
-// antes del veredicto, y ese silencio es deliberado — el hook se instala en
-// máquinas con repos ajenos y no puede ponerse a hablar en cada uno.
-func TestUnRepoNoEnroladoSigueSaliendoCallado(t *testing.T) {
+// Aunque el mismo commit retire config.yaml, la compuerta de secretos todavía
+// tiene que mirar ese índice. Sólo la calidad se omite. Salir callado antes de
+// esa compuerta permitiría sacar un secreto en el commit que desenrola el repo.
+func TestUnRepoQueSeDesenrolaTodaviaPasaLaCompuertaDeSecretos(t *testing.T) {
 	if soyElHijo() {
 		hacerDeHook()
 		return
@@ -207,6 +208,7 @@ func TestUnRepoNoEnroladoSigueSaliendoCallado(t *testing.T) {
 	if err := os.Remove(filepath.Join(repo, ".codeguard", "config.yaml")); err != nil {
 		t.Fatal(err)
 	}
+	git("add", "-u") // el hook analiza el índice exacto: la baja debe formar parte del commit
 	escribirEnRepo(t, filepath.Join(repo, "a.txt"), "x\n")
 	git("add", ".")
 
@@ -214,7 +216,10 @@ func TestUnRepoNoEnroladoSigueSaliendoCallado(t *testing.T) {
 	if codigo != 0 {
 		t.Errorf("un repo no enrolado no puede detener el commit (exit %d)\nsalida:\n%s", codigo, salida)
 	}
-	if strings.Contains(salida, "CodeGuard") {
-		t.Errorf("un repo no enrolado tiene que salir en silencio, y habló:\n%s", salida)
+	if !strings.Contains(salida, "CodeGuard  secretos ✓") {
+		t.Errorf("el commit que retira el enrolamiento saltó la compuerta de secretos:\n%s", salida)
+	}
+	if strings.Contains(salida, "formato/lint/tipos") {
+		t.Errorf("sin config en el índice no debía arrancar el análisis de calidad:\n%s", salida)
 	}
 }

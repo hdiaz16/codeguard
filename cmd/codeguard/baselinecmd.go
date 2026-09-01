@@ -50,7 +50,7 @@ func baselineCmd() *cobra.Command {
 			files = conHuellas(repoRoot, files)
 			fmt.Printf("escaneando %d archivos con la capa determinista completa…\n", len(files))
 
-			cache, cerrarCache := abrirCache(repoRoot, cfg)
+			cache, cerrarCache := abrirCache(repoRoot, repoRoot, cfg)
 			defer cerrarCache()
 
 			rulepackID, rulepackErr := rulepack.Resolver(repoRoot, cfg.Rulepack)

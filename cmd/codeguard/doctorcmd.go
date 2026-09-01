@@ -85,11 +85,11 @@ func doctorCmd() *cobra.Command {
 }
 
 // chequeosDeCoberturaHistorica lee el historial de salud de capas del repo y
-// emite un chequeo por cada capa con racha ≥ 2 (el umbral mínimo, «recurrente»).
-// Umbral DOBLE (síntesis Q3): recurrente = 2 corridas seguidas; persistente = 5
-// seguidas O ≥2 durante >24 h. Siempre muestra el CONTADOR y la ANTIGÜEDAD, no
-// solo un color: un número y una fecha se actúan; un rojo se aprende a ignorar.
-// Una racha de 1 es un tropiezo, no un patrón: no se reporta.
+// emite un chequeo por cada capa que la última corrida dejó degradada.
+// Umbral DOBLE (síntesis Q3): una corrida = incidente; recurrente = 2 corridas
+// seguidas; persistente = 5 seguidas O ≥2 durante >24 h. La recurrencia cambia
+// la descripción, NO la verdad del estado: ocultar la primera falla hacía que
+// doctor dijera healthy inmediatamente después de un análisis incompleto.
 func chequeosDeCoberturaHistorica(root string) []chequeoDoctor {
 	repoID := store.RepoIDDe(root, gitRemote(root))
 	salud, err := store.SaludDeCapasSoloLectura(store.DefaultPath(), repoID)
@@ -98,7 +98,7 @@ func chequeosDeCoberturaHistorica(root string) []chequeoDoctor {
 	}
 	var out []chequeoDoctor
 	for _, sc := range salud {
-		if sc.RachaFallos < 2 {
+		if sc.RachaFallos < 1 {
 			continue
 		}
 		motivo := sc.MotivoCodigo
@@ -117,6 +117,9 @@ func chequeosDeCoberturaHistorica(root string) []chequeoDoctor {
 
 // claseDeRacha aplica el umbral doble.
 func claseDeRacha(sc store.SaludCapa) string {
+	if sc.RachaFallos < 2 {
+		return "incidente actual"
+	}
 	viejaYRepetida := sc.RachaFallos >= 2 && !sc.PrimerFallo.IsZero() && time.Since(sc.PrimerFallo) > 24*time.Hour
 	if sc.RachaFallos >= 5 || viejaYRepetida {
 		return "persistente"

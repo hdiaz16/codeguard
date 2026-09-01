@@ -110,9 +110,13 @@
     }
   },
   "_comentario_paquetes": [
-    "Motores que NO descargamos nosotros: los trae pip o el toolchain de Go. No",
-    "llevan hash porque su gestor ya verifica la integridad (PyPI firma, GOSUMDB",
-    "comprueba las sumas), pero SI llevan version fijada. Sin ella, el CI y la",
+    "Los motores Python se resuelven SOLO desde PyPI oficial durante el release.",
+    "El cierre transitivo completo viaja en un wheelhouse y requirements.lock",
+    "fija cada artefacto por SHA-256; la instalación final usa --no-index. Los",
+    "módulos Go se resuelven SOLO desde proxy.golang.org y sum.golang.org, con",
+    "versiones fijadas en tools/go.mod + go.sum. Ningún gestor hereda mirrors,",
+    "excepciones privadas ni configuración de repositorios de la máquina.",
+    "Sin versiones y hashes cerrados, el CI y la",
     "maquina de cada quien instalan lo que haya ese dia: dos motores distintos",
     "aplicando reglas distintas, y la paridad local/CI -que es la promesa central",
     "del producto- deja de estar garantizada sin que nadie lo note. Esta es la",
@@ -133,12 +137,17 @@
   ],
   "paquetes": {
     "pip": {
-      "semgrep": "1.172.0",
+      "semgrep": "1.175.0",
       "squawk-cli": "2.62.0",
       "ruff": "0.16.2",
       "mypy": "2.3.0",
       "bandit": "1.9.3"
     },
+    "pip_transitivas_seguras": {
+      "mcp": "1.29.0",
+      "urllib3": "2.7.0"
+    },
+    "go_toolchain": "go1.26.6",
     "go": {
       "govulncheck": {
         "modulo": "golang.org/x/vuln/cmd/govulncheck",

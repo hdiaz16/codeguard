@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"codeguard/internal/finding"
+	"codeguard/internal/pipeline"
 	"codeguard/internal/sarif"
 )
 
@@ -53,7 +54,8 @@ func TestWrite_DeterministicAndSchemaConformant(t *testing.T) {
 		},
 	}
 
-	err := sarif.Write(outPath, "2026.08.2", findings)
+	outcome := pipeline.Finalizar(&pipeline.Result{Verdict: pipeline.Block, BlockingFindings: 1}, "", nil)
+	err := sarif.Write(outPath, "2026.08.2", findings, outcome)
 	if err != nil {
 		t.Fatalf("sarif.Write falló: %v", err)
 	}
@@ -79,6 +81,9 @@ func TestWrite_DeterministicAndSchemaConformant(t *testing.T) {
 	run := sarifLog.Runs[0]
 	if run.Tool.Driver.Name != "CodeGuard" || run.Tool.Driver.Version != "2026.08.2" {
 		t.Errorf("tool driver inconsistente: %+v", run.Tool.Driver)
+	}
+	if run.Properties["codeguardOutcome"] != "blocked" {
+		t.Errorf("SARIF perdió el outcome canónico: %+v", run.Properties)
 	}
 
 	// Verificar orden determinista de reglas
@@ -120,7 +125,7 @@ func TestWrite_DeterministicAndSchemaConformant(t *testing.T) {
 
 	// Segunda corrida para verificar que el JSON es 100% idéntico byte a byte
 	outPath2 := filepath.Join(tmpDir, "report2.sarif")
-	if err := sarif.Write(outPath2, "2026.08.2", findings); err != nil {
+	if err := sarif.Write(outPath2, "2026.08.2", findings, outcome); err != nil {
 		t.Fatalf("segunda corrida de sarif.Write falló: %v", err)
 	}
 	data2, _ := os.ReadFile(outPath2)
@@ -133,7 +138,10 @@ func TestWrite_EmptyFindings(t *testing.T) {
 	tmpDir := t.TempDir()
 	outPath := filepath.Join(tmpDir, "empty.sarif")
 
-	if err := sarif.Write(outPath, "1.0.0", nil); err != nil {
+	outcome := pipeline.Finalizar(&pipeline.Result{
+		Verdict: pipeline.Pass, Degraded: []string{"semgrep:error"},
+	}, "", nil)
+	if err := sarif.Write(outPath, "1.0.0", nil, outcome); err != nil {
 		t.Fatalf("sarif.Write con findings vacíos falló: %v", err)
 	}
 
@@ -149,5 +157,9 @@ func TestWrite_EmptyFindings(t *testing.T) {
 
 	if len(sarifLog.Runs[0].Results) != 0 {
 		t.Errorf("se esperaban 0 resultados, obtenidos %d", len(sarifLog.Runs[0].Results))
+	}
+	props := sarifLog.Runs[0].Properties
+	if props["codeguardOutcome"] != "degraded" {
+		t.Fatalf("cero hallazgos con cobertura rota se presentó como limpio: %+v", props)
 	}
 }

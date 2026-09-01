@@ -483,15 +483,17 @@ if (OV && (OV.findings.length || OV.touched.length)) {
   // fallido u omitido se firmaba «commit limpio». El outcome tipado pone a
   // cada estado su frase; un overlay viejo sin outcome cae al criterio de
   // antes, que para "block" era correcto.
-  const oc = OV.outcome || (OV.verdict === "block" ? "blocked" : "");
+  const oc = OV.outcome || (OV.verdict === "block" ? "blocked" : "unknown");
   const bloqueado = oc === "blocked";
   t.textContent =
     bloqueado          ? `⛔ ${blocking} bloqueante${blocking === 1 ? "" : "s"} en el grafo` :
     oc === "degraded"  ? `⚠ análisis incompleto · ${OV.touched.length} función(es) tocada(s)` :
     oc === "failed"    ? `⚠ el análisis falló — nada que afirmar` :
     oc === "skipped"   ? `○ sin revisar · ${OV.touched.length} función(es) tocada(s)` :
-    `✓ commit limpio · ${OV.touched.length} función(es) tocada(s)`;
-  t.className = "rtitle " + (bloqueado ? "block" : "pass");
+    oc === "findings"  ? `○ revisado con sugerencias · ${OV.touched.length} función(es) tocada(s)` :
+    oc === "clean"     ? `✓ commit limpio · ${OV.touched.length} función(es) tocada(s)` :
+    `⚠ estado no verificable — nada que afirmar`;
+  t.className = "rtitle " + (bloqueado ? "block" : (oc === "clean" ? "pass" : ""));
   document.getElementById("r-sub").textContent = `${OV.repo} @ ${OV.branch} · ${OV.at}`;
   document.getElementById("r-list").innerHTML = OV.findings.map(f =>
     `<li data-id="${f.node_id}">

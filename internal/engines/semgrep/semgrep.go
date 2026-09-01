@@ -378,6 +378,24 @@ func (e *Engine) correrLote(ctx context.Context, bin, rules string, in engines.I
 
 	var res sgResult
 	if err := json.Unmarshal(out, &res); err != nil {
+		// Si el proceso ya falló, el texto no JSON no es un problema de parser:
+		// es el diagnóstico (por ejemplo, el semgrep-core nativo de Windows
+		// devuelve "<ERROR: missing output>" cuando falla su socketpair). Antes
+		// descartábamos exit status y stderr y sólo decíamos "invalid character
+		// '<'", que oculta justamente la causa accionable.
+		if runErr != nil {
+			detalle := strings.TrimSpace(string(out))
+			if stderr := strings.TrimSpace(string(salida.Stderr)); stderr != "" {
+				if detalle != "" {
+					detalle += "; "
+				}
+				detalle += stderr
+			}
+			if detalle == "" {
+				detalle = "sin stdout ni stderr"
+			}
+			return nil, nil, nil, fmt.Errorf("semgrep falló (%w) y no produjo JSON: %s", runErr, truncar(detalle, 500))
+		}
 		return nil, nil, nil, fmt.Errorf("salida de semgrep ilegible: %v", err)
 	}
 	// Antes de mirar un solo hallazgo: ¿llegó semgrep a analizar? Un JSON válido

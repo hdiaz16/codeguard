@@ -36,13 +36,17 @@ func umbralComplejidad(cfg *config.Config) int {
 }
 
 func revisarComplejidad(cfg *config.Config, files []gitdiff.ChangedFile) []finding.Finding {
+	return revisarComplejidadEn(cfg, cfg.RepoRoot, files)
+}
+
+func revisarComplejidadEn(cfg *config.Config, repoRoot string, files []gitdiff.ChangedFile) []finding.Finding {
 	umbral := umbralComplejidad(cfg)
 	var out []finding.Finding
 	for _, f := range files {
 		if f.Status == "D" {
 			continue
 		}
-		abs := filepath.Join(cfg.RepoRoot, filepath.FromSlash(f.Path))
+		abs := filepath.Join(repoRoot, filepath.FromSlash(f.Path))
 		src, err := os.ReadFile(abs)
 		if err != nil {
 			continue // el archivo puede haberse movido; no es asunto de esta regla

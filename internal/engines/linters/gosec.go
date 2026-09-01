@@ -69,7 +69,7 @@ func (g Gosec) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 	}
 
 	args := []string{"-fmt=json", "-terse"}
-	args = append(args, fsutil.ComoArgumentosCLI(sanitizadas)...)
+	args = append(args, paquetesGosec(sanitizadas)...)
 
 	salida, fallo, err := runToolConSalida(ctx, "gosec", in.RepoRoot, bin, args...)
 	if err != nil {
@@ -86,7 +86,7 @@ func (g Gosec) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 			return nil, fmt.Errorf("gosec salió con error y no produjo diagnósticos: %s", strings.TrimSpace(salida))
 		}
 		if err := contrato.Identidad(ctx, contrato.Version("gosec", bin, "-version",
-			regexp.MustCompile(`(?i)gosec`),
+			regexp.MustCompile(`(?i)(?:gosec|Version:\s*v?\d+\.\d+)`),
 			"Instala gosec con `go install github.com/securego/gosec/v2/cmd/gosec@latest`.",
 		)); err != nil {
 			return nil, err
@@ -94,6 +94,28 @@ func (g Gosec) Run(ctx context.Context, in engines.Input) ([]finding.Finding, er
 	}
 
 	return findings, nil
+}
+
+// gosec recibe paquetes de Go, no nombres de archivos. Pasarle main.go parece
+// razonable pero lo interpreta como una ruta de importación y devuelve
+// "cannot find package" sin analizar una sola línea. Agrupamos los archivos
+// ya saneados por su directorio de paquete; el prefijo ./ evita que un nombre
+// de directorio que empieza con guion se convierta en una opción.
+func paquetesGosec(archivos []string) []string {
+	vistos := map[string]bool{}
+	var paquetes []string
+	for _, archivo := range archivos {
+		dir := filepath.ToSlash(filepath.Dir(archivo))
+		paquete := "."
+		if dir != "." {
+			paquete = "./" + strings.TrimPrefix(dir, "./")
+		}
+		if !vistos[paquete] {
+			vistos[paquete] = true
+			paquetes = append(paquetes, paquete)
+		}
+	}
+	return paquetes
 }
 
 func parseGosecJSON(raw, repoRoot string) ([]finding.Finding, error) {
@@ -140,6 +162,7 @@ func parseGosecJSON(raw, repoRoot string) ([]finding.Finding, error) {
 		if issue.Cwe.ID != "" {
 			cweStr = " [CWE-" + issue.Cwe.ID + "]"
 		}
+		porQue, arreglo := retroalimentacionSeguridad("Gosec", issue.RuleID, issue.Cwe.ID, issue.Details)
 
 		f := finding.Finding{
 			Engine:      "gosec",
@@ -151,6 +174,8 @@ func parseGosecJSON(raw, repoRoot string) ([]finding.Finding, error) {
 			Line:        lineNum,
 			EndLine:     lineNum,
 			Message:     issue.Details + cweStr,
+			Why:         porQue,
+			FixHint:     arreglo,
 			LineContent: strings.TrimSpace(issue.Code),
 			Source:      finding.Deterministic,
 		}

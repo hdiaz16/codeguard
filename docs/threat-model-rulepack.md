@@ -10,8 +10,9 @@ Cada release de rulepack publica su árbol (bytes exactos, testdata podado) +
 `manifest.json` (schema, versión del rulepack, generated_at, files con
 sha256+tamaño, digest del árbol `codeguard-rulepack-tree-v1`) +
 `manifest.sig` (Ed25519 sobre los bytes exactos del JSON — escrito una vez,
-jamás re-serializado). El binario embebe el REGISTRO de claves públicas de
-release (`internal/manifest/claves.go`) y verifica al resolver
+jamás re-serializado). `dist/build-dist.ps1` obtiene la pública desde la clave
+DPAPI y la inyecta con `-ldflags -X` en el REGISTRO estricto del binario
+(`internal/manifest/claves.go`); el resolutor verifica
 (`rulepack.Resolver`): firma válida + versión firmada == nombre del
 directorio + árbol coincidente = `Verified`. Costo medido del re-hash
 completo por resolución (sin caché mtime — un reemplazo del mismo tamaño con
@@ -34,6 +35,11 @@ que nada la use ahí solo agranda la superficie. Cuando exista un workflow de
 release automatizado (era de flota), se migra a un environment secret con
 revisores requeridos o a hardware. La clave jamás entra al repo; la pública
 viaja embebida en el binario por release.
+
+`build-dist.ps1` es fail-closed: si no puede leer una clave real aborta antes
+de compilar, y si cualquier rulepack no se puede firmar no produce la
+distribución. Los builds normales de desarrollo dejan el registro vacío para
+no convertir una clave de prueba en una raíz de confianza accidental.
 
 ## Política por origen del rulepack
 

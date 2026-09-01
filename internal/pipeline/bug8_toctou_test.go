@@ -45,7 +45,7 @@ func TestBug8ElVenenoDelTOCTOUNoSePuedeCachear(t *testing.T) {
 	}
 	defer st.Close()
 	repoID := store.RepoIDDe(repo, "")
-	cache := daemon.CachePorArchivo(st, repoID, "", "bug8", cfg)
+	cache := daemon.CachePorArchivo(st, repoID, "", "bug8", cfg, repo)
 	if cache == nil {
 		t.Fatal("sin caché no hay experimento")
 	}
@@ -72,14 +72,14 @@ func TestBug8ElVenenoDelTOCTOUNoSePuedeCachear(t *testing.T) {
 		return res
 	}
 
-	lineaDeSemgrep := func(res *pipeline.Result, archivo string) int {
+	lineaDeBandit := func(res *pipeline.Result, archivo string) int {
 		t.Helper()
 		for _, f := range res.Findings {
-			if f.Engine == "semgrep" && f.File == archivo && f.RuleKey == "python-subprocess-shell" {
+			if f.Engine == "bandit" && f.File == archivo && f.RuleKey == "B602" {
 				return f.Line
 			}
 		}
-		t.Fatalf("sin hallazgo de semgrep en %s entre %d hallazgos", archivo, len(res.Findings))
+		t.Fatalf("sin hallazgo de bandit en %s entre %d hallazgos", archivo, len(res.Findings))
 		return 0
 	}
 
@@ -107,7 +107,7 @@ func TestBug8ElVenenoDelTOCTOUNoSePuedeCachear(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	enVentana := lineaDeSemgrep(res, "app/inseguro.py")
+	enVentana := lineaDeBandit(res, "app/inseguro.py")
 	t.Logf("en la ventana (índice v1, disco v2) el motor reportó la línea %d "+
 		"(la del commit es %d; la del disco, %d)", enVentana, base, base+3)
 	// La otra mitad del fix (punto 4 de la síntesis): el reporte de la ventana
@@ -122,7 +122,7 @@ func TestBug8ElVenenoDelTOCTOUNoSePuedeCachear(t *testing.T) {
 	// contenido cuya violación vive en la 5 — el bug #8 en vivo, persistente.
 	escribir(t, repo, "app/inseguro.py", elDefecto)
 	resFinal := analizar()
-	final := lineaDeSemgrep(resFinal, "app/inseguro.py")
+	final := lineaDeBandit(resFinal, "app/inseguro.py")
 	if final != base {
 		t.Fatalf("BUG #8 REPRODUCIDO: el contenido es v1 (violación en línea %d) y el caché "+
 			"sirvió la línea %d — la entrada nació en la ventana TOCTOU etiquetada con el "+

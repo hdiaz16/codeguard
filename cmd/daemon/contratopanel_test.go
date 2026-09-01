@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
 	"codeguard/internal/capas"
@@ -36,7 +37,7 @@ func TestElPanelNoLeeCamposQueGoNoManda(t *testing.T) {
 		CapasRepo:     []string{"semgrep", "gofmt"},
 		NoDisponibles: []daemon.NoDisponible{{Motor: "tsc", Falta: "npx", Motivo: "no encuentro npx"}},
 		SecretosEn:    []string{"internal/pago/llave.go:3"},
-		OtrosRepos:    []proyectoEnLista{{Marca: "✓", Nombre: "demo", Ruta: "C:/repos/demo", Activo: true, Verdict: "pass", Blocking: 1, Advisory: 2, Cuando: "11:00"}},
+		OtrosRepos:    []proyectoEnLista{{Marca: "✓", Nombre: "demo", Ruta: "C:/repos/demo", Activo: true, Verdict: "pass", Outcome: "clean", Blocking: 1, Advisory: 2, Cuando: "11:00"}},
 		Verdict:       "pass", Reason: "x", Blocking: 1, Advisory: 2, CIParity: true,
 		Outcome:      "clean",
 		GarantiaRota: []string{"x"},
@@ -94,6 +95,53 @@ func TestElPanelNoLeeCamposQueGoNoManda(t *testing.T) {
 			t.Errorf("no se encontró ninguna lectura del %s en index.html: "+
 				"o cambió el nombre de la variable y esta prueba dejó de mirar nada", c.nombre)
 		}
+	}
+}
+
+func TestElPanelSoloPintaVerdeUnOutcomeClean(t *testing.T) {
+	raw, err := os.ReadFile("frontend/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(raw)
+	if strings.Contains(html, `if (p.verdict === "block")`) {
+		t.Fatal("el encabezado del panel volvió a derivar desde verdict legacy")
+	}
+	if !strings.Contains(html, `else if (outcome === "clean")`) {
+		t.Fatal("el panel no tiene una rama explícita para el único estado verde")
+	}
+	if n := strings.Count(html, `ponVeredicto("pass"`); n != 1 {
+		t.Fatalf("el verde debe tener un solo origen (outcome=clean); hay %d", n)
+	}
+	for _, estado := range []string{"findings", "degraded", "failed", "skipped"} {
+		if !strings.Contains(html, `outcome === "`+estado+`"`) {
+			t.Fatalf("el panel no representa explícitamente outcome=%s", estado)
+		}
+	}
+}
+
+func TestElPanelExplicaUnBloqueoPorCoberturaSinInventarCeroProblemas(t *testing.T) {
+	raw, err := os.ReadFile("frontend/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(raw)
+	for _, contrato := range []string{
+		`if (p.blocking > 0)`,
+		`Bloqueado: una capa obligatoria no pudo completar el análisis.`,
+		`function garantiaEnClaro(codigo)`,
+		`<b>Cobertura incompleta.</b>`,
+		`<code>${esc(c)}`, // conserva el código técnico además de explicarlo
+	} {
+		if !strings.Contains(html, contrato) {
+			t.Errorf("falta el contrato editorial/visual %q", contrato)
+		}
+	}
+	if strings.Contains(html, `ponVeredicto("working", "Commit realizado, pero`) {
+		t.Error("un análisis ya terminado conserva el spinner de 'analizando'")
+	}
+	if strings.Contains(html, "Commit realizado") {
+		t.Error("el panel afirma que Git ya creó el commit durante pre-commit")
 	}
 }
 

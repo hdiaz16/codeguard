@@ -175,6 +175,11 @@ func TestLaBaselineSuprimeSoloLoPreexistente(t *testing.T) {
 	if !strings.Contains(salida, "baseline escrita") {
 		t.Fatalf("no se escribió la baseline:\n%s", salida)
 	}
+	// El hook ve exactamente el índice, incluida su política de supresión. El
+	// comando baseline escribe el archivo pero no lo stagea por el usuario; si
+	// esta prueba no lo añade, exigir que ya surta efecto equivaldría a pedirle
+	// al hook que vuelva a leer el working tree por una puerta lateral.
+	git(t, repo, "add", ".codeguard/baseline.txt")
 
 	salida, codigo = correr(t, bin, repo, "hook", "pre-commit")
 	if codigo != 0 {
@@ -336,7 +341,16 @@ func prepararInvariante(t *testing.T) (bin, repo string) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("sin git no hay nada que analizar")
 	}
-	return construirBinario(t), repoBase(t)
+	bin, repo = construirBinario(t), repoBase(t)
+	// El hook analiza el índice exacto. Un rulepack copiado después del commit
+	// base pero no añadido a Git ya no forma parte de lo que el snapshot puede
+	// ver (y no debe hacerlo): depender del working tree reabriría STAB-002.
+	// Los invariantes que usan rulepack vendoreado lo dejan como parte real de
+	// la historia del repo de prueba, igual que tendría que hacerlo un usuario.
+	copiarRulepack(t, repo)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "rulepack vendoreado", "--no-verify")
+	return bin, repo
 }
 
 // exigirQueLoAnaliceElBinarioDePrueba comprueba que la corrida NO la contestó

@@ -17,11 +17,11 @@ func TestLaListaDiceCuantoYCuandoYNoSoloElColor(t *testing.T) {
 
 	e, _ := escritorioDePrueba([]registry.Repo{roto, limpio, sinEstrenar})
 	e.porProyecto[roto.Root] = &panelPayload{
-		Repo: "alfa", RepoRoot: roto.Root, Verdict: "block",
+		Repo: "alfa", RepoRoot: roto.Root, Verdict: "block", Outcome: "blocked",
 		Blocking: 3, Advisory: 2, At: "11:42:03",
 	}
 	e.porProyecto[limpio.Root] = &panelPayload{
-		Repo: "beta", RepoRoot: limpio.Root, Verdict: "pass", At: "10:15:00",
+		Repo: "beta", RepoRoot: limpio.Root, Verdict: "pass", Outcome: "clean", At: "10:15:00",
 	}
 
 	porNombre := map[string]proyectoEnLista{}

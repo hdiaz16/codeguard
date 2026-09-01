@@ -23,8 +23,9 @@ QUÉ SE INSTALA Y DÓNDE
       no coincide, no se instala nada.
       govulncheck y staticcheck — se COMPILAN desde el fuente, con la versión
       fijada; tarda un par de minutos.
-      semgrep, squawk, ruff y mypy — vía pip, con versiones fijadas. Si no
-      tienes Python, se instala con winget.
+      semgrep, squawk, ruff, mypy y bandit — desde un wheelhouse de PyPI
+      oficial, cerrado por SHA-256 e instalado sin red. Si no tienes Python
+      3.13, se instala desde la fuente oficial de winget.
       google-java-format y PMD — sólo si tienes un JDK; si no, se omiten.
   · Los motores corren contenidos: token restringido sin privilegios, job
     object con tope de memoria y procesos, sin acceso a tu escritorio ni al

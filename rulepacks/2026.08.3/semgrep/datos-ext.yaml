@@ -14,7 +14,10 @@ rules:
     message: >-
       Importe monetario en float. 0.1 + 0.2 != 0.3. Usa Decimal, o enteros en
       la unidad mínima (centavos).
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "El punto flotante binario no representa exactamente muchos decimales; los errores de redondeo se acumulan y alteran totales, comparaciones y conciliaciones."
+      fix_hint: "Usa Decimal construido desde cadenas o enteros en la unidad mínima; define explícitamente la escala y el modo de redondeo."
     patterns:
       - pattern-either:
           - pattern: '$VAR: float = ...'
@@ -35,7 +38,10 @@ rules:
     message: >-
       Importe monetario en number. Usa enteros en centavos, o una librería
       decimal (dinero.js, decimal.js).
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "number usa punto flotante binario y no representa exactamente muchos importes decimales, por lo que puede alterar totales y comparaciones."
+      fix_hint: "Representa el importe como entero en la unidad mínima o usa una librería decimal configurada con escala y redondeo explícitos."
     patterns:
       - pattern-either:
           - pattern: 'const $VAR: number = $X'
@@ -51,7 +57,10 @@ rules:
     languages: [java]
     severity: ERROR
     message: "Importe monetario en double/float. Usa BigDecimal."
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "double y float no representan exactamente muchos decimales; el redondeo acumulado rompe totales, comparaciones y conciliaciones monetarias."
+      fix_hint: "Usa BigDecimal construido desde una cadena y aplica escala y RoundingMode explícitos en cada operación de negocio."
     patterns:
       - pattern-either:
           - pattern: double $VAR = ...;
@@ -66,7 +75,10 @@ rules:
     languages: [csharp]
     severity: ERROR
     message: "Importe monetario en double/float. Usa decimal."
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "double y float no representan exactamente muchos decimales; el redondeo acumulado rompe totales, comparaciones y conciliaciones monetarias."
+      fix_hint: "Usa decimal y aplica una política explícita de escala y MidpointRounding en los límites definidos por el dominio."
     patterns:
       - pattern-either:
           - pattern: double $VAR = $X;
@@ -83,7 +95,10 @@ rules:
       include: ["*.go"]
     severity: ERROR
     message: "Importe monetario en float64. Usa int64 en centavos o shopspring/decimal."
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "float32 y float64 no representan exactamente muchos decimales; el error acumulado puede alterar importes y conciliaciones."
+      fix_hint: "Usa int64 en la unidad mínima o un tipo decimal; evita construir valores decimales a partir de float y define el redondeo."
     # curación: el campo de struct suelto no parsea como patrón go; regex
     patterns:
       - pattern-regex: '(?im)^\s*\w*(amount|price|total|cost|monto|precio|importe|saldo|balance|subtotal|iva|tax|fee|pago|payment|refund)\w*\s+float(32|64)\b'
@@ -97,7 +112,10 @@ rules:
     message: >-
       datetime sin zona horaria. Usa datetime.now(timezone.utc). utcnow() está
       además deprecado desde 3.12.
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "Una fecha sin zona depende de la configuración del proceso y de cambios de horario estacional, produciendo valores distintos entre entornos."
+      fix_hint: "Crea y persiste fechas conscientes de zona con datetime.now(timezone.utc); convierte a la zona del usuario sólo al presentar."
     pattern-either:
       - pattern: datetime.now()
       - pattern: datetime.datetime.now()
@@ -109,7 +127,10 @@ rules:
     languages: [java]
     severity: ERROR
     message: "Usa Instant o ZonedDateTime, no LocalDateTime.now() ni new Date()."
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "La hora local depende del servidor y de cambios de horario estacional, lo que vuelve inconsistentes el orden, las expiraciones y la persistencia."
+      fix_hint: "Usa Instant para instantes persistidos o ZonedDateTime cuando la zona sea parte del dominio; convierte únicamente en los límites de presentación."
     pattern-either:
       - pattern: new Date()
       - pattern: LocalDateTime.now()
@@ -119,7 +140,10 @@ rules:
     languages: [csharp]
     severity: ERROR
     message: "DateTime.Now depende del huso del servidor. Usa DateTimeOffset.UtcNow."
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "DateTime.Now depende de la zona del servidor y del horario estacional, provocando resultados distintos entre ambientes."
+      fix_hint: "Usa DateTimeOffset.UtcNow para instantes persistidos y conserva el offset o la zona sólo cuando sea un dato explícito del dominio."
     pattern-either:
       - pattern: DateTime.Now
       - pattern: DateTime.Today
@@ -131,7 +155,10 @@ rules:
     message: >-
       new Date(string) sin zona horaria parsea distinto según el navegador.
       Usa ISO 8601 con offset explícito.
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "Una cadena sin offset se interpreta según el motor y la zona local, por lo que el mismo dato puede representar instantes distintos."
+      fix_hint: "Exige ISO 8601 con Z u offset explícito y normaliza a UTC antes de comparar o persistir."
     patterns:
       - pattern: new Date($S)
       - metavariable-regex:
@@ -148,7 +175,12 @@ rules:
       Dato sensible hacia los logs. Los logs se replican a agregadores,
       backups y proveedores externos, y suelen quedar fuera del alcance del
       borrado. Enmascara en el logger, no en cada llamada.
-    metadata: { pilar: datos, cwe: "CWE-532", owasp: "A09:2021" }
+    metadata:
+      pilar: datos
+      cwe: "CWE-532"
+      owasp: "A09:2021"
+      why: "Los logs se copian a agregadores, respaldos y terceros con retención y permisos distintos, ampliando la exposición y dificultando el borrado."
+      fix_hint: "Aplica una lista permitida y redacción central en el logger; registra identificadores no sensibles y nunca credenciales, tokens ni PII en claro."
     # curación: los patrones de f-string (sólo Python) y template literal
     # (sólo JS/TS) no parseaban en los demás lenguajes listados y la regla
     # ENTERA llevaba muerta desde el primer día — semgrep exige que cada
@@ -193,7 +225,11 @@ rules:
       PII enviada a un proveedor de telemetría o analítica. Es una
       transferencia a un tercero: requiere base legal y aparecer en el aviso
       de privacidad.
-    metadata: { pilar: datos, cwe: "CWE-359" }
+    metadata:
+      pilar: datos
+      cwe: "CWE-359"
+      why: "Enviar PII a telemetría transfiere datos a otro responsable o encargado, amplía la retención y puede incumplir consentimiento y minimización."
+      fix_hint: "Elimina o seudonimiza el atributo antes del SDK, limita la recolección por configuración y documenta proveedor, finalidad, retención y consentimiento."
     patterns:
       - pattern-either:
           - pattern: Sentry.$M(..., $VAR, ...)
@@ -217,7 +253,11 @@ rules:
       PII enviada a un proveedor de telemetría o analítica. Es una
       transferencia a un tercero: requiere base legal y aparecer en el aviso
       de privacidad.
-    metadata: { pilar: datos, cwe: "CWE-359" }
+    metadata:
+      pilar: datos
+      cwe: "CWE-359"
+      why: "Enviar PII a telemetría transfiere datos a otro responsable o encargado, amplía la retención y puede incumplir consentimiento y minimización."
+      fix_hint: "Elimina o seudonimiza el atributo antes del SDK, limita la recolección por configuración y documenta proveedor, finalidad, retención y consentimiento."
     patterns:
       - pattern-either:
           - pattern: 'sentry_sdk.set_user({..., $KEY: $VAR, ...})'
@@ -234,7 +274,11 @@ rules:
     message: >-
       PII en query string. Queda en logs de proxy, CDN, referrer e historial
       del navegador. Muévelo al cuerpo de la petición.
-    metadata: { pilar: datos, cwe: "CWE-598" }
+    metadata:
+      pilar: datos
+      cwe: "CWE-598"
+      why: "La URL se propaga a historial, referrer, proxies, CDN, métricas y logs, donde la PII puede persistir fuera del control de la aplicación."
+      fix_hint: "Envía el dato en un cuerpo protegido o en el encabezado apropiado, redacta los logs de acceso y rota cualquier secreto que ya haya aparecido en una URL."
     patterns:
       - pattern-regex: '["`''][^"`'']*[?&](email|token|password|ssn|curp|rfc|api_?key|access_?token|phone)=\$?\{?[A-Za-z_]'
 
@@ -252,7 +296,10 @@ rules:
     message: >-
       Varias escrituras consecutivas fuera de una transacción. Si la segunda
       falla, la primera queda aplicada y los datos quedan inconsistentes.
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "Si una escritura posterior falla, las anteriores permanecen aplicadas y dejan el agregado en un estado parcial que no cumple sus invariantes."
+      fix_hint: "Agrupa las escrituras en una transacción atómica, propaga cualquier error y confirma sólo después de completar todas las operaciones."
     patterns:
       - pattern-either:
           - pattern: |
@@ -283,7 +330,10 @@ rules:
     message: >-
       Varias escrituras consecutivas fuera de una transacción. Si la segunda
       falla, la primera queda aplicada y los datos quedan inconsistentes.
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "Si una escritura posterior falla, las anteriores permanecen aplicadas y dejan el agregado en un estado parcial que no cumple sus invariantes."
+      fix_hint: "Usa la transacción del ORM o cliente, pasa su contexto a cada escritura y confirma únicamente cuando todas hayan terminado correctamente."
     patterns:
       - pattern-either:
           - pattern: |
@@ -310,7 +360,10 @@ rules:
     message: >-
       Varias escrituras consecutivas fuera de una transacción. Si la segunda
       falla, la primera queda aplicada y los datos quedan inconsistentes.
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "Si una escritura posterior falla, las anteriores permanecen aplicadas y dejan el agregado en un estado parcial que no cumple sus invariantes."
+      fix_hint: "Inicia una transacción, ejecuta cada operación mediante tx, difiere Rollback y llama a Commit sólo tras comprobar todos los errores."
     patterns:
       - pattern-either:
           - pattern: |
@@ -340,7 +393,10 @@ rules:
     languages: [generic]
     severity: ERROR
     message: "TRUNCATE o DROP en código de aplicación. Debe vivir en una migración revisada."
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "El DDL destructivo dentro del flujo de aplicación puede ejecutarse sin revisión, respaldo ni estrategia de reversión y causar pérdida irreversible o indisponibilidad."
+      fix_hint: "Muévelo a una migración versionada y revisada, con respaldo, aprobación y estrategia expand-and-contract o reversión comprobada."
     patterns:
       - pattern-regex: (?i)\b(TRUNCATE\s+TABLE|DROP\s+(TABLE|DATABASE|SCHEMA))\b
     paths:
@@ -356,7 +412,10 @@ rules:
       Dato personal con aspecto real en fixtures o seeds. Usa dominios
       reservados (example.com), RFC/CURP sintéticos y números de tarjeta de
       prueba.
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "Los fixtures se copian, comparten y conservan; un dato con apariencia real puede ser PII auténtica y terminar expuesto fuera de producción."
+      fix_hint: "Genera datos sintéticos, usa dominios reservados y credenciales o números de prueba publicados por el proveedor; documenta su origen no real."
     patterns:
       - pattern-either:
           - pattern-regex: '[a-zA-Z0-9._%+-]+@(?!example\.(com|org|net)|test\.|localhost|invalid)[a-zA-Z0-9.-]+\.(com|mx|org|net|io|es)'
@@ -379,7 +438,10 @@ rules:
     languages: [java]
     severity: WARNING
     message: "Consulta dentro de bucle (N+1). Usa fetch join o carga en lote."
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "Ejecutar una consulta por elemento multiplica los viajes a la base de datos y degrada latencia y carga de forma no lineal."
+      fix_hint: "Carga las relaciones con fetch join, EntityGraph o una consulta por lote y verifica el número de consultas en una prueba de integración."
     patterns:
       - pattern-inside: |
           for (...) { ... }
@@ -392,7 +454,10 @@ rules:
     languages: [csharp]
     severity: WARNING
     message: "Consulta dentro de bucle (N+1). Usa Include o carga en lote."
-    metadata: { pilar: datos }
+    metadata:
+      pilar: datos
+      why: "Ejecutar una consulta por elemento multiplica los viajes a la base de datos y degrada latencia y carga de forma no lineal."
+      fix_hint: "Usa Include o una proyección que resuelva el conjunto en una consulta, o recopila las claves y realiza una carga por lote."
     patterns:
       - pattern-inside: |
           foreach ($T $V in $COL) { ... }

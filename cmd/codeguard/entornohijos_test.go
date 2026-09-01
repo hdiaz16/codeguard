@@ -22,9 +22,8 @@ import (
 // Que la clave llegue ahí no es teórico. `codeguard` llama a
 // proc.RefrescarVariables() al arrancar (main.go:42), que TRAE del registro las
 // variables de usuario que el proceso no tiene. Mientras la bóveda no gestione
-// la clave —una instalación con `install.ps1 -ApiKey` que el daemon aún no ha
-// migrado— esa llamada mete la clave en el proceso, y de ahí baja a cada hijo
-// lanzado sin cmd.Env.
+// una clave heredada del registro, esa llamada mete la clave en el proceso, y
+// de ahí baja a cada hijo lanzado sin cmd.Env.
 
 // binarioFalso deja un ejecutable con ese nombre PRIMERO en el PATH, que vuelca
 // el entorno que recibe y sale bien.

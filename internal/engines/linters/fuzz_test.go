@@ -50,7 +50,7 @@ func FuzzHallazgosPMD(f *testing.F) {
 
 func FuzzParseBanditJSON(f *testing.F) {
 	sembrar(f, `{"results":[{"filename":"a.py","line_number":1,"test_id":"B101","issue_text":"t","issue_severity":"HIGH","code":"x"}]}`)
-	f.Fuzz(func(t *testing.T, raw []byte) { _, _ = parseBanditJSON(string(raw), raizFuzz) })
+	f.Fuzz(func(t *testing.T, raw []byte) { _, _, _ = parseBanditJSON(string(raw), raizFuzz) })
 }
 
 func FuzzParseGosecJSON(f *testing.F) {

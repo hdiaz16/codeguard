@@ -71,7 +71,7 @@ func TestBug8LaLineaSigueAlCodigoTrasComentario(t *testing.T) {
 	bin, repo, datos := prepararCache(t)
 
 	base := lineaDe(t, lineasDelRun(t, mideRun(t, bin, repo, datos)),
-		"app/inseguro.py", "python-subprocess-shell")
+		"app/inseguro.py", "B602")
 
 	entradas := entradasDeCache(t, datos)
 	if entradas == 0 {
@@ -80,7 +80,7 @@ func TestBug8LaLineaSigueAlCodigoTrasComentario(t *testing.T) {
 
 	// Control: misma corrida otra vez — el acierto debe servir la MISMA línea.
 	control := lineaDe(t, lineasDelRun(t, mideRun(t, bin, repo, datos)),
-		"app/inseguro.py", "python-subprocess-shell")
+		"app/inseguro.py", "B602")
 	if control != base {
 		t.Fatalf("sin cambios, la línea cambió de %d a %d: el control no controla", base, control)
 	}
@@ -90,7 +90,7 @@ func TestBug8LaLineaSigueAlCodigoTrasComentario(t *testing.T) {
 		"# uno\n# dos\n# tres\n"+elDefecto)
 	git(t, repo, "add", "-A")
 	despues := lineaDe(t, lineasDelRun(t, mideRun(t, bin, repo, datos)),
-		"app/inseguro.py", "python-subprocess-shell")
+		"app/inseguro.py", "B602")
 	if despues != base+3 {
 		t.Fatalf("el bug #8 en vivo: la violación vive en la línea %d y se reportó la %d "+
 			"(antes del comentario era la %d)", base+3, despues, base)
@@ -108,8 +108,8 @@ func TestBug8GemelosDeMismoContenidoNoSeContagianLaLinea(t *testing.T) {
 	git(t, repo, "add", "-A")
 
 	lineas := lineasDelRun(t, mideRun(t, bin, repo, datos))
-	a, b := lineaDe(t, lineas, "app/gemelo_a.py", "python-subprocess-shell"),
-		lineaDe(t, lineas, "app/gemelo_b.py", "python-subprocess-shell")
+	a, b := lineaDe(t, lineas, "app/gemelo_a.py", "B602"),
+		lineaDe(t, lineas, "app/gemelo_b.py", "B602")
 	if a != b {
 		t.Fatalf("contenido idéntico con líneas distintas de entrada (%d vs %d): el fixture no vale", a, b)
 	}
@@ -118,8 +118,8 @@ func TestBug8GemelosDeMismoContenidoNoSeContagianLaLinea(t *testing.T) {
 	escribir(t, repo, "app/gemelo_a.py", "# uno\n# dos\n# tres\n"+elDefecto)
 	git(t, repo, "add", "-A")
 	lineas = lineasDelRun(t, mideRun(t, bin, repo, datos))
-	nuevaA := lineaDe(t, lineas, "app/gemelo_a.py", "python-subprocess-shell")
-	nuevaB := lineaDe(t, lineas, "app/gemelo_b.py", "python-subprocess-shell")
+	nuevaA := lineaDe(t, lineas, "app/gemelo_a.py", "B602")
+	nuevaB := lineaDe(t, lineas, "app/gemelo_b.py", "B602")
 	if nuevaA != a+3 {
 		t.Errorf("el gemelo editado reporta la línea %d y la violación vive en la %d", nuevaA, a+3)
 	}
