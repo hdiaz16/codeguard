@@ -354,6 +354,58 @@ func TestLaHuellaEsLaMismaVengaDelJSONODelTexto(t *testing.T) {
 	}
 }
 
+// Algunos runners de Windows entregan a Git y a go vet dos nombres absolutos
+// distintos para el mismo checkout temporal. La normalización general no debe
+// aceptar por parecido una ruta externa, pero vet sí puede demostrar cuál es
+// el archivo cuando existe, tiene el mismo contenido y su sufijo es único.
+func TestVetResuelveUnaRaizAlternaSoloConEvidenciaInequivoca(t *testing.T) {
+	repo, escribir := repoGo(t)
+	escribir("paquete/vet.go", "package paquete\n\nfunc F() {}\n")
+
+	alias := t.TempDir()
+	rutaAlias := filepath.Join(alias, "paquete", "vet.go")
+	if err := os.MkdirAll(filepath.Dir(rutaAlias), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rutaAlias, []byte("package paquete\n\nfunc F() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rutas := nuevoResolutorDeRutasVet(repo)
+	if got := rutas.relativa(rutaAlias); got != "paquete/vet.go" {
+		t.Fatalf("la copia exacta bajo una raíz alterna dio %q; se esperaba paquete/vet.go", got)
+	}
+
+	// Mismo sufijo pero distinto contenido: no hay prueba de que sea el archivo
+	// analizado y conservar la absoluta es preferible a atribuirlo mal.
+	if err := os.WriteFile(rutaAlias, []byte("package paquete\n\nfunc Distinta() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := nuevoResolutorDeRutasVet(repo).relativa(rutaAlias); got != filepath.ToSlash(rutaAlias) {
+		t.Fatalf("una ruta externa de contenido distinto se inventó como %q", got)
+	}
+}
+
+func TestVetNoEligeCuandoDosArchivosPuedenCasar(t *testing.T) {
+	repo, escribir := repoGo(t)
+	contenido := "package paquete\n\nfunc F() {}\n"
+	escribir("vet.go", contenido)
+	escribir("paquete/vet.go", contenido)
+
+	alias := t.TempDir()
+	rutaAlias := filepath.Join(alias, "paquete", "vet.go")
+	if err := os.MkdirAll(filepath.Dir(rutaAlias), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rutaAlias, []byte(contenido), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := nuevoResolutorDeRutasVet(repo).relativa(rutaAlias); got != filepath.ToSlash(rutaAlias) {
+		t.Fatalf("había dos candidatos y vet eligió silenciosamente %q", got)
+	}
+}
+
 // Y de punta a punta con el toolchain de verdad: un archivo con DOS problemas
 // es exactamente el caso que la compuerta rota convertía en "no pudo analizar".
 func TestGoVetConVariosHallazgosNoSeDeclaraRoto(t *testing.T) {

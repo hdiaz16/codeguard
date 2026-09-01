@@ -1,6 +1,7 @@
 package linters
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -243,6 +244,7 @@ var vetPosn = regexp.MustCompile(`^(.*):(\d+):\d+$`)
 // ahora regala: ese cambio se puede hacer, pero es una migración de baselines,
 // no un efecto colateral de este arreglo.
 func hallazgosDelJSONDeVet(repoRoot, informe string) ([]finding.Finding, error) {
+	rutas := nuevoResolutorDeRutasVet(repoRoot)
 	// `go vet -json` NO escribe UN objeto: escribe un FLUJO, uno por cada
 	// variante de paquete que analiza. Un solo directorio con archivos de test
 	// ya produce dos —el paquete y su paquete de test— y sale así:
@@ -300,7 +302,7 @@ func hallazgosDelJSONDeVet(repoRoot, informe string) ([]finding.Finding, error) 
 		sort.Strings(analizadores)
 		for _, a := range analizadores {
 			for _, d := range porPaquete[p][a] {
-				ruta, linea := repartirPosn(repoRoot, d.Posn)
+				ruta, linea := repartirPosnCon(rutas, d.Posn)
 				findings = append(findings, hallazgoVet(ruta, linea, d.Message))
 			}
 		}
@@ -313,6 +315,7 @@ func hallazgosDelJSONDeVet(repoRoot, informe string) ([]finding.Finding, error) 
 // Las líneas que no son diagnósticos —la cabecera `# paquete`, o el ruido del
 // toolchain— se ignoran.
 func hallazgosDelTextoDeVet(repoRoot, motivos string) []finding.Finding {
+	rutas := nuevoResolutorDeRutasVet(repoRoot)
 	var findings []finding.Finding
 	for _, line := range strings.Split(motivos, "\n") {
 		m := vetLine.FindStringSubmatch(strings.TrimSpace(line))
@@ -320,20 +323,24 @@ func hallazgosDelTextoDeVet(repoRoot, motivos string) []finding.Finding {
 			continue
 		}
 		lineNo, _ := strconv.Atoi(m[2])
-		findings = append(findings, hallazgoVet(rutaDelDiagnostico(repoRoot, m[1]), lineNo, m[3]))
+		findings = append(findings, hallazgoVet(rutaDelDiagnosticoCon(rutas, m[1]), lineNo, m[3]))
 	}
 	return findings
 }
 
 // repartirPosn separa "ruta:línea:columna" y devuelve la ruta relativa al repo.
 func repartirPosn(repoRoot, posn string) (string, int) {
+	return repartirPosnCon(nuevoResolutorDeRutasVet(repoRoot), posn)
+}
+
+func repartirPosnCon(rutas *resolutorDeRutasVet, posn string) (string, int) {
 	m := vetPosn.FindStringSubmatch(strings.TrimSpace(posn))
 	if m == nil {
 		// Sin posición utilizable, la ruta cruda es mejor que una inventada.
-		return relTo(repoRoot, strings.TrimSpace(posn)), 0
+		return rutas.relativa(strings.TrimSpace(posn)), 0
 	}
 	linea, _ := strconv.Atoi(m[2])
-	return relTo(repoRoot, m[1]), linea
+	return rutas.relativa(m[1]), linea
 }
 
 // hallazgoVet arma el hallazgo en UN solo sitio, que es lo que garantiza que el
@@ -386,10 +393,93 @@ func hallazgoVet(ruta string, linea int, mensaje string) finding.Finding {
 // ruta tal cual cuando no cae dentro de la raíz, en vez de escupir el "../.."
 // que devolvería filepath.Rel a secas.
 func rutaDelDiagnostico(repoRoot, izquierda string) string {
+	return rutaDelDiagnosticoCon(nuevoResolutorDeRutasVet(repoRoot), izquierda)
+}
+
+func rutaDelDiagnosticoCon(rutas *resolutorDeRutasVet, izquierda string) string {
 	if i := strings.LastIndex(izquierda, ": "); i >= 0 {
 		izquierda = izquierda[i+len(": "):]
 	}
-	return relTo(repoRoot, strings.TrimSpace(izquierda))
+	return rutas.relativa(strings.TrimSpace(izquierda))
+}
+
+// resolutorDeRutasVet cubre una rareza observada en los runners de Windows:
+// Git y go vet pueden ver el mismo checkout temporal mediante dos raíces que
+// ni las APIs de nombres largos ni la identidad del filesystem unifican. No
+// basta con recortar por basename: eso atribuiría silenciosamente un archivo
+// externo al repo.
+//
+// El último recurso de vet exige tres pruebas a la vez: la ruta reportada
+// existe, su contenido es idéntico, y su sufijo coincide con UN solo .go real
+// del repo. Si cualquiera falla o hay ambigüedad, conserva la ruta cruda. La
+// lista se carga perezosamente una vez por informe para no recorrer el repo por
+// cada diagnóstico.
+type resolutorDeRutasVet struct {
+	repoRoot string
+	cargado  bool
+	archivos []string
+}
+
+func nuevoResolutorDeRutasVet(repoRoot string) *resolutorDeRutasVet {
+	return &resolutorDeRutasVet{repoRoot: repoRoot}
+}
+
+func (r *resolutorDeRutasVet) relativa(p string) string {
+	limpia := relTo(r.repoRoot, p)
+	if !filepath.IsAbs(filepath.FromSlash(limpia)) {
+		return limpia
+	}
+	contenido, err := os.ReadFile(filepath.FromSlash(p))
+	if err != nil {
+		return limpia
+	}
+	r.cargar()
+	normalizada := strings.ToLower(filepath.ToSlash(filepath.Clean(filepath.FromSlash(p))))
+	coincidencia := ""
+	for _, rel := range r.archivos {
+		if !strings.HasSuffix(normalizada, "/"+strings.ToLower(rel)) {
+			continue
+		}
+		delRepo, readErr := os.ReadFile(filepath.Join(r.repoRoot, filepath.FromSlash(rel)))
+		if readErr != nil || !bytes.Equal(contenido, delRepo) {
+			continue
+		}
+		if coincidencia != "" {
+			return limpia
+		}
+		coincidencia = rel
+	}
+	if coincidencia != "" {
+		return coincidencia
+	}
+	return limpia
+}
+
+func (r *resolutorDeRutasVet) cargar() {
+	if r.cargado {
+		return
+	}
+	r.cargado = true
+	_ = filepath.WalkDir(r.repoRoot, func(p string, entrada os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entrada.IsDir() {
+			if p != r.repoRoot && entrada.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(entrada.Name()), ".go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(r.repoRoot, p)
+		if relErr == nil {
+			r.archivos = append(r.archivos, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	sort.Strings(r.archivos)
 }
 
 // claveVet identifica un análisis: el contenido del módulo —todos sus .go y
