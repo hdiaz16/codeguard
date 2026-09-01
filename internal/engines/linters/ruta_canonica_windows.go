@@ -16,13 +16,27 @@ import (
 // componente 8.3 (RUNNER~1); GetFinalPathNameByHandle devuelve la misma forma
 // larga para el directorio raíz y para la ruta impresa por una herramienta.
 func rutaCanonicaExistente(ruta string) (string, error) {
+	// GetFinalPathNameByHandle no siempre expande componentes 8.3 en los
+	// volúmenes de GitHub Actions. GetLongPathNameW tiene precisamente ese
+	// contrato; se aplica antes de abrir para que tanto la raíz como el archivo
+	// entren al resto del proceso con los mismos nombres almacenados.
+	entrada, err := windows.UTF16PtrFromString(filepath.Clean(ruta))
+	if err != nil {
+		return "", err
+	}
+	const capacidadRutaWindows = 32768
+	larga := make([]uint16, capacidadRutaWindows)
+	nLarga, errLarga := windows.GetLongPathName(entrada, &larga[0], capacidadRutaWindows)
+	if errLarga == nil && nLarga > 0 && nLarga < capacidadRutaWindows {
+		ruta = windows.UTF16ToString(larga[:nLarga])
+	}
+
 	f, err := os.Open(ruta)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
 
-	const capacidadRutaWindows = 32768
 	buf := make([]uint16, capacidadRutaWindows)
 	n, err := windows.GetFinalPathNameByHandle(windows.Handle(f.Fd()), &buf[0], capacidadRutaWindows, 0)
 	if err != nil {

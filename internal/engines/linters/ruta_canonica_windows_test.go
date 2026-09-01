@@ -45,6 +45,18 @@ func TestRelToUnificaRutaWindowsCortaYLarga(t *testing.T) {
 	if got, ok := relExistentePorIdentidad(raiz, corta); !ok || got != "subdirectorio-largo/archivo.go" {
 		t.Fatalf("la identidad no unificó ruta corta y larga: got=%q ok=%v", got, ok)
 	}
+	canon, err := rutaCanonicaExistente(corta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonRaiz, err := rutaCanonicaExistente(raiz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	esperada := filepath.Join(canonRaiz, "subdirectorio-largo", "archivo.go")
+	if !strings.EqualFold(canon, esperada) {
+		t.Fatalf("GetLongPathName no expandió la forma 8.3: got=%q want=%q", canon, esperada)
+	}
 }
 
 func TestRelToNoFiltraLaRaizEfimeraAunqueElArchivoYaNoExista(t *testing.T) {
