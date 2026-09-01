@@ -264,8 +264,8 @@ func relTo(root, p string) string {
 	}
 	// Primero los dos lados en forma canónica: es el único reintento que
 	// arregla la disparidad corto/largo venga de donde venga.
-	canonRoot, errRoot := filepath.EvalSymlinks(root)
-	canonP, errP := filepath.EvalSymlinks(p)
+	canonRoot, errRoot := rutaCanonicaExistente(root)
+	canonP, errP := rutaCanonicaExistente(p)
 	if errRoot == nil && errP == nil {
 		if rel, ok := relDentroDe(canonRoot, canonP); ok {
 			return rel

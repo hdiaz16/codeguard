@@ -47,9 +47,10 @@ jobs:
       - name: gcc presente (requisito de -race en windows)
         run: gcc --version
 
-      # La base de vulnerabilidades de trivy (~60 MB de ghcr) se cachea entre
-      # corridas: bajarla en cada run tropezaba con el rate limit del registro
-      # y trivy salía DEGRADADO intermitente en los e2e. La clave por run_id +
+      # Las bases de Trivy se cachean entre corridas: la de vulnerabilidades y
+      # el índice Java que exige el control Log4Shell. Bajarlas en cada run
+      # tropezaba con el rate limit del registro; java-db además ronda 1 GB.
+      # La clave por run_id +
       # restore-keys de prefijo hace que cada corrida restaure la más reciente
       # y guarde la suya; trivydb.Actualizar la refresca si envejeció.
       #

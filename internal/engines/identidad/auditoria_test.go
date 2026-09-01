@@ -24,6 +24,58 @@ import (
 // mismo canal indistinguible y el test respondía a ambos con un skip.
 var errHashDistinto = errors.New("el hash no coincide con el esperado")
 
+func TestEscanerNuncaDescargaBasesPorSuCuenta(t *testing.T) {
+	cmd := comandoEscaner(context.Background(), "trivy", "objetivo")
+	args := " " + strings.Join(cmd.Args[1:], " ") + " "
+	for _, obligatorio := range []string{
+		" --skip-db-update ", " --skip-java-db-update ",
+		" --db-repository ghcr.io/aquasecurity/trivy-db:2 ",
+		" --java-db-repository ghcr.io/aquasecurity/trivy-java-db:1 ",
+	} {
+		if !strings.Contains(args, obligatorio) {
+			t.Errorf("la invocación de Trivy perdió %q: %s", obligatorio, args)
+		}
+	}
+}
+
+func TestBaseJavaSeRefrescaCuandoFaltaVenceOEsInvalida(t *testing.T) {
+	dir := t.TempDir()
+	meta := filepath.Join(dir, "metadata.json")
+	db := filepath.Join(dir, "trivy-java.db")
+	if err := os.WriteFile(db, []byte("db"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	casos := []struct {
+		nombre string
+		valor  string
+		vence  bool
+	}{
+		{"ausente", "", true},
+		{"inválida", `{}`, true},
+		{"vencida", `{"NextUpdate":"2020-01-01T00:00:00Z"}`, true},
+		{"vigente", `{"NextUpdate":"2099-01-01T00:00:00Z"}`, false},
+	}
+	for _, tc := range casos {
+		t.Run(tc.nombre, func(t *testing.T) {
+			_ = os.Remove(meta)
+			if tc.valor != "" {
+				if err := os.WriteFile(meta, []byte(tc.valor), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := baseJavaVencida(meta, db); got != tc.vence {
+				t.Fatalf("baseJavaVencida()=%v, quiere %v", got, tc.vence)
+			}
+		})
+	}
+	if err := os.Remove(db); err != nil {
+		t.Fatal(err)
+	}
+	if !baseJavaVencida(meta, db) {
+		t.Fatal("una base sin trivy-java.db no puede considerarse vigente")
+	}
+}
+
 // asegurarBaseTrivy deja la base de vulnerabilidades lista o se salta la
 // prueba: escanear va con --skip-db-update y la EXIGE, y en una máquina (o
 // runner) recién instalada no existe — trivy salía con 1 y estas pruebas
@@ -43,6 +95,19 @@ func asegurarBaseTrivy(t *testing.T) {
 			t.Skipf("sin base de vulnerabilidades y sin red para bajarla: %v", err)
 		}
 		t.Logf("base de trivy sin refrescar (se usa la copia local): %v", err)
+	}
+	cancel()
+	// El control es un JAR. Trivy exige su índice Java incluso cuando el JAR
+	// trae metadatos Maven; como el escáner corre sin red, la prueba prepara la
+	// misma base oficial que Auditar prepara en una instalación limpia.
+	_, errMeta := os.Stat(filepath.Join(dir, "java-db", "metadata.json"))
+	_, errJavaDB := os.Stat(filepath.Join(dir, "java-db", "trivy-java.db"))
+	if errMeta != nil || errJavaDB != nil {
+		ctxJava, cancelJava := context.WithTimeout(context.Background(), 12*time.Minute)
+		defer cancelJava()
+		if err := trivydb.ActualizarJava(ctxJava, dir); err != nil {
+			t.Skipf("sin base Java y sin red para bajarla: %v", err)
+		}
 	}
 }
 

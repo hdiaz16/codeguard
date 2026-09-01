@@ -37,6 +37,10 @@ type registroFalso struct {
 }
 
 func nuevoRegistro(t *testing.T, contenidoTar map[string]string) *registroFalso {
+	return nuevoRegistroFuente(t, contenidoTar, fuenteVulnerabilidades())
+}
+
+func nuevoRegistroFuente(t *testing.T, contenidoTar map[string]string, fuente fuenteOCI) *registroFalso {
 	t.Helper()
 	r := &registroFalso{}
 
@@ -62,7 +66,7 @@ func nuevoRegistro(t *testing.T, contenidoTar map[string]string) *registroFalso 
 	man, _ := json.Marshal(map[string]any{
 		"mediaType": "application/vnd.oci.image.manifest.v1+json",
 		"layers": []map[string]any{{
-			"mediaType": "application/vnd.aquasec.trivy.db.layer.v1.tar+gzip",
+			"mediaType": fuente.tipoCapa,
 			"digest":    digestDe(r.blob),
 			"size":      len(r.blob),
 		}},
@@ -82,17 +86,18 @@ func nuevoRegistro(t *testing.T, contenidoTar map[string]string) *registroFalso 
 	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"token":"token-de-prueba"}`))
 	})
-	mux.HandleFunc("/v2/aquasecurity/trivy-db/manifests/2", func(w http.ResponseWriter, _ *http.Request) {
+	baseOCI := "/v2/" + fuente.repositorio
+	mux.HandleFunc(baseOCI+"/manifests/"+fuente.etiqueta, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(r.indice)
 	})
-	mux.HandleFunc("/v2/aquasecurity/trivy-db/manifests/"+digestDe(man), func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc(baseOCI+"/manifests/"+digestDe(man), func(w http.ResponseWriter, _ *http.Request) {
 		if r.manifiestoServido != nil {
 			_, _ = w.Write(r.manifiestoServido)
 			return
 		}
 		_, _ = w.Write(r.manifiesto)
 	})
-	mux.HandleFunc("/v2/aquasecurity/trivy-db/blobs/"+digestDe(r.blob), func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc(baseOCI+"/blobs/"+digestDe(r.blob), func(w http.ResponseWriter, _ *http.Request) {
 		if r.blobServido != nil {
 			_, _ = w.Write(r.blobServido)
 			return
@@ -106,6 +111,24 @@ func nuevoRegistro(t *testing.T, contenidoTar map[string]string) *registroFalso 
 	registroBase = r.URL
 	t.Cleanup(func() { registroBase = base })
 	return r
+}
+
+func TestActualizarJavaUsaRepositorioYLayoutOficiales(t *testing.T) {
+	nuevoRegistroFuente(t, map[string]string{
+		"trivy-java.db": "índice java legítimo",
+		"metadata.json": `{"Version":1}`,
+	}, fuenteJava())
+	dir := t.TempDir()
+	if err := ActualizarJava(context.Background(), dir); err != nil {
+		t.Fatalf("actualizar java-db: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "java-db", "trivy-java.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "índice java legítimo" {
+		t.Fatalf("java-db instalada con contenido inesperado: %q", b)
+	}
 }
 
 func TestUnBlobAlteradoSeDescartaSinAbrirlo(t *testing.T) {

@@ -135,6 +135,18 @@ func TestHallazgosVetDistingueDiagnosticosDeFalloDeCarga(t *testing.T) {
 			quiereEr: true,
 		},
 		{
+			// La descarga fallida conserva la ubicación del import y por eso
+			// parece un diagnóstico de vet. Pero describe el egress-hint, no una
+			// construcción del código: no debe publicarse como finding.Error en
+			// SARIF ni quedar marcada como "verificada".
+			nombre: "fallo de red con ruta y línea es infraestructura",
+			motivos: "cmd/daemon/main.go:14:2: github.com/wailsapp/wails/v3@v3.0.0-beta.5: " +
+				"Get \"https://proxy.golang.org/github.com/wailsapp/wails/v3/@v/v3.0.0-beta.5.zip\": " +
+				"proxyconnect tcp: dial tcp 127.0.0.1:9: connectex: No connection could be made",
+			quiereEr: true,
+			motivo:   "fallo de infraestructura",
+		},
+		{
 			// El falso positivo que la mezcla de canales causaba: `go:
 			// downloading` va por stderr y no es un diagnóstico, así que la
 			// comprobación anterior lo tomaba por un fallo de carga y degradaba la

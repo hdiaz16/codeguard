@@ -248,6 +248,33 @@ func Auditar(ctx context.Context, op Opciones) (Auditoria, error) {
 			a.Omitidos = append(a.Omitidos, nombre+" (no instalado)")
 		}
 	}
+	// Trivy necesita una segunda base para abrir JAR/WAR. El proceso del motor
+	// corre sin red por diseño, así que CodeGuard la aprovisiona previamente con
+	// su cliente OCI y verificación de digest, igual que la base principal.
+	// Sólo se baja en una instalación que realmente contiene artefactos Java;
+	// exigir ~1 GB a quien no instaló esas capas sería desperdicio, no seguridad.
+	necesitaJava := false
+	for nombre := range objetivos {
+		if strings.HasPrefix(nombre, "google-java-format") || strings.HasPrefix(nombre, "pmd") {
+			necesitaJava = true
+			break
+		}
+	}
+	if necesitaJava {
+		javaMeta := filepath.Join(dirDB, "java-db", "metadata.json")
+		javaDB := filepath.Join(dirDB, "java-db", "trivy-java.db")
+		if baseJavaVencida(javaMeta, javaDB) {
+			if err := trivydb.ActualizarJava(ctx, dirDB); err != nil {
+				_, errMeta := os.Stat(javaMeta)
+				_, errDB := os.Stat(javaDB)
+				if errMeta != nil || errDB != nil {
+					return a, fmt.Errorf("no hay una base Java completa para auditar los motores JVM y no se pudo bajar: %w", err)
+				}
+				log.Printf("auditoría: no se pudo actualizar la base Java, "+
+					"se usa la copia local (puede estar desactualizada): %v", err)
+			}
+		}
+	}
 	const python = "motores de Python"
 	switch {
 	case dirPython == "":
@@ -339,15 +366,7 @@ func normalizarPaquete(n string) string {
 // escáner nuevo entra con un control así, porque la única diferencia entre
 // "está limpio" y "no miré" es una prueba que falle cuando debe fallar.
 func escanear(ctx context.Context, binTrivy, objetivo, nombre string) ([]Riesgo, error) {
-	cmd := comandoIdentidad(ctx, binTrivy,
-		"rootfs", "--scanners", "vuln", "--format", "json", "--quiet",
-		"--skip-db-update",
-		// Trivy prueba primero un espejo de Google por defecto. Nuestra fuente es
-		// más estrecha: la base Java sólo puede venir del registro oficial del
-		// proyecto Aquasecurity.
-		"--db-repository", "ghcr.io/aquasecurity/trivy-db:2",
-		"--java-db-repository", "ghcr.io/aquasecurity/trivy-java-db:1",
-		objetivo)
+	cmd := comandoEscaner(ctx, binTrivy, objetivo)
 	salida, err := proc.Correr(ctx, cmd, proc.MaxSalida)
 	// Misma regla que el motor de trivy: sin --exit-code, salir con código
 	// distinto de cero es fallo, no hallazgos, y aceptar el stdout que alcanzó
@@ -387,4 +406,33 @@ func escanear(ctx context.Context, binTrivy, objetivo, nombre string) ([]Riesgo,
 		}
 	}
 	return out, nil
+}
+
+func comandoEscaner(ctx context.Context, binTrivy, objetivo string) *exec.Cmd {
+	return comandoIdentidad(ctx, binTrivy,
+		"rootfs", "--scanners", "vuln", "--format", "json", "--quiet",
+		"--skip-db-update", "--skip-java-db-update",
+		// Trivy prueba primero un espejo de Google por defecto. Nuestra fuente es
+		// más estrecha: la base Java sólo puede venir del registro oficial del
+		// proyecto Aquasecurity.
+		"--db-repository", "ghcr.io/aquasecurity/trivy-db:2",
+		"--java-db-repository", "ghcr.io/aquasecurity/trivy-java-db:1",
+		objetivo)
+}
+
+func baseJavaVencida(rutaMetadata, rutaDB string) bool {
+	if _, err := os.Stat(rutaDB); err != nil {
+		return true
+	}
+	b, err := os.ReadFile(rutaMetadata)
+	if err != nil {
+		return true
+	}
+	var meta struct {
+		NextUpdate time.Time
+	}
+	if json.Unmarshal(b, &meta) != nil || meta.NextUpdate.IsZero() {
+		return true
+	}
+	return !time.Now().Before(meta.NextUpdate)
 }

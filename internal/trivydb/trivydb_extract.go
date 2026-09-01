@@ -16,7 +16,7 @@ import (
 // extraer abre el tar.gz YA VERIFICADO y saca sólo lo que la base de trivy
 // puede contener. Lista blanca y no lista negra: un nombre que no se reconoce
 // se rechaza entero, incluida cualquier ruta con separadores o "..".
-func extraer(rutaTgz, destino string) error {
+func extraerBase(rutaTgz, destino string, permitidos map[string]bool) error {
 	f, err := os.Open(rutaTgz)
 	if err != nil {
 		return err
@@ -31,7 +31,6 @@ func extraer(rutaTgz, destino string) error {
 		return err
 	}
 
-	permitidos := map[string]bool{"trivy.db": true, "metadata.json": true}
 	vistos := map[string]bool{}
 	tr := tar.NewReader(gz)
 	for {
@@ -75,7 +74,11 @@ func extraer(rutaTgz, destino string) error {
 // Windows pasa si un trivy está leyendo la base en ese instante— se restaura
 // la anterior y el siguiente ciclo lo reintenta.
 func intercambiar(dirTrivy, nuevo string) error {
-	db := filepath.Join(dirTrivy, "db")
+	return intercambiarBase(dirTrivy, nuevo, "db")
+}
+
+func intercambiarBase(dirTrivy, nuevo, directorio string) error {
+	db := filepath.Join(dirTrivy, directorio)
 	// El apartado también cuelga del directorio único de esta llamada, y NO de
 	// un "db.viejo" compartido. Con la ruta fija quedaba una carrera fina entre
 	// procesos: el RemoveAll de abajo borraba el respaldo que el OTRO proceso
@@ -114,12 +117,16 @@ func intercambiar(dirTrivy, nuevo string) error {
 // tampoco bloquea a nadie. Los errores se ignoran a propósito: es higiene de
 // disco, no parte del contrato de la actualización.
 func purgarExtraccionesHuerfanas(dirTrivy string) {
+	purgarExtraccionesHuerfanasDe(dirTrivy, "db.nuevo-")
+}
+
+func purgarExtraccionesHuerfanasDe(dirTrivy, prefijo string) {
 	entradas, err := os.ReadDir(dirTrivy)
 	if err != nil {
 		return
 	}
 	for _, e := range entradas {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "db.nuevo-") {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), prefijo) {
 			continue
 		}
 		info, err := e.Info()

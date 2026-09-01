@@ -52,8 +52,34 @@ var muActualizar sync.Mutex
 const (
 	topeManifiesto = 1 << 20 // 1 MB: un índice o manifiesto OCI real ocupa ~1 KB
 	topeBlob       = 1 << 30 // 1 GB comprimido: la base ronda 60 MB hoy
+	topeBlobJava   = 2 << 30 // 2 GB comprimidos: java-db ronda 1 GB hoy
 	topeArchivo    = 8 << 30 // 8 GB por archivo extraído: trivy.db ronda 1.2 GB
 )
+
+type fuenteOCI struct {
+	repositorio, etiqueta, tipoCapa string
+	directorio, prefijoTemporal     string
+	archivos                        map[string]bool
+	topeBlob                        int64
+}
+
+func fuenteVulnerabilidades() fuenteOCI {
+	return fuenteOCI{
+		repositorio: repositorio, etiqueta: etiqueta,
+		tipoCapa: "application/vnd.aquasec.trivy.db.layer.v1.tar+gzip", directorio: "db", prefijoTemporal: "db",
+		archivos: map[string]bool{"trivy.db": true, "metadata.json": true},
+		topeBlob: topeBlob,
+	}
+}
+
+func fuenteJava() fuenteOCI {
+	return fuenteOCI{
+		repositorio: "aquasecurity/trivy-java-db", etiqueta: "1",
+		tipoCapa: "application/vnd.aquasec.trivy.javadb.layer.v1.tar+gzip", directorio: "java-db", prefijoTemporal: "java-db",
+		archivos: map[string]bool{"trivy-java.db": true, "metadata.json": true},
+		topeBlob: topeBlobJava,
+	}
+}
 
 type manifiestoOCI struct {
 	MediaType string `json:"mediaType"`
@@ -95,12 +121,22 @@ func DirCache() (string, error) {
 // directorio aparte y sólo se intercambia cuando todo está verificado — un
 // fallo a medias deja la base anterior intacta.
 func Actualizar(ctx context.Context, dirTrivy string) error {
+	return actualizar(ctx, dirTrivy, fuenteVulnerabilidades())
+}
+
+// ActualizarJava refresca la base de índices Java en <dirTrivy>/java-db con
+// las mismas garantías OCI, digest y reemplazo atómico que Actualizar.
+func ActualizarJava(ctx context.Context, dirTrivy string) error {
+	return actualizar(ctx, dirTrivy, fuenteJava())
+}
+
+func actualizar(ctx context.Context, dirTrivy string, fuente fuenteOCI) error {
 	// Una actualización a la vez: ver muActualizar. Se toma antes de pedir el
 	// token para no bajar dos veces el mismo gigabyte.
 	muActualizar.Lock()
 	defer muActualizar.Unlock()
 
-	token, err := pedirToken(ctx)
+	token, err := pedirToken(ctx, fuente.repositorio)
 	if err != nil {
 		return fmt.Errorf("token del registro: %w", err)
 	}
@@ -108,7 +144,7 @@ func Actualizar(ctx context.Context, dirTrivy string) error {
 	// El primer documento llega por etiqueta (mutable: es como se publica la
 	// base nueva). Si es un índice, el manifiesto que nombra sí se verifica
 	// contra su digest.
-	crudo, err := pedirManifiesto(ctx, token, etiqueta)
+	crudo, err := pedirManifiesto(ctx, token, fuente.repositorio, fuente.etiqueta)
 	if err != nil {
 		return fmt.Errorf("manifiesto: %w", err)
 	}
@@ -118,7 +154,7 @@ func Actualizar(ctx context.Context, dirTrivy string) error {
 	}
 	if len(doc.Manifests) > 0 { // era un índice
 		digest := doc.Manifests[0].Digest
-		crudo, err = pedirManifiesto(ctx, token, digest)
+		crudo, err = pedirManifiesto(ctx, token, fuente.repositorio, digest)
 		if err != nil {
 			return fmt.Errorf("manifiesto del índice: %w", err)
 		}
@@ -133,26 +169,26 @@ func Actualizar(ctx context.Context, dirTrivy string) error {
 
 	capa := ""
 	for _, l := range doc.Layers {
-		if strings.Contains(l.MediaType, "trivy.db.layer") {
+		if l.MediaType == fuente.tipoCapa {
 			capa = l.Digest
 			break
 		}
 	}
 	if capa == "" {
-		return fmt.Errorf("el manifiesto no trae ninguna capa de base de trivy (capas: %d)", len(doc.Layers))
+		return fmt.Errorf("el manifiesto de %s no trae la capa esperada (capas: %d)", fuente.repositorio, len(doc.Layers))
 	}
 
 	// El blob se hashea MIENTRAS baja y no se abre hasta que coincide.
 	if err := os.MkdirAll(dirTrivy, 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dirTrivy, "db-descarga-*.tgz")
+	tmp, err := os.CreateTemp(dirTrivy, fuente.prefijoTemporal+"-descarga-*.tgz")
 	if err != nil {
 		return err
 	}
 	defer func() { tmp.Close(); os.Remove(tmp.Name()) }()
 
-	if err := bajarBlob(ctx, token, capa, tmp); err != nil {
+	if err := bajarBlob(ctx, token, fuente.repositorio, capa, fuente.topeBlob, tmp); err != nil {
 		return fmt.Errorf("blob de la base: %w", err)
 	}
 
@@ -166,17 +202,17 @@ func Actualizar(ctx context.Context, dirTrivy string) error {
 	// Con directorio propio no hay estado compartido mutable: lo único que se
 	// comparte son renames de directorios YA completos, cuyo solape se resuelve
 	// como error y nunca como base corrupta.
-	purgarExtraccionesHuerfanas(dirTrivy)
-	nuevo, err := os.MkdirTemp(dirTrivy, "db.nuevo-*")
+	purgarExtraccionesHuerfanasDe(dirTrivy, fuente.prefijoTemporal+".nuevo-")
+	nuevo, err := os.MkdirTemp(dirTrivy, fuente.prefijoTemporal+".nuevo-*")
 	if err != nil {
 		return fmt.Errorf("directorio de extracción: %w", err)
 	}
-	if err := extraer(tmp.Name(), nuevo); err != nil {
+	if err := extraerBase(tmp.Name(), nuevo, fuente.archivos); err != nil {
 		_ = os.RemoveAll(nuevo)
 		return fmt.Errorf("extrayendo la base: %w", err)
 	}
 
-	if err := intercambiar(dirTrivy, nuevo); err != nil {
+	if err := intercambiarBase(dirTrivy, nuevo, fuente.directorio); err != nil {
 		// Si el intercambio no llegó a hacerse, la extracción sigue en disco y
 		// ahora tiene nombre único: se borra aquí para no acumular. Si tuvo
 		// éxito, `nuevo` ya no existe y esto es un no-op.
@@ -186,8 +222,8 @@ func Actualizar(ctx context.Context, dirTrivy string) error {
 	return nil
 }
 
-func pedirToken(ctx context.Context) (string, error) {
-	url := registroBase + "/token?service=ghcr.io&scope=repository:" + repositorio + ":pull"
+func pedirToken(ctx context.Context, repo string) (string, error) {
+	url := registroBase + "/token?service=ghcr.io&scope=repository:" + repo + ":pull"
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", err
@@ -212,8 +248,8 @@ func pedirToken(ctx context.Context) (string, error) {
 	return t.Token, nil
 }
 
-func pedirManifiesto(ctx context.Context, token, ref string) ([]byte, error) {
-	url := registroBase + "/v2/" + repositorio + "/manifests/" + ref
+func pedirManifiesto(ctx context.Context, token, repo, ref string) ([]byte, error) {
+	url := registroBase + "/v2/" + repo + "/manifests/" + ref
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -244,8 +280,8 @@ func pedirManifiesto(ctx context.Context, token, ref string) ([]byte, error) {
 	return crudo, nil
 }
 
-func bajarBlob(ctx context.Context, token, digest string, destino *os.File) error {
-	url := registroBase + "/v2/" + repositorio + "/blobs/" + digest
+func bajarBlob(ctx context.Context, token, repo, digest string, limite int64, destino *os.File) error {
+	url := registroBase + "/v2/" + repo + "/blobs/" + digest
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
@@ -261,12 +297,12 @@ func bajarBlob(ctx context.Context, token, digest string, destino *os.File) erro
 	}
 
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(destino, h), io.LimitReader(resp.Body, topeBlob+1))
+	n, err := io.Copy(io.MultiWriter(destino, h), io.LimitReader(resp.Body, limite+1))
 	if err != nil {
 		return err
 	}
-	if n > topeBlob {
-		return fmt.Errorf("el blob pasa de %d bytes", int64(topeBlob))
+	if n > limite {
+		return fmt.Errorf("el blob pasa de %d bytes", limite)
 	}
 	if got := "sha256:" + hex.EncodeToString(h.Sum(nil)); got != digest {
 		return fmt.Errorf("el contenido no coincide con su digest: llegó %s y el manifiesto nombra %s — se descarta sin abrir", got, digest)

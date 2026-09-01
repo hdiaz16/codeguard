@@ -185,6 +185,15 @@ func hallazgosVet(repoRoot, stdout, stderr string, paquetes []string) ([]finding
 	// escribir informe, esos motivos son la única respuesta que hay: si tampoco
 	// se pueden leer, es avería, exactamente como antes.
 	if motivos != "" {
+		// Un error de descarga puede incluir ruta y línea del import que lo
+		// disparó. Su forma entonces casa con vetLine, pero NO es un diagnóstico
+		// del código: es el egress-hint (o la red real) impidiendo que Go cargue
+		// un módulo. Publicarlo como finding.Error lo marca como "verificado" en
+		// SARIF y le pide al usuario corregir una importación sana.
+		if esFalloDeInfraestructuraVet(motivos) {
+			return nil, fmt.Errorf("go vet no pudo analizar %s por un fallo de infraestructura: %s",
+				strings.Join(paquetes, " "), recorteVet(motivos))
+		}
 		fs := hallazgosDelTextoDeVet(repoRoot, motivos)
 		if len(fs) == 0 && informe == "" {
 			return nil, fmt.Errorf("go vet no pudo analizar %s: %s",
@@ -193,6 +202,24 @@ func hallazgosVet(repoRoot, stdout, stderr string, paquetes []string) ([]finding
 		findings = append(findings, fs...)
 	}
 	return findings, nil
+}
+
+// esFalloDeInfraestructuraVet reconoce los errores de red que Go adjunta a la
+// posición del import. No basta con vetLine: esa forma también corresponde a
+// errores de compilación reales, que sí deben seguir siendo hallazgos.
+func esFalloDeInfraestructuraVet(motivos string) bool {
+	s := strings.ToLower(motivos)
+	marcadores := []string{
+		"proxyconnect", "dial tcp", "connectex", "connection refused",
+		"network is unreachable", "no such host", "i/o timeout",
+		"tls handshake timeout",
+	}
+	for _, marcador := range marcadores {
+		if strings.Contains(s, marcador) {
+			return true
+		}
+	}
+	return false
 }
 
 // diagVet es un diagnóstico del informe de `go vet -json`. La forma del informe
