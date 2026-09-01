@@ -375,6 +375,12 @@ func TestVetResuelveUnaRaizAlternaSoloConEvidenciaInequivoca(t *testing.T) {
 	if got := rutas.relativa(rutaAlias); got != "paquete/vet.go" {
 		t.Fatalf("la copia exacta bajo una raíz alterna dio %q; se esperaba paquete/vet.go", got)
 	}
+	// Reproducción exacta del runner público: el posn de vet conservó las
+	// barras escapadas de una capa JSON y cada separador llegó duplicado.
+	rutaConSeparadoresDuplicados := strings.ReplaceAll(rutaAlias, `\`, `\\`)
+	if got := nuevoResolutorDeRutasVet(repo).relativa(rutaConSeparadoresDuplicados); got != "paquete/vet.go" {
+		t.Fatalf("la ruta JSON con separadores duplicados dio %q; se esperaba paquete/vet.go", got)
+	}
 
 	// Mismo sufijo pero distinto contenido: no hay prueba de que sea el archivo
 	// analizado y conservar la absoluta es preferible a atribuirlo mal.

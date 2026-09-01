@@ -245,14 +245,22 @@ func arrancarDaemonCon(t *testing.T, binDaemon, datos, pipe string, entorno []st
 	if err := c.Start(); err != nil {
 		t.Fatalf("no se pudo arrancar el daemon: %v", err)
 	}
+	// Se registra ANTES que el cierre del Job Object de contenerDaemon. Los
+	// cleanup corren en LIFO: así el job mata primero también a WebView2 y sólo
+	// después esperamos al proceso principal. En el orden contrario Kill
+	// volvía enseguida, TempDir intentaba borrar el perfil mientras un renderer
+	// aún lo tenía abierto y Windows fallaba con Access is denied.
+	t.Cleanup(func() {
+		_ = c.Process.Kill()
+		limite := time.Now().Add(10 * time.Second)
+		for c.ProcessState == nil && time.Now().Before(limite) {
+			time.Sleep(25 * time.Millisecond)
+		}
+	})
 	// El Job Object es lo que impide que este daemon sobreviva a la prueba
-	// aunque el proceso de pruebas se muera de golpe; el Kill de abajo es el
-	// camino ordenado. Van los dos: el Kill cierra rápido en el caso normal y
-	// el job cubre el caso en que nadie llega a ejecutar el Cleanup.
+	// aunque el proceso de pruebas se muera de golpe; el cleanup anterior cubre
+	// el camino ordenado y espera a que Wait haya reapedo el proceso principal.
 	contenerDaemon(t, c)
-	// Sólo Kill: la goroutine de esperarAlPipe es la dueña de Wait, y llamarlo
-	// dos veces sobre el mismo proceso devuelve un error espurio.
-	t.Cleanup(func() { _ = c.Process.Kill() })
 
 	if err := esperarAlPipe(c, pipe, 60*time.Second); err != nil {
 		t.Fatalf("%v\n%s", err, colaDelLog(t, datos))

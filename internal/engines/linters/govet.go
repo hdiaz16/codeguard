@@ -429,12 +429,18 @@ func (r *resolutorDeRutasVet) relativa(p string) string {
 	if !filepath.IsAbs(filepath.FromSlash(limpia)) {
 		return limpia
 	}
-	contenido, err := os.ReadFile(filepath.FromSlash(p))
+	// El flujo JSON de `go vet` en Windows puede conservar el escape de las
+	// barras de una capa interior y entregar `C:\\repo\\archivo.go` como dos
+	// separadores reales. relTo lo deja crudo a propósito cuando no demuestra
+	// pertenencia; para verificar el contenido sí hay que limpiarlo primero.
+	// Clean sólo colapsa separadores y puntos, no cambia la ubicación.
+	rutaReportada := filepath.Clean(filepath.FromSlash(p))
+	contenido, err := os.ReadFile(rutaReportada)
 	if err != nil {
 		return limpia
 	}
 	r.cargar()
-	normalizada := strings.ToLower(filepath.ToSlash(filepath.Clean(filepath.FromSlash(p))))
+	normalizada := strings.ToLower(filepath.ToSlash(rutaReportada))
 	coincidencia := ""
 	for _, rel := range r.archivos {
 		if !strings.HasSuffix(normalizada, "/"+strings.ToLower(rel)) {
