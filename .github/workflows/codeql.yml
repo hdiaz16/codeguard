@@ -21,6 +21,10 @@ on:
 
 jobs:
   analyze:
+    # GitHub Code Scanning no está habilitado en el espejo privado sin GHAS.
+    # Ejecutar allí analiza todo y falla únicamente al subir el SARIF. El
+    # espejo público sí conserva la cobertura CodeQL y su resultado visible.
+    if: ${{ !github.event.repository.private }}
     name: analizar (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
