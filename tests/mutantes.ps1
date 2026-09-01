@@ -17,8 +17,38 @@
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 
+$estadoInicial = (git status --porcelain=v1) -join "`n"
 $mutantes = Get-Content tests/mutantes.json -Raw | ConvertFrom-Json
 $fallos = 0
+
+# Valida el catálogo completo antes de aplicar la primera mutación. Así una
+# refactorización que mueva un archivo no deja una campaña a medias ni oculta
+# los demás mutantes desactualizados detrás del primer Get-Content fallido.
+$ids = @{}
+foreach ($m in $mutantes) {
+    if ([string]::IsNullOrWhiteSpace($m.id) -or
+        [string]::IsNullOrWhiteSpace($m.archivo) -or
+        [string]::IsNullOrWhiteSpace($m.busca) -or
+        [string]::IsNullOrWhiteSpace($m.paquete) -or
+        [string]::IsNullOrWhiteSpace($m.test)) {
+        Write-Host "CATALOGO INVALIDO: cada mutante requiere id, archivo, busca, paquete y test"
+        $fallos++
+        continue
+    }
+    if ($ids.ContainsKey($m.id)) {
+        Write-Host "CATALOGO INVALIDO: id duplicado '$($m.id)'"
+        $fallos++
+    }
+    $ids[$m.id] = $true
+    if (-not (Test-Path -LiteralPath $m.archivo -PathType Leaf)) {
+        Write-Host "DESACTUALIZADO: $($m.id) — no existe $($m.archivo); actualiza el mutante"
+        $fallos++
+    }
+}
+if ($fallos -gt 0) {
+    Write-Host "$fallos error(es) en el catálogo; no se aplicó ninguna mutación"
+    exit 1
+}
 
 foreach ($m in $mutantes) {
     $original = Get-Content $m.archivo -Raw
@@ -71,9 +101,10 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "::error::el arbol quedo roto tras revertir los mutantes"
     exit 2
 }
-$sucio = git status --porcelain
-if ($sucio) {
-    Write-Host "::error::quedaron archivos modificados tras revertir:`n$sucio"
+$estadoFinal = (git status --porcelain=v1) -join "`n"
+if ($estadoFinal -ne $estadoInicial) {
+    Write-Host "::error::el estado del árbol cambió tras revertir los mutantes"
+    Write-Host "ANTES:`n$estadoInicial`nDESPUES:`n$estadoFinal"
     exit 2
 }
 

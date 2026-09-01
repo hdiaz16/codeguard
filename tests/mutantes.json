@@ -128,20 +128,20 @@
   {
     "id": "manifest-firma-truncada-indistinguible",
     "porque": "Una firma truncada debe tener su error PROPIO (ErrFirmaMalformada), distinto de la firma invalida: sin la guarda de tamano, ed25519.Verify la reporta como 'invalida' y el diagnostico de un release corrupto se pierde — y la guarda es la mitad del fail-closed que mato la rama 'clave rara => sin verificacion'.",
-    "archivo": "internal/manifest/verifier.go",
+    "archivo": "internal/manifest/rulepack.go",
     "busca": "\tif len(firma) != ed25519.SignatureSize {",
     "reemplaza": "\tif false {",
     "paquete": "./internal/manifest/",
-    "test": "TestManifestFailClosed"
+    "test": "TestRulepackFailClosed"
   },
   {
     "id": "manifest-esquema-futuro-aceptado",
-    "porque": "Un manifiesto version=2 leido por un binario que solo entiende version=1 debe RECHAZARSE: interpretarlo con las reglas de v1 es el mismo fallo mudo que el hit-de-otra-version de la sombra. La compuerta del esquema es la que hace evolutivo el formato sin mentir.",
-    "archivo": "internal/manifest/verifier.go",
-    "busca": "\tif m.Version != VersionSoportada {",
+    "porque": "Un manifiesto schema=2 leido por un binario que solo entiende schema=1 debe RECHAZARSE: interpretarlo con las reglas de v1 es el mismo fallo mudo que el hit-de-otra-version de la sombra. La compuerta del esquema es la que hace evolutivo el formato sin mentir.",
+    "archivo": "internal/manifest/rulepack.go",
+    "busca": "\tif m.Schema != RulepackSchemaSoportado {",
     "reemplaza": "\tif false {",
     "paquete": "./internal/manifest/",
-    "test": "TestManifestInvalidoSeRechazaAunqueLaFirmaValga"
+    "test": "TestNoSeFirmaUnManifiestoInvalido"
   },
   {
     "id": "rulepack-verificacion-apagada",
