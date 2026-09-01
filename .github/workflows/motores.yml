@@ -93,7 +93,9 @@ jobs:
 
           $pins = @()
           foreach ($q in $m.paquetes.pip.PSObject.Properties) { $pins += "$($q.Name)==$($q.Value)" }
-          pip install @pins
+          $pythonRuntime = "$engines\python-ci"
+          python -m venv $pythonRuntime
+          & "$pythonRuntime\Scripts\python.exe" -m pip install @pins
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
       # Esto SI tumba el job. Un CVE nuevo en algo que repartimos es accionable

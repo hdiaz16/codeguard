@@ -39,3 +39,23 @@ func TestRuntimePythonInstaladoExigeUnoSolo(t *testing.T) {
 		t.Fatalf("runtimes superpuestos: err=%v", err)
 	}
 }
+
+func TestWorkflowsInstalanPythonEnRuntimePrivado(t *testing.T) {
+	for _, nombre := range []string{"codeguard.yml", "test.yml", "motores.yml"} {
+		ruta := filepath.Join("..", "..", ".github", "workflows", nombre)
+		raw, err := os.ReadFile(ruta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		texto := string(raw)
+		for _, contrato := range []string{
+			`$pythonRuntime = "$engines\python-ci"`,
+			"python -m venv $pythonRuntime",
+			`& "$pythonRuntime\Scripts\python.exe" -m pip install @pins`,
+		} {
+			if !strings.Contains(texto, contrato) {
+				t.Errorf("%s instala motores Python fuera del runtime privado: falta %q", nombre, contrato)
+			}
+		}
+	}
+}

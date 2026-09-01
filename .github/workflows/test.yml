@@ -104,11 +104,14 @@ jobs:
 
           $pins = @()
           foreach ($q in $m.paquetes.pip.PSObject.Properties) { $pins += "$($q.Name)==$($q.Value)" }
-          Write-Host "pip install $($pins -join ' ')"
-          pip install @pins
+          $pythonRuntime = "$engines\python-ci"
+          python -m venv $pythonRuntime
+          Write-Host "pip privado install $($pins -join ' ')"
+          & "$pythonRuntime\Scripts\python.exe" -m pip install @pins
           if ($LASTEXITCODE -ne 0) { exit 1 }
           echo "$(go env GOPATH)/bin" >> $env:GITHUB_PATH
           echo "$engines" >> $env:GITHUB_PATH
+          echo "$pythonRuntime\Scripts" >> $env:GITHUB_PATH
 
       - name: go test -race
         env:
