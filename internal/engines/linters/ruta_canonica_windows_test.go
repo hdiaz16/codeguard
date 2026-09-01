@@ -46,3 +46,17 @@ func TestRelToUnificaRutaWindowsCortaYLarga(t *testing.T) {
 		t.Fatalf("la identidad no unificó ruta corta y larga: got=%q ok=%v", got, ok)
 	}
 }
+
+func TestRelToNoFiltraLaRaizEfimeraAunqueElArchivoYaNoExista(t *testing.T) {
+	raiz, err := os.MkdirTemp("", "codeguard-index-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(raiz)
+	ruta := filepath.Join(raiz, "paquete", "vet.go")
+	// No se crea a propósito: reproduce un hallazgo cacheado después de cerrar
+	// la instantánea que lo produjo.
+	if got := relTo(raiz, ruta); got != "paquete/vet.go" {
+		t.Fatalf("la raíz efímera se filtró en el hallazgo: %q", got)
+	}
+}

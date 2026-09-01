@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"log"
+	"path/filepath"
 	"time"
 
 	"codeguard/internal/config"
@@ -130,7 +131,7 @@ func (c *cacheArchivos) Leer(shas []string) map[string][]finding.Finding {
 // atribuir un resultado al motor equivocado. Ante cualquier duda se reanaliza.
 func hallazgoCacheValido(f finding.Finding) bool {
 	if f.Engine == "" || f.RuleKey == "" || f.File == "" ||
-		f.Message == "" || f.LineContent == "" {
+		f.Message == "" || f.LineContent == "" || filepath.IsAbs(filepath.FromSlash(f.File)) {
 		return false
 	}
 	switch f.Pillar {

@@ -285,7 +285,40 @@ func relTo(root, p string) string {
 			return rel
 		}
 	}
+	// Las instantáneas staged las crea exclusivamente MaterializarIndice con
+	// este prefijo y un sufijo aleatorio. Si Windows ya retiró el archivo o sus
+	// API no unifican el alias 8.3, todavía podemos quitar ESA raíz efímera por
+	// su componente único. No se aplica a repos normales: aceptar por nombre un
+	// ancestro arbitrario permitiría atribuir al repo un archivo externo.
+	if rel, ok := relDentroDeInstantanea(root, p); ok {
+		return rel
+	}
 	return filepath.ToSlash(p)
+}
+
+func relDentroDeInstantanea(root, p string) (string, bool) {
+	base := filepath.Base(filepath.Clean(root))
+	const prefijo = "codeguard-index-"
+	sufijo := strings.TrimPrefix(strings.ToLower(base), prefijo)
+	if sufijo == strings.ToLower(base) || sufijo == "" {
+		return "", false
+	}
+	for _, r := range sufijo {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	partes := strings.FieldsFunc(filepath.Clean(p), func(r rune) bool { return r == '/' || r == '\\' })
+	for i := len(partes) - 1; i >= 0; i-- {
+		if !strings.EqualFold(partes[i], base) || i == len(partes)-1 {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join(partes[i+1:]...))
+		if rel != "" && rel != "." && !strings.HasPrefix(rel, "../") {
+			return rel, true
+		}
+	}
+	return "", false
 }
 
 // relExistentePorIdentidad demuestra pertenencia comparando identidades del

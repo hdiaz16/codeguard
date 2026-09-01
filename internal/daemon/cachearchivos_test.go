@@ -67,23 +67,32 @@ func TestElCacheDistingueVacioValidoDeCorrupcion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	conRutaAbsoluta := valido
+	conRutaAbsoluta.File = filepath.Join(t.TempDir(), "app.py")
+	jsRutaAbsoluta, err := json.Marshal([]enCache{{
+		Finding: conRutaAbsoluta, LineContent: conRutaAbsoluta.LineContent,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	casos := map[string]string{
-		"limpio":     "[]",
-		"null":       "null",
-		"json-roto":  "[{",
-		"incompleto": string(jsIncompleto),
-		"hallazgo":   string(jsValido),
+		"limpio":        "[]",
+		"null":          "null",
+		"json-roto":     "[{",
+		"incompleto":    string(jsIncompleto),
+		"ruta-absoluta": string(jsRutaAbsoluta),
+		"hallazgo":      string(jsValido),
 	}
 	for clave, crudo := range casos {
 		ponerCacheCrudo(t, st, c, clave, crudo)
 	}
 
-	got := c.Leer([]string{"limpio", "null", "json-roto", "incompleto", "hallazgo"})
+	got := c.Leer([]string{"limpio", "null", "json-roto", "incompleto", "ruta-absoluta", "hallazgo"})
 	if fs, ok := got["limpio"]; !ok || fs == nil || len(fs) != 0 {
 		t.Fatalf("[] debe ser un hit limpio válido; resultado=%#v, presente=%v", fs, ok)
 	}
-	for _, clave := range []string{"null", "json-roto", "incompleto"} {
+	for _, clave := range []string{"null", "json-roto", "incompleto", "ruta-absoluta"} {
 		if _, ok := got[clave]; ok {
 			t.Errorf("la entrada corrupta %q se sirvió como hit: %#v", clave, got[clave])
 		}
