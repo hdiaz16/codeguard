@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -262,6 +263,14 @@ func relTo(root, p string) string {
 	if rel, ok := relDentroDe(root, p); ok {
 		return rel
 	}
+	// Windows puede nombrar el mismo ancestro como RUNNER~1 en la salida del
+	// motor y como runneradmin en la raíz. Resolver nombres no basta en todos
+	// los volúmenes de los runners; la identidad del directorio sí. Se sube
+	// desde el archivo existente hasta encontrar el MISMO directorio raíz y se
+	// reconstruye la ruta con los componentes que quedan debajo.
+	if rel, ok := relExistentePorIdentidad(root, p); ok {
+		return rel
+	}
 	// Primero los dos lados en forma canónica: es el único reintento que
 	// arregla la disparidad corto/largo venga de donde venga.
 	canonRoot, errRoot := rutaCanonicaExistente(root)
@@ -277,6 +286,59 @@ func relTo(root, p string) string {
 		}
 	}
 	return filepath.ToSlash(p)
+}
+
+// relExistentePorIdentidad demuestra pertenencia comparando identidades del
+// sistema de archivos (volumen+file ID en Windows, dispositivo+inode en Unix),
+// no cadenas. Así funciona aunque una herramienta use un alias 8.3 que las API
+// de canonicalización del volumen conserven. Sólo interviene con rutas que
+// existen; un diagnóstico sobre un archivo ya borrado conserva el fallback de
+// relTo y nunca se inventa como perteneciente al repo.
+func relExistentePorIdentidad(root, p string) (string, bool) {
+	infoRoot, err := os.Stat(root)
+	if err != nil || !infoRoot.IsDir() {
+		return "", false
+	}
+	absP, err := filepath.Abs(p)
+	if err != nil {
+		return "", false
+	}
+	actual := filepath.Clean(absP)
+	var partes []string
+	for {
+		info, statErr := os.Stat(actual)
+		if statErr != nil {
+			return "", false
+		}
+		if os.SameFile(infoRoot, info) {
+			for i, j := 0, len(partes)-1; i < j; i, j = i+1, j-1 {
+				partes[i], partes[j] = partes[j], partes[i]
+			}
+			if len(partes) == 0 {
+				return ".", true
+			}
+			return filepath.ToSlash(filepath.Join(partes...)), true
+		}
+		padre := filepath.Dir(actual)
+		if padre == actual {
+			return "", false
+		}
+		nombre := filepath.Base(actual)
+		// El basename heredaría justamente el alias corto que queremos quitar.
+		// Enumerar el padre devuelve el nombre almacenado por el filesystem; se
+		// elige por identidad, nunca por una comparación textual ambigua.
+		if entradas, readErr := os.ReadDir(padre); readErr == nil {
+			for _, entrada := range entradas {
+				candidato, infoErr := entrada.Info()
+				if infoErr == nil && os.SameFile(info, candidato) {
+					nombre = entrada.Name()
+					break
+				}
+			}
+		}
+		partes = append(partes, nombre)
+		actual = padre
+	}
 }
 
 // relDentroDe devuelve la ruta relativa sólo si de verdad cae DENTRO de la

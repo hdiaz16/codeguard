@@ -42,4 +42,7 @@ func TestRelToUnificaRutaWindowsCortaYLarga(t *testing.T) {
 	if got := relTo(raiz, corta); got != "subdirectorio-largo/archivo.go" {
 		t.Fatalf("ruta corta %q bajo raíz larga quedó como %q", corta, got)
 	}
+	if got, ok := relExistentePorIdentidad(raiz, corta); !ok || got != "subdirectorio-largo/archivo.go" {
+		t.Fatalf("la identidad no unificó ruta corta y larga: got=%q ok=%v", got, ok)
+	}
 }
