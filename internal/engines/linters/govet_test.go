@@ -381,6 +381,14 @@ func TestVetResuelveUnaRaizAlternaSoloConEvidenciaInequivoca(t *testing.T) {
 	if got := nuevoResolutorDeRutasVet(repo).relativa(rutaConSeparadoresDuplicados); got != "paquete/vet.go" {
 		t.Fatalf("la ruta JSON con separadores duplicados dio %q; se esperaba paquete/vet.go", got)
 	}
+	// Go 1.26 en el runner dejó además la comilla de apertura pegada a C:.
+	// Una comilla no es válida en rutas Windows y hace que IsAbs no reconozca
+	// la unidad; se elimina en el límite del parser, no en la normalización
+	// general que comparten los demás motores.
+	rutaComoLaDelRunner := `"` + rutaConSeparadoresDuplicados
+	if got := nuevoResolutorDeRutasVet(repo).relativa(rutaComoLaDelRunner); got != "paquete/vet.go" {
+		t.Fatalf("la ruta exacta del runner (comilla + separadores duplicados) dio %q", got)
+	}
 
 	// Mismo sufijo pero distinto contenido: no hay prueba de que sea el archivo
 	// analizado y conservar la absoluta es preferible a atribuirlo mal.

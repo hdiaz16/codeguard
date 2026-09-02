@@ -245,6 +245,7 @@ func arrancarDaemonCon(t *testing.T, binDaemon, datos, pipe string, entorno []st
 	if err := c.Start(); err != nil {
 		t.Fatalf("no se pudo arrancar el daemon: %v", err)
 	}
+	murio := vigilarProceso(c)
 	// Se registra ANTES que el cierre del Job Object de contenerDaemon. Los
 	// cleanup corren en LIFO: así el job mata primero también a WebView2 y sólo
 	// después esperamos al proceso principal. En el orden contrario Kill
@@ -252,9 +253,10 @@ func arrancarDaemonCon(t *testing.T, binDaemon, datos, pipe string, entorno []st
 	// aún lo tenía abierto y Windows fallaba con Access is denied.
 	t.Cleanup(func() {
 		_ = c.Process.Kill()
-		limite := time.Now().Add(10 * time.Second)
-		for c.ProcessState == nil && time.Now().Before(limite) {
-			time.Sleep(25 * time.Millisecond)
+		select {
+		case <-murio:
+		case <-time.After(10 * time.Second):
+			t.Errorf("el daemon %d no terminó 10 s después de cerrar su Job Object", c.Process.Pid)
 		}
 	})
 	// El Job Object es lo que impide que este daemon sobreviva a la prueba
@@ -262,7 +264,7 @@ func arrancarDaemonCon(t *testing.T, binDaemon, datos, pipe string, entorno []st
 	// el camino ordenado y espera a que Wait haya reapedo el proceso principal.
 	contenerDaemon(t, c)
 
-	if err := esperarAlPipe(c, pipe, 60*time.Second); err != nil {
+	if err := esperarAlPipeVigilado(pipe, 60*time.Second, murio); err != nil {
 		t.Fatalf("%v\n%s", err, colaDelLog(t, datos))
 	}
 }
@@ -331,9 +333,23 @@ func pipeDePrueba(t *testing.T) string {
 // murió" era código muerto. Un daemon caído desde el primer milisegundo agotaba
 // los 60 s y se le acusaba de lento.
 func esperarAlPipe(c *exec.Cmd, pipe string, plazo time.Duration) error {
-	murio := make(chan error, 1) // con buffer: la goroutine no se queda colgada si nadie lee
-	go func() { murio <- c.Wait() }()
+	return esperarAlPipeVigilado(pipe, plazo, vigilarProceso(c))
+}
 
+// vigilarProceso es el único propietario de Cmd.Wait. El canal sirve tanto al
+// arranque (distinguir muerte de lentitud) como al cleanup (no borrar TempDir
+// mientras WebView2 sigue soltando archivos), sin leer ProcessState a la vez
+// que os/exec lo escribe.
+func vigilarProceso(c *exec.Cmd) <-chan error {
+	murio := make(chan error, 1) // con buffer: la goroutine no se queda colgada si nadie lee
+	go func() {
+		murio <- c.Wait()
+		close(murio)
+	}()
+	return murio
+}
+
+func esperarAlPipeVigilado(pipe string, plazo time.Duration, murio <-chan error) error {
 	limite := time.After(plazo)
 	for {
 		espera := 500 * time.Millisecond

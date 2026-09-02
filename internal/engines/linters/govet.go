@@ -425,16 +425,22 @@ func nuevoResolutorDeRutasVet(repoRoot string) *resolutorDeRutasVet {
 }
 
 func (r *resolutorDeRutasVet) relativa(p string) string {
-	limpia := relTo(r.repoRoot, p)
+	// Normalizar ANTES de probar pertenencia. El runner público demostró que
+	// el posn puede conservar dos separadores por cada barra escapada del JSON;
+	// si relTo recibe esa forma, ni Rel ni la comparación por identidad llegan
+	// a ver el archivo real y todos los fallbacks posteriores parten ya de una
+	// ruta cruda. Clean sólo colapsa separadores y puntos: no atribuye la ruta.
+	// Las comillas tampoco pueden formar parte de una ruta de Windows. Go 1.26
+	// puede dejar la de apertura de la cadena de posición junto al nombre al
+	// postprocesar diagnósticos; si queda delante de `C:` IsAbs da false y la
+	// ruta absoluta termina persistida literalmente. Trim cubre tanto esa forma
+	// medida como la pareja completa, sin aceptar ningún nombre válido nuevo.
+	p = strings.Trim(strings.TrimSpace(p), `"`)
+	rutaReportada := filepath.Clean(filepath.FromSlash(p))
+	limpia := relTo(r.repoRoot, rutaReportada)
 	if !filepath.IsAbs(filepath.FromSlash(limpia)) {
 		return limpia
 	}
-	// El flujo JSON de `go vet` en Windows puede conservar el escape de las
-	// barras de una capa interior y entregar `C:\\repo\\archivo.go` como dos
-	// separadores reales. relTo lo deja crudo a propósito cuando no demuestra
-	// pertenencia; para verificar el contenido sí hay que limpiarlo primero.
-	// Clean sólo colapsa separadores y puntos, no cambia la ubicación.
-	rutaReportada := filepath.Clean(filepath.FromSlash(p))
 	contenido, err := os.ReadFile(rutaReportada)
 	if err != nil {
 		return limpia
