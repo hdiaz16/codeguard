@@ -10,7 +10,7 @@
 ; =============================================================================
 
 #define MyAppName "CodeGuard"
-#define MyAppVersion "1.0.0-rc2"
+#define MyAppVersion "1.0.0-rc3"
 ; reglas.iss lo genera build-dist.ps1 contando el rulepack: el numero que se le
 ; promete al usuario no se escribe a mano (llego a decir 112 con 119 instaladas)
 #include "reglas.iss"
@@ -60,8 +60,9 @@ WizardImageFile=wizard-banner.bmp
 WizardSmallImageFile=wizard-small.bmp
 WizardImageStretch=yes
 WizardSizePercent=110
-; avisa a Windows que el PATH cambio (las terminales nuevas lo heredan)
-ChangesEnvironment=no
+; [Code] modifica el PATH del usuario. Inno notifica a Explorer al terminar
+; para que las terminales nuevas hereden el valor sin cerrar sesion.
+ChangesEnvironment=yes
 ; Debe aparecer en Aplicaciones instaladas. Desactivar esta clave dejaba un
 ; unins000.exe huérfano que sólo podía encontrar quien conociera la ruta.
 CreateUninstallRegKey=yes
@@ -373,12 +374,91 @@ begin
   Result := '';
 end;
 
+// ── PATH de usuario: alta idempotente y desinstalación simétrica ─────────
+// RC2 decía «ejecuta codeguard init» pero el setup visual no añadía el CLI al
+// PATH: sólo funcionaba si una versión antigua había dejado esas entradas. El
+// mismo residuo sobrevivía a la desinstalación. Las dos transiciones viven aquí.
+//
+// Se conserva cada entrada ajena tal cual y sólo se retiran las dos identidades
+// de CodeGuard. Nunca se borra el valor PATH entero salvo que no contuviera
+// ninguna otra entrada.
+function RutaPathNormalizada(S: String): String;
+begin
+  S := Trim(S);
+  if (Length(S) >= 2) and (Copy(S, 1, 1) = '"') and
+     (Copy(S, Length(S), 1) = '"') then
+    S := Copy(S, 2, Length(S) - 2);
+  StringChangeEx(S, '/', '\', True);
+  while (Length(S) > 3) and (Copy(S, Length(S), 1) = '\') do
+    Delete(S, Length(S), 1);
+  Result := Lowercase(S);
+end;
+
+function EsRutaPathDeCodeGuard(const Entrada: String): Boolean;
+var
+  N: String;
+begin
+  N := RutaPathNormalizada(Entrada);
+  Result :=
+    (N = RutaPathNormalizada(ExpandConstant('{app}\bin'))) or
+    (N = RutaPathNormalizada(ExpandConstant('{app}\engines'))) or
+    (N = '%localappdata%\codeguard\bin') or
+    (N = '%localappdata%\codeguard\engines');
+end;
+
+function ActualizarPathCodeGuard(Instalar: Boolean): Boolean;
+var
+  Actual, Resto, Entrada, Nuevo, BinDir, EnginesDir: String;
+  P: Integer;
+begin
+  Actual := '';
+  RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Actual);
+  Resto := Actual + ';';
+  Nuevo := '';
+
+  while Length(Resto) > 0 do
+  begin
+    P := Pos(';', Resto);
+    if P = 0 then break;
+    Entrada := Copy(Resto, 1, P - 1);
+    Delete(Resto, 1, P);
+    if (Trim(Entrada) <> '') and (not EsRutaPathDeCodeGuard(Entrada)) then
+    begin
+      if Nuevo <> '' then Nuevo := Nuevo + ';';
+      Nuevo := Nuevo + Entrada;
+    end;
+  end;
+
+  if Instalar then
+  begin
+    BinDir := ExpandConstant('{app}\bin');
+    EnginesDir := ExpandConstant('{app}\engines');
+    if Nuevo <> '' then Nuevo := Nuevo + ';';
+    Nuevo := Nuevo + BinDir + ';' + EnginesDir;
+  end;
+
+  if Nuevo = '' then
+  begin
+    if RegValueExists(HKEY_CURRENT_USER, 'Environment', 'Path') then
+      Result := RegDeleteValue(HKEY_CURRENT_USER, 'Environment', 'Path')
+    else
+      Result := True;
+  end
+  else
+    Result := RegWriteExpandStringValue(
+      HKEY_CURRENT_USER, 'Environment', 'Path', Nuevo);
+end;
+
 // El desinstalador tenia el mismo agujero por su propio camino ([UninstallRun]
 // con taskkill suelto): aqui se cierra con la misma funcion.
 function InitializeUninstall(): Boolean;
 begin
   DetenerDaemon();
-  Result := True;
+  Result := ActualizarPathCodeGuard(False);
+  if not Result then
+    MsgBox('No se pudo retirar CodeGuard del PATH del usuario. La desinstalación ' +
+           'se detuvo para no afirmar que terminó dejando una ruta activa.',
+           mbError, MB_OK);
 end;
 
 // ── motores dentro del asistente: sin consolas ───────────────────────────
@@ -730,6 +810,8 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
+    if not ActualizarPathCodeGuard(True) then
+      RaiseException('No se pudo añadir CodeGuard al PATH del usuario; la instalación no puede declararse completa.');
     EjecutarMotores();
     ArrancarYVerificarDaemon();
   end;

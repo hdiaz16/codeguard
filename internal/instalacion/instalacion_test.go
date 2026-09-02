@@ -133,6 +133,27 @@ func TestElSetupGraficoComparteElMismoContratoDeUpgrade(t *testing.T) {
 	}
 }
 
+func TestElSetupVisualGobiernaElPATHEnTodoElCicloDeVida(t *testing.T) {
+	texto := archivoDeDist(t, "setup.iss")
+	contratos := []string{
+		"ChangesEnvironment=yes",
+		"function ActualizarPathCodeGuard(Instalar: Boolean): Boolean;",
+		"RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Actual)",
+		"RegWriteExpandStringValue(",
+		"(not EsRutaPathDeCodeGuard(Entrada))",
+		"ActualizarPathCodeGuard(False)",
+		"ActualizarPathCodeGuard(True)",
+	}
+	for _, contrato := range contratos {
+		if !strings.Contains(texto, contrato) {
+			t.Errorf("el setup visual perdió el contrato de PATH %q", contrato)
+		}
+	}
+	if strings.Contains(strings.ToLower(texto), "uninsdeletevalue") {
+		t.Fatal("el setup no puede borrar el valor PATH entero al desinstalar")
+	}
+}
+
 func TestLosMotoresSoloSeResuelvenDesdeFuentesOficialesYCerradas(t *testing.T) {
 	buildPython := archivoDeDist(t, "build-python-wheelhouse.ps1")
 	for _, contrato := range []string{
